@@ -11,8 +11,8 @@ function useAction() {
       const r = await api(`/api/devices/${device.id}/action`, { method: 'POST', body: { action: action.id, params } });
       if (r.state) applyState(device.id, r.state);            // instant actions return the fresh device state
       if (!action.instant) toast('✓ ' + (r.message || 'Готово'));
-      refresh(); if (!action.instant) { setTimeout(refresh, 8000); setTimeout(refresh, 25000); setTimeout(refresh, 50000); }
-      return true;
+      refresh(); if (!action.instant && !r.cable) { setTimeout(refresh, 8000); setTimeout(refresh, 25000); setTimeout(refresh, 50000); }
+      return r;
     } catch (e) { toast(e.message, true); return false; }
   };
 }
@@ -115,6 +115,34 @@ function Faceplate({ ports, sel, onSel, vlans }) {
   </div></div>;
 }
 
+/* Cable test: four twisted pairs drawn to scale, with the fault position marked */
+const PAIR_COLOR = { A: '#ff9f0a', B: '#30d158', C: '#0a84ff', D: '#a2845e' };
+const CABLE_ST = { normal: ['норма', 'online'], open: ['обрыв', 'offline'], short: ['замыкание', 'offline'], impedance: ['плохое сопротивление', 'warning'],
+  crosstalk: ['наводки', 'warning'], unknown: ['не измерено', ''] };
+const CABLE_VERDICT = { ok: ['var(--green)', 'check'], warn: ['var(--orange)', 'alert'], bad: ['var(--red)', 'alert'], empty: ['var(--text2)', 'cable'], unknown: ['var(--text2)', 'other'] };
+function CableResult({ c, now }) {
+  const far = Math.max(c.length || 0, ...c.pairs.map(p => p.len || 0));
+  const scale = Math.max(10, Math.ceil(far * 1.15 / 5) * 5);
+  const [col, icon] = CABLE_VERDICT[c.verdict] || CABLE_VERDICT.unknown;
+  return <div className="cable">
+    <div className="row" style={{ gap: 8, fontWeight: 650, color: col, alignItems: 'flex-start' }}><Icon name={icon} size={17} /><span>{c.text}</span></div>
+    <div className="cable-pairs">
+      {c.pairs.map(p => { const [t, s] = CABLE_ST[p.status] || [p.status, '']; const ok = p.status === 'normal';
+        const pos = p.len != null ? Math.min(100, p.len / scale * 100) : null; const w = ok ? (pos != null ? pos : 100) : (pos || 0);
+        return <div key={p.pair} className="cable-pair">
+          <div className="cp-name"><b>{p.pair}</b><span className="mono">{p.pins}</span></div>
+          <div className="cp-wire"><i className={ok ? '' : 'broken'} style={{ width: Math.max(w, 1.5) + '%', '--c': PAIR_COLOR[p.pair] }} />
+            {!ok && p.status !== 'unknown' ? <span className={'cp-x ' + s} style={{ left: w + '%' }} /> : null}</div>
+          <div className="cp-st"><span className={'dot ' + s} />{t}{p.len != null ? <span className="dim3"> · {p.len} м</span> : null}</div>
+        </div>; })}
+      <div className="cable-pair cp-ruler"><div /><div className="row between mono"><span>коммутатор</span><span>{Math.round(scale / 2)} м</span><span>{scale} м</span></div><div /></div>
+    </div>
+    {(c.details || []).length ? <ul className="cable-details">{c.details.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
+    {c.hint ? <div className="dim" style={{ fontSize: 13 }}>{c.hint}</div> : null}
+    <div className="dim3" style={{ fontSize: 11.5 }}>Измерено {fmt.ago(c.t, now)}{c.link ? ` · линк ${fmt.speedShort(c.speed)}` : ''} · точность ±5–10 м</div>
+  </div>;
+}
+
 function PortsTab({ device, drv, initialPort }) {
   const { data, admin } = useApp();
   const ports = device.state.ports || [];
@@ -129,8 +157,14 @@ function PortsTab({ device, drv, initialPort }) {
   const rebooting = n => { const ts = restarted[n]; if (!ts) return false; const age = Date.now() - ts;
     const port = ports.find(x => x.n === n); return age < 150000 && !(port && port.link && age > 30000); };
   const doPortAction = async (a, n) => { if (await runAction(device, a, { port: n })) setRestarted(r => ({ ...r, [n]: Date.now() })); };
+  const [cableRes, setCableRes] = useState({});           // port -> fresh test result (until the next refresh brings it)
+  const [testing, setTesting] = useState(null);
+  const doCableTest = async (a, n) => { setTesting(n); try { const r = await runAction(device, a, { port: n }); if (r && r.cable) setCableRes(c => ({ ...c, [n]: r.cable })); } finally { setTesting(null); } };
   const traffic = useHistory(device.id, hasTraffic && p && p.rxBytes != null, sel);
-  const portActions = (drv?.actions || []).filter(a => a.scope === 'port' && (!a.needs || (a.needs === 'poe' && p && p.poe)));
+  const allPortActions = (drv?.actions || []).filter(a => a.scope === 'port' && (!a.needs || (a.needs === 'poe' && p && p.poe)));
+  const portActions = allPortActions.filter(a => a.kind !== 'cable'), cableAction = allPortActions.find(a => a.kind === 'cable');
+  const cab = p ? (cableRes[p.n] && (!p.cable || cableRes[p.n].t >= p.cable.t) ? cableRes[p.n] : p.cable) : null;
+  const slow = p && p.link && p.kind !== 'sfp' && p.speed > 0 && p.speed < 1000 && ports.some(x => x.speed >= 1000);
   const used = [...new Set(ports.flatMap(x => [...(x.vlansU || []), ...(x.vlansT || [])]))].sort((a, b) => a - b);
   const totalPoe = ports.reduce((a, x) => a + (x.poeW || 0), 0);
   return <>
@@ -156,13 +190,21 @@ function PortsTab({ device, drv, initialPort }) {
             <div className="dim mono" style={{ fontSize: 12 }}>{[x.ip, x.mac].filter(Boolean).join(' · ')}</div></div>
           {x.vlan ? <span className="badge" style={{ color: vlanColor(x.vlan, vlans) }}>{vlanName(x.vlan, vlans)}</span> : null}
         </div>)}</div></div> : null}
+      {cab || slow || (admin && cableAction && p.kind !== 'sfp') ? <div style={{ marginTop: 14 }}>
+        <div className="card-title" style={{ marginBottom: 8 }}><span className="grow">Кабель</span>
+          {admin && cableAction && p.kind !== 'sfp' ? <Btn size="sm" icon="cable" busy={testing === p.n} onClick={() => doCableTest(cableAction, p.n)}>
+            {testing === p.n ? 'Измеряю…' : cab ? 'Проверить снова' : cableAction.label}</Btn> : null}</div>
+        {cab ? <CableResult c={cab} now={data.now} />
+          : slow ? <div className="dim" style={{ fontSize: 13 }}>Порт работает на {fmt.speed(p.speed)}. Если устройство гигабитное — скорее всего в кабеле работают не все пары. {admin && cableAction ? 'Нажмите «Проверить кабель».' : ''}</div>
+          : <div className="dim3" style={{ fontSize: 13 }}>Коммутатор измерит длину кабеля и проверит каждую из 4 пар — видно обрыв, замыкание и плохой обжим.</div>}
+      </div> : null}
       {admin && portActions.length ? <div className="row wrap" style={{ marginTop: 14 }}>{portActions.map(a =>
         <Btn key={a.id} kind="danger" size="sm" icon={a.id === 'poe_cycle' ? 'bolt' : 'refresh'} onClick={() => doPortAction(a, p.n)}>{a.label}</Btn>)}</div> : null}
       {admin && portActions.length ? <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Перезапуск PoE занимает ~20 секунд, затем устройству нужно 1–2 минуты, чтобы загрузиться.</div> : null}
     </Card> : null}
     <Card title="Все порты" pad={false}><div style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>#</th><th>Подпись</th><th>Линк</th>{hasTraffic ? <th>Трафик ↓/↑</th> : null}<th>PoE</th><th>VLAN</th><th>Устройства</th></tr></thead>
       <tbody>{ports.map(x => <tr key={x.n} onClick={() => setSel(x.n)} style={{ cursor: 'pointer' }}>
-        <td className="mono">{x.n}</td><td>{x.label}</td><td>{x.link ? <span className="row" style={{ gap: 6 }}><span className={'dot ' + (x.speed >= 1000 ? 'online' : 'warning')} />{fmt.speedShort(x.speed)}</span> : <span className="dim3">—</span>}</td>
+        <td className="mono">{x.n}</td><td>{x.label}{x.cable && ['warn', 'bad'].includes(x.cable.verdict) ? <span title={x.cable.text} style={{ marginLeft: 6, color: 'var(--orange)' }}><Icon name="alert" size={13} /></span> : null}</td><td>{x.link ? <span className="row" style={{ gap: 6 }}><span className={'dot ' + (x.speed >= 1000 ? 'online' : 'warning')} />{fmt.speedShort(x.speed)}</span> : <span className="dim3">—</span>}</td>
         {hasTraffic ? <td className="mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{x.txBps != null ? `${fmt.bps(x.txBps)} / ${fmt.bps(x.rxBps)}` : ''}</td> : null}
         <td>{x.poeW ? x.poeW + ' Вт' : ''}</td><td>{[...(x.vlansU || []), ...(x.vlansT || []).map(v => v + 't')].join(', ')}</td>
         <td className="ellipsis" style={{ maxWidth: 200 }}>{(x.peers || []).length > 2 ? `${x.peers.length} устр.` : (x.peers || []).map(y => y.name || y.mac).join(', ')}</td></tr>)}</tbody></table></div></Card>

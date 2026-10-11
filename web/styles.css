@@ -272,3 +272,21 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 20px; background: var(--fill); font-size: 13px; font-weight: 500; cursor: pointer; border: 0; color: var(--text2); }
 .chip.on { background: var(--accent); color: #fff; }
 .fade-in { animation: pop .35s cubic-bezier(.2,1.1,.4,1) both; }
+
+/* cable test */
+.cable { display: flex; flex-direction: column; gap: 12px; background: var(--fill); border-radius: 14px; padding: 14px; }
+.cable-pairs { display: grid; gap: 9px; }
+.cable-pair { display: grid; grid-template-columns: 58px 1fr 150px; gap: 12px; align-items: center; font-size: 13px; }
+.cp-name { display: flex; gap: 6px; align-items: baseline; } .cp-name b { font-size: 14px; } .cp-name span { color: var(--text3); font-size: 11px; }
+.cp-wire { position: relative; height: 10px; border-radius: 6px; background: var(--line); }
+.cp-wire i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; transition: width .6s cubic-bezier(.2,.9,.3,1);
+  background: repeating-linear-gradient(115deg, var(--c) 0 9px, rgba(255,255,255,.85) 9px 13px); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent); }
+.cp-wire i.broken { border-radius: 6px 0 0 6px; }
+.cp-x { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 3px var(--card, var(--bg)), 0 0 12px var(--red); }
+.cp-x.warning { background: var(--orange); box-shadow: 0 0 0 3px var(--card, var(--bg)), 0 0 12px var(--orange); }
+.cp-x::before, .cp-x::after { content: ''; position: absolute; left: 4px; right: 4px; top: 8px; height: 2px; background: #fff; border-radius: 2px; transform: rotate(45deg); }
+.cp-x::after { transform: rotate(-45deg); }
+.cp-st { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.cp-ruler { font-size: 10.5px; color: var(--text3); margin-top: -4px; }
+.cable-details { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; }
+@media (max-width: 560px) { .cable-pair { grid-template-columns: 44px 1fr 108px; gap: 8px; } .cp-name span { display: none; } }

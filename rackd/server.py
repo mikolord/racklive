@@ -140,7 +140,10 @@ class App:
         devices = []
         for d in cfg['devices']:
             st = json.loads(json.dumps(self.states.get(d['id']) or {'status': 'unknown'}))
+            tests = self.store.cable.get(d['id']) or {}
             for p in st.get('ports') or []:
+                if str(p.get('n')) in tests:
+                    p['cable'] = tests[str(p['n'])]
                 for peer in p.get('peers') or []:
                     peer.update({k: v for k, v in (idx.get(peer['mac'].lower()) or {}).items() if v})
             pd = self.store.public_device(d) if authed else {k: d.get(k) for k in ('id', 'name', 'driver', 'kind', 'location', 'site', 'notes', 'enabled', 'host')}
@@ -400,6 +403,14 @@ class Handler(BaseHTTPRequestHandler):
                         st.add_event(did, d.get('name'), 'warning', f"действие не выполнено: {e}")
                         raise
                     act = next((a for a in drv.actions if a['id'] == body.get('action')), {})
+                    if isinstance(msg, dict):
+                        # measurements (cable test): keep the result next to the port, nothing to re-poll
+                        res = msg
+                        if res.get('cable') is not None:
+                            st.set_cable(did, res.get('port'), res['cable'])
+                        level = {'ok': 'info', 'empty': 'info'}.get((res.get('cable') or {}).get('verdict'), 'warning')
+                        st.add_event(did, d.get('name'), level, res.get('message', ''))
+                        return self.send({'ok': True, 'message': res.get('message'), 'cable': res.get('cable'), 'port': res.get('port')})
                     if act.get('instant'):
                         # quick actions (switches): re-read the device right away and hand the fresh state back
                         if act.get('scope') != 'entity':

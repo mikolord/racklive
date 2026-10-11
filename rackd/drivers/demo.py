@@ -3,6 +3,7 @@ and is used for the screenshots. Hidden from the "Add device" picker."""
 import math, random, secrets, time
 
 from . import Driver
+from .. import cable
 
 T0 = time.time()
 MAC = lambda n: 'aa:00:00:00:%02x:%02x' % (n // 256, n % 256)
@@ -14,7 +15,7 @@ WIRED = [  # port, name, kind, ip, mac, vlan, speed, poeW
     (5, 'Точка · Холл', 'ap', '10.0.0.11', MAC(11), 1, 1000, 6.2), (6, 'Точка · Офис', 'ap', '10.0.0.12', MAC(12), 1, 1000, 5.7),
     (7, 'Точка · Двор', 'ap', '10.0.0.13', MAC(13), 1, 1000, 6.9), (8, 'Хранилище', 'nas', '10.0.0.5', MAC(5), 1, 1000, 0),
     (9, 'Home Assistant', 'server', '10.0.0.6', MAC(6), 1, 1000, 0), (10, 'Принтер · Офис', 'printer', '10.0.0.40', MAC(40), 1, 100, 0),
-    (11, 'ПК · Бухгалтерия', 'pc', '10.0.0.41', MAC(41), 1, 1000, 0), (12, 'ПК · Директор', 'pc', '10.0.0.42', MAC(42), 1, 1000, 0),
+    (11, 'ПК · Бухгалтерия', 'pc', '10.0.0.41', MAC(41), 1, 1000, 0), (12, 'ПК · Директор', 'pc', '10.0.0.42', MAC(42), 1, 100, 0),
     (14, 'Видеорегистратор', 'nvr', '10.0.10.5', MAC(15), 10, 1000, 0), (16, 'Телефон · Ресепшн', 'phone', '10.0.0.43', MAC(43), 1, 100, 2.1),
 ]
 WIFI = [('iPhone · Анна', 'phone', 'ap1', -52), ('iPhone · Дмитрий', 'phone', 'ap2', -61), ('MacBook · Офис', 'laptop', 'ap2', -48),
@@ -74,7 +75,28 @@ class DemoRouter(DemoBase):
 class DemoSwitch(DemoBase):
     id, title, kind = 'demo_switch', 'Демо: коммутатор', 'switch'
     actions = [{'id': 'poe_cycle', 'label': 'Перезапустить PoE', 'scope': 'port', 'needs': 'poe', 'confirm': 'Перезапустить PoE на порту {port}? (демо)'},
-               {'id': 'port_bounce', 'label': 'Перезапустить порт', 'scope': 'port', 'confirm': 'Перезапустить порт {port}? (демо)'}]
+               {'id': 'port_bounce', 'label': 'Перезапустить порт', 'scope': 'port', 'confirm': 'Перезапустить порт {port}? (демо)'},
+               {'id': 'cable_test', 'label': 'Проверить кабель', 'scope': 'port', 'kind': 'cable', 'confirm': 'Измерить кабель на порту {port}? (демо)'}]
+
+    def action(self, cfg, action_id, params):
+        if action_id != 'cable_test':
+            return super().action(cfg, action_id, params)
+        time.sleep(1.5)
+        n = int(params.get('port') or 0)
+        p = next((x for x in self.poll(cfg)['ports'] if x['n'] == n), None)
+        if not p:
+            raise ValueError('нет такого порта')
+        L = 6 + (n * 7) % 38
+        if n == 12:      # the demo office's flaky cable: two pairs badly crimped at the rack end
+            run = [{'pair': 'A', 'status': 'normal', 'len': L}, {'pair': 'B', 'status': 'normal', 'len': L},
+                   {'pair': 'C', 'status': 'open', 'len': 1}, {'pair': 'D', 'status': 'open', 'len': 1}]
+        elif p['link']:
+            run = [{'pair': x, 'status': 'normal', 'len': L + random.randint(-1, 1)} for x in 'ABCD']
+        else:
+            far = 0 if n % 3 else L
+            run = [{'pair': x, 'status': 'open', 'len': far} for x in 'ABCD']
+        res = cable.analyze([run], p['link'], p['speed'])
+        return {'message': f'Порт {n}: ' + res['text'], 'cable': res, 'port': n}
 
     def poll(self, cfg):
         t = time.time()
@@ -206,5 +228,9 @@ def seed(store):
     store.add_event(None, 'Камера · Склад', 'offline', 'нет связи: не отвечает')
     store.add_event(s, 'Коммутатор ядра', 'info', 'PoE на порту 3 перезапущено')
     store.add_event(None, 'Камера · Склад', 'online', 'снова в сети')
+    res = DemoSwitch().action({}, 'cable_test', {'port': 12})
+    res['cable']['t'] = now - 3600
+    store.set_cable(s, 12, res['cable'])
+    store.add_event(s, 'Коммутатор ядра', 'warning', res['message'])
     store.save()
     store.save_runtime()

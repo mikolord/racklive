@@ -2,6 +2,7 @@
 import re, threading, time
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
+from .. import cable
 from ..snmp import Snmp, SnmpError, text
 from ..util import DriverError, parse_ranges, telnet_session, uptime_seconds
 
@@ -19,7 +20,10 @@ class TPLinkJetStream(Driver):
     actions = [{'id': 'poe_cycle', 'label': 'Перезапустить PoE', 'scope': 'port', 'needs': 'poe',
                 'confirm': 'Устройство на порту {port} обесточится на 10 секунд и перезагрузится. Продолжить?'},
                {'id': 'port_bounce', 'label': 'Перезапустить порт', 'scope': 'port',
-                'confirm': 'Связь на порту {port} пропадёт на 5 секунд. Продолжить?'}]
+                'confirm': 'Связь на порту {port} пропадёт на 5 секунд. Продолжить?'},
+               {'id': 'cable_test', 'label': 'Проверить кабель', 'scope': 'port', 'kind': 'cable',
+                'confirm': 'Коммутатор измерит кабель на порту {port}: длину и каждую из 4 пар. '
+                           'Связь с устройством может пропасть на 3–5 секунд. Продолжить?'}]
     protected_ports_hint = 'uplink'
 
     _locks = {}
@@ -134,6 +138,8 @@ class TPLinkJetStream(Driver):
         if port in [int(x) for x in str(cfg.get('protectedPorts') or '').replace(' ', '').split(',') if x.isdigit()]:
             raise DriverError(f'порт {port} защищён (uplink) — его нельзя отключать отсюда')
         iface = f'interface gigabitEthernet 1/0/{port}'
+        if action_id == 'cable_test':
+            return self.cable_test(cfg, port)
         if action_id == 'poe_cycle':
             self._run_checked(cfg, [iface, 'power inline supply disable'])
             time.sleep(8)
@@ -152,3 +158,32 @@ class TPLinkJetStream(Driver):
                 self._run_checked(cfg, [iface, 'no shutdown'])
             return f'Порт {port} перезапущен'
         return super().action(cfg, action_id, params)
+
+    def cable_test(self, cfg, port):
+        """Built-in TDR (VCT). Two shots, because a single one on a live link often misreads a pair."""
+        st_cmd = f'show interface status gigabitEthernet 1/0/{port}'
+        o = self._cli(cfg, [st_cmd])
+        m = re.search(r'Gi1/0/\d+\s+(LinkUp|LinkDown)\s+(\S+)', ''.join(o.values()))
+        link, speed = bool(m and m.group(1) == 'LinkUp'), int(m.group(2).rstrip('M')) if m and m.group(2).rstrip('M').isdigit() else 0
+        runs = []
+        for i, cmd in enumerate([f'show cable-diagnostics interface gigabitEthernet 1/0/{port}',
+                                 f'show cable-diagnostics careful interface gigabitEthernet 1/0/{port}']):
+            if i:
+                time.sleep(3)
+            txt = ''.join(self._cli(cfg, [cmd], wait=3).values())
+            run = []
+            for l in txt.splitlines():
+                pm = re.search(r'Pair-([A-D])\s+(\S+)\s+(\S+)(?:\s+\(\S+\s*\S*\))?\s+(\S+)', l)
+                if not pm:
+                    continue
+                status = pm.group(2).lower()
+                num = next((x for x in (pm.group(3), pm.group(4)) if x.isdigit()), None)
+                run.append({'pair': pm.group(1), 'len': int(num) if num else None,
+                            'status': {'normal': 'normal', 'open': 'open', 'short': 'short', 'impedance': 'impedance',
+                                       'crosstalk': 'crosstalk', 'mismatch': 'impedance'}.get(status, 'unknown')})
+            if run:
+                runs.append(run)
+        if not runs:
+            raise DriverError('коммутатор не вернул результат теста кабеля')
+        res = cable.analyze(runs, link, speed)
+        return {'message': f'Порт {port}: ' + res['text'], 'cable': res, 'port': port}

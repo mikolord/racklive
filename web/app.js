@@ -196,6 +196,8 @@ const ICON_PATHS = {
   check: 'M5 12l5 5 9-11',
   wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0',
   globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
+  cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2',
+  alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
   toggle: 'M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7M7 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6'
 };
@@ -796,12 +798,12 @@ function useAction() {
       if (r.state) applyState(device.id, r.state); // instant actions return the fresh device state
       if (!action.instant) toast('✓ ' + (r.message || 'Готово'));
       refresh();
-      if (!action.instant) {
+      if (!action.instant && !r.cable) {
         setTimeout(refresh, 8000);
         setTimeout(refresh, 25000);
         setTimeout(refresh, 50000);
       }
-      return true;
+      return r;
     } catch (e) {
       toast(e.message, true);
       return false;
@@ -1118,6 +1120,103 @@ function Faceplate({
     }
   }, sfp.map(P)) : null));
 }
+
+/* Cable test: four twisted pairs drawn to scale, with the fault position marked */
+const PAIR_COLOR = {
+  A: '#ff9f0a',
+  B: '#30d158',
+  C: '#0a84ff',
+  D: '#a2845e'
+};
+const CABLE_ST = {
+  normal: ['норма', 'online'],
+  open: ['обрыв', 'offline'],
+  short: ['замыкание', 'offline'],
+  impedance: ['плохое сопротивление', 'warning'],
+  crosstalk: ['наводки', 'warning'],
+  unknown: ['не измерено', '']
+};
+const CABLE_VERDICT = {
+  ok: ['var(--green)', 'check'],
+  warn: ['var(--orange)', 'alert'],
+  bad: ['var(--red)', 'alert'],
+  empty: ['var(--text2)', 'cable'],
+  unknown: ['var(--text2)', 'other']
+};
+function CableResult({
+  c,
+  now
+}) {
+  const far = Math.max(c.length || 0, ...c.pairs.map(p => p.len || 0));
+  const scale = Math.max(10, Math.ceil(far * 1.15 / 5) * 5);
+  const [col, icon] = CABLE_VERDICT[c.verdict] || CABLE_VERDICT.unknown;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "cable"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 8,
+      fontWeight: 650,
+      color: col,
+      alignItems: 'flex-start'
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: icon,
+    size: 17
+  }), /*#__PURE__*/React.createElement("span", null, c.text)), /*#__PURE__*/React.createElement("div", {
+    className: "cable-pairs"
+  }, c.pairs.map(p => {
+    const [t, s] = CABLE_ST[p.status] || [p.status, ''];
+    const ok = p.status === 'normal';
+    const pos = p.len != null ? Math.min(100, p.len / scale * 100) : null;
+    const w = ok ? pos != null ? pos : 100 : pos || 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.pair,
+      className: "cable-pair"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "cp-name"
+    }, /*#__PURE__*/React.createElement("b", null, p.pair), /*#__PURE__*/React.createElement("span", {
+      className: "mono"
+    }, p.pins)), /*#__PURE__*/React.createElement("div", {
+      className: "cp-wire"
+    }, /*#__PURE__*/React.createElement("i", {
+      className: ok ? '' : 'broken',
+      style: {
+        width: Math.max(w, 1.5) + '%',
+        '--c': PAIR_COLOR[p.pair]
+      }
+    }), !ok && p.status !== 'unknown' ? /*#__PURE__*/React.createElement("span", {
+      className: 'cp-x ' + s,
+      style: {
+        left: w + '%'
+      }
+    }) : null), /*#__PURE__*/React.createElement("div", {
+      className: "cp-st"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: 'dot ' + s
+    }), t, p.len != null ? /*#__PURE__*/React.createElement("span", {
+      className: "dim3"
+    }, " \xB7 ", p.len, " \u043C") : null));
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "cable-pair cp-ruler"
+  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", {
+    className: "row between mono"
+  }, /*#__PURE__*/React.createElement("span", null, "\u043A\u043E\u043C\u043C\u0443\u0442\u0430\u0442\u043E\u0440"), /*#__PURE__*/React.createElement("span", null, Math.round(scale / 2), " \u043C"), /*#__PURE__*/React.createElement("span", null, scale, " \u043C")), /*#__PURE__*/React.createElement("div", null))), (c.details || []).length ? /*#__PURE__*/React.createElement("ul", {
+    className: "cable-details"
+  }, c.details.map((d, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, d))) : null, c.hint ? /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13
+    }
+  }, c.hint) : null, /*#__PURE__*/React.createElement("div", {
+    className: "dim3",
+    style: {
+      fontSize: 11.5
+    }
+  }, "\u0418\u0437\u043C\u0435\u0440\u0435\u043D\u043E ", fmt.ago(c.t, now), c.link ? ` · линк ${fmt.speedShort(c.speed)}` : '', " \xB7 \u0442\u043E\u0447\u043D\u043E\u0441\u0442\u044C \xB15\u201310 \u043C"));
+}
 function PortsTab({
   device,
   drv,
@@ -1154,8 +1253,28 @@ function PortsTab({
       [n]: Date.now()
     }));
   };
+  const [cableRes, setCableRes] = useState({}); // port -> fresh test result (until the next refresh brings it)
+  const [testing, setTesting] = useState(null);
+  const doCableTest = async (a, n) => {
+    setTesting(n);
+    try {
+      const r = await runAction(device, a, {
+        port: n
+      });
+      if (r && r.cable) setCableRes(c => ({
+        ...c,
+        [n]: r.cable
+      }));
+    } finally {
+      setTesting(null);
+    }
+  };
   const traffic = useHistory(device.id, hasTraffic && p && p.rxBytes != null, sel);
-  const portActions = (drv?.actions || []).filter(a => a.scope === 'port' && (!a.needs || a.needs === 'poe' && p && p.poe));
+  const allPortActions = (drv?.actions || []).filter(a => a.scope === 'port' && (!a.needs || a.needs === 'poe' && p && p.poe));
+  const portActions = allPortActions.filter(a => a.kind !== 'cable'),
+    cableAction = allPortActions.find(a => a.kind === 'cable');
+  const cab = p ? cableRes[p.n] && (!p.cable || cableRes[p.n].t >= p.cable.t) ? cableRes[p.n] : p.cable : null;
+  const slow = p && p.link && p.kind !== 'sfp' && p.speed > 0 && p.speed < 1000 && ports.some(x => x.speed >= 1000);
   const used = [...new Set(ports.flatMap(x => [...(x.vlansU || []), ...(x.vlansT || [])]))].sort((a, b) => a - b);
   const totalPoe = ports.reduce((a, x) => a + (x.poeW || 0), 0);
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Faceplate, {
@@ -1250,7 +1369,36 @@ function PortsTab({
     style: {
       color: vlanColor(x.vlan, vlans)
     }
-  }, vlanName(x.vlan, vlans)) : null)))) : null, admin && portActions.length ? /*#__PURE__*/React.createElement("div", {
+  }, vlanName(x.vlan, vlans)) : null)))) : null, cab || slow || admin && cableAction && p.kind !== 'sfp' ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "grow"
+  }, "\u041A\u0430\u0431\u0435\u043B\u044C"), admin && cableAction && p.kind !== 'sfp' ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "cable",
+    busy: testing === p.n,
+    onClick: () => doCableTest(cableAction, p.n)
+  }, testing === p.n ? 'Измеряю…' : cab ? 'Проверить снова' : cableAction.label) : null), cab ? /*#__PURE__*/React.createElement(CableResult, {
+    c: cab,
+    now: data.now
+  }) : slow ? /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13
+    }
+  }, "\u041F\u043E\u0440\u0442 \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442 \u043D\u0430 ", fmt.speed(p.speed), ". \u0415\u0441\u043B\u0438 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E \u0433\u0438\u0433\u0430\u0431\u0438\u0442\u043D\u043E\u0435 \u2014 \u0441\u043A\u043E\u0440\u0435\u0435 \u0432\u0441\u0435\u0433\u043E \u0432 \u043A\u0430\u0431\u0435\u043B\u0435 \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0442 \u043D\u0435 \u0432\u0441\u0435 \u043F\u0430\u0440\u044B. ", admin && cableAction ? 'Нажмите «Проверить кабель».' : '') : /*#__PURE__*/React.createElement("div", {
+    className: "dim3",
+    style: {
+      fontSize: 13
+    }
+  }, "\u041A\u043E\u043C\u043C\u0443\u0442\u0430\u0442\u043E\u0440 \u0438\u0437\u043C\u0435\u0440\u0438\u0442 \u0434\u043B\u0438\u043D\u0443 \u043A\u0430\u0431\u0435\u043B\u044F \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442 \u043A\u0430\u0436\u0434\u0443\u044E \u0438\u0437 4 \u043F\u0430\u0440 \u2014 \u0432\u0438\u0434\u043D\u043E \u043E\u0431\u0440\u044B\u0432, \u0437\u0430\u043C\u044B\u043A\u0430\u043D\u0438\u0435 \u0438 \u043F\u043B\u043E\u0445\u043E\u0439 \u043E\u0431\u0436\u0438\u043C.")) : null, admin && portActions.length ? /*#__PURE__*/React.createElement("div", {
     className: "row wrap",
     style: {
       marginTop: 14
@@ -1284,7 +1432,16 @@ function PortsTab({
     }
   }, /*#__PURE__*/React.createElement("td", {
     className: "mono"
-  }, x.n), /*#__PURE__*/React.createElement("td", null, x.label), /*#__PURE__*/React.createElement("td", null, x.link ? /*#__PURE__*/React.createElement("span", {
+  }, x.n), /*#__PURE__*/React.createElement("td", null, x.label, x.cable && ['warn', 'bad'].includes(x.cable.verdict) ? /*#__PURE__*/React.createElement("span", {
+    title: x.cable.text,
+    style: {
+      marginLeft: 6,
+      color: 'var(--orange)'
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "alert",
+    size: 13
+  })) : null), /*#__PURE__*/React.createElement("td", null, x.link ? /*#__PURE__*/React.createElement("span", {
     className: "row",
     style: {
       gap: 6

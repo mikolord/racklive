@@ -34,6 +34,12 @@ class Store:
             self.cfg = loaded
         self.events = self._load('events.json', [])
         self.history = self._load('history.json', {})
+        self.cable = self._load('cable.json', {})          # {device_id: {port: last cable test}}
+
+    def set_cable(self, did, port, res):
+        with self.lock:
+            self.cable.setdefault(did, {})[str(port)] = res
+            self._dump('cable.json', self.cable)
 
     def _load(self, name, default):
         p = os.path.join(self.dir, name)
@@ -102,6 +108,8 @@ class Store:
                 if u.get('deviceId') == did:
                     u['deviceId'] = None
             self.save()
+            if self.cable.pop(did, None) is not None:
+                self._dump('cable.json', self.cable)
 
     # ── events / history ──
     def add_event(self, device_id, name, level, text):
