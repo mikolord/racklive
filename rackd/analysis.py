@@ -223,6 +223,13 @@ def analyze(topo, devices, states, cable_tests):
                 ' Обычно виноват кабель или обжим — проверьте его в карточке порта.',
                 deviceId=src.get('deviceId'), port=e.get('sourcePort'), nodeId=t['id'])
 
+    for d in devices:
+        for t in (states.get(d['id']) or {}).get('vpn') or []:
+            if t.get('role') == 'client' and t.get('routing') and not t.get('up'):
+                add('warn', f"VPN «{t['name']}» отключён",
+                    'Через этот туннель должен идти трафик, но он не поднят — значит, он идёт напрямую, в обход VPN. '
+                    'Проверьте настройки туннеля и сервер.', deviceId=d['id'])
+
     if chain >= 3:
         add('warn', f'Цепочка из {chain} коммутаторов', 'Дальние коммутаторы зависят от всех предыдущих, а общий трафик идёт через каждый. '
                                                        'Лучше подключить их звездой к центральному.')

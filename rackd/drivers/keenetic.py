@@ -1,5 +1,5 @@
 """Keenetic / Netcraze routers via the RCI HTTP API (KeeneticOS 3.x–5.x)."""
-import codecs, hashlib, http.cookiejar, json, re, urllib.error, urllib.request
+import codecs, hashlib, http.cookiejar, json, re, time, urllib.error, urllib.request
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
 from ..util import DriverError, uptime_seconds, guess_kind
@@ -39,6 +39,60 @@ class Keenetic(Driver):
         get = lambda p: json.loads(req(p).read() or b'{}')
         cli = lambda cmds: json.loads(req('/rci/', [{'parse': c} for c in cmds]).read())
         return get, cli
+
+    _VPN_KIND = {'Wireguard': 'wireguard', 'OpenVPN': 'openvpn', 'L2TP': 'l2tp', 'PPTP': 'pptp',
+                 'SSTP': 'sstp', 'IPsecVpn': 'ipsec', 'IPsec': 'ipsec', 'IKE': 'ipsec'}
+
+    def _vpn(self, get, rc):
+        """VPN tunnels from the interface list; WireGuard allow-ips come from running-config."""
+        allow = {}                                          # peer public-key -> subnet (ip/mask)
+        cur = None
+        for l in rc:
+            m = re.match(r'\s*wireguard peer (\S+)', l)
+            if m:
+                cur = m.group(1)
+            a = re.match(r'\s*allow-ips (\S+) (\S+)', l)
+            if a and cur:
+                pref = sum(bin(int(o)).count('1') for o in a.group(2).split('.'))
+                allow[cur] = a.group(1) if pref == 32 else f'{a.group(1)}/{pref}'
+        try:
+            ifs = get('/rci/show/interface')
+        except Exception:
+            return []
+        now = time.time()
+        hs = lambda v: None if not v or v >= 2147483647 else int(now - v)
+        out = []
+        for name, v in (ifs.items() if isinstance(ifs, dict) else []):
+            kind = self._VPN_KIND.get(v.get('type'))
+            if not kind:
+                continue
+            up = v.get('connected') == 'yes' or v.get('state') == 'up'
+            t = {'id': name, 'name': v.get('description') or name, 'kind': kind, 'up': up, 'address': v.get('address'),
+                 'routing': False, 'peers': [], 'endpoint': None, 'rx': None, 'tx': None, 'handshake': None, 'role': 'client'}
+            wg = v.get('wireguard') or {}
+            peers = wg.get('peer') or []
+            t['listenPort'] = wg.get('listen-port')
+            server = 'server-owned' in wg or (kind == 'wireguard' and not v.get('global') and len(peers) > 1)
+            t['routing'] = not server and (bool(v.get('global')) or bool(v.get('defaultgw')))
+            if kind == 'wireguard' and server:
+                t['role'] = 'server'
+                for p in peers:
+                    ep = p.get('remote-endpoint-address')
+                    t['peers'].append({'name': p.get('description') or (p.get('public-key') or '')[:8], 'online': p.get('online'),
+                                       'endpoint': f"{ep}:{p.get('remote-port')}" if ep and ep != '0.0.0.0' else None,
+                                       'subnet': allow.get(p.get('public-key')), 'handshake': hs(p.get('last-handshake')),
+                                       'rx': p.get('rxbytes'), 'tx': p.get('txbytes')})
+                t['rx'] = sum(p.get('rxbytes') or 0 for p in peers)
+                t['tx'] = sum(p.get('txbytes') or 0 for p in peers)
+            elif peers:                                     # client tunnel = one peer (the server we dial)
+                p = peers[0]
+                ep = p.get('remote-endpoint-address')
+                t.update(endpoint=f"{ep}:{p.get('remote-port')}" if ep and ep != '0.0.0.0' else None,
+                         rx=p.get('rxbytes'), tx=p.get('txbytes'), handshake=hs(p.get('last-handshake')),
+                         up=up and bool(p.get('online')))
+            out.append(t)
+        out.sort(key=lambda t: (t['role'] != 'server', not t['up'], t['name']))
+        return out
 
     def poll(self, cfg):
         get, cli = self._session(cfg)
@@ -142,7 +196,7 @@ class Keenetic(Driver):
                 'summary': {'model': ver.get('model'), 'fw': ver.get('title'), 'uptime': uptime_seconds(sysi.get('uptime')),
                             'cpu': sysi.get('cpuload'), 'mem': round(int(mem[0]) * 100 / max(1, int(mem[1]))),
                             'ip': cfg['host'], 'mac': lanmac},
-                'ports': ports, 'clients': clients, 'children': children, 'sections': sections}
+                'ports': ports, 'clients': clients, 'children': children, 'sections': sections, 'vpn': self._vpn(get, rc)}
 
     def action(self, cfg, action_id, params):
         if action_id == 'reboot':

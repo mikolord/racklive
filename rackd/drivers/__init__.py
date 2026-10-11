@@ -10,6 +10,10 @@ Every driver module defines a subclass of Driver. A driver turns a device config
     children  [{key, name, kind, model, ip, mac, status, clients, uptime, uplink}]   (mesh APs and the like)
     storage   {volumes: [{name, status, used, total}], disks: [{name, model, kind, sizeGB, temp, status}]}
     services  [{name, state}]
+    vpn       [{id, name, kind ('wireguard'|'openvpn'|'l2tp'|'pptp'|'sstp'|'ipsec'), role ('server'|'client'),
+                up, address, endpoint, routing (client tunnel carries default route), listenPort,
+                rx, tx, handshake (unix ts of last handshake | None),
+                peers: [{name, online, endpoint, subnet, handshake, rx, tx}]}]   VPN tunnels
     sections  [{title, rows: [[key, value], ...]}]   free-form structured info
     actions   [{id, label, scope ('device'|'port'), confirm}]
 """

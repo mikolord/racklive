@@ -40,6 +40,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
   if ((st.ports || []).length) tabs.push({ id: 'ports', label: `Порты · ${(st.ports || []).filter(p => p.link).length}/${st.ports.length}` });
   if ((st.children || []).length) tabs.push({ id: 'children', label: `Точки · ${st.children.length}` });
   if ((st.clients || []).length) tabs.push({ id: 'clients', label: `Клиенты · ${st.clients.length}` });
+  if ((st.vpn || []).length) tabs.push({ id: 'vpn', label: `VPN · ${st.vpn.filter(t => t.up).length}` });
   if (st.storage) tabs.push({ id: 'storage', label: 'Хранилище' });
   if ((st.services || []).length || (st.entities || []).length) tabs.push({ id: 'services', label: st.entities ? 'Управление' : `Сервисы · ${st.services.length}` });
   const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : 'overview');
@@ -53,6 +54,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
     {tab === 'ports' ? <PortsTab device={device} drv={drv} initialPort={initialPort} /> : null}
     {tab === 'children' ? <ChildrenTab device={device} drv={drv} /> : null}
     {tab === 'clients' ? <ClientsTab clients={st.clients} children={st.children} /> : null}
+    {tab === 'vpn' ? <VpnTab vpn={st.vpn} /> : null}
     {tab === 'storage' ? <StorageTab storage={st.storage} /> : null}
     {tab === 'services' ? <ServicesTab device={device} drv={drv} /> : null}
   </Sheet>;
@@ -246,6 +248,44 @@ function ClientsTab({ clients, children }) {
       </div></div>)}
       {!list.length ? <div className="empty">Ничего не найдено</div> : null}</div></Card>
   </>;
+}
+
+const VPN_KIND = { wireguard: 'WireGuard', openvpn: 'OpenVPN', l2tp: 'L2TP', pptp: 'PPTP', sstp: 'SSTP', ipsec: 'IPsec' };
+function hsText(ts, now) {
+  if (!ts) return 'не подключался';
+  const s = Math.max(0, Math.round(now - ts));
+  return s < 90 ? 'активен' : s < 3600 ? `${Math.floor(s / 60)} мин назад` : s < 86400 ? `${Math.floor(s / 3600)} ч назад` : `${Math.floor(s / 86400)} дн назад`;
+}
+function VpnTab({ vpn }) {
+  const { data } = useApp(); const now = data.now;
+  const servers = vpn.filter(t => t.role === 'server'), clients = vpn.filter(t => t.role === 'client');
+  return <div className="col" style={{ gap: 12 }}>
+    {clients.length ? <Card title="Подключения к VPN" pad={false}><div className="list" style={{ padding: '0 14px' }}>
+      {clients.map(t => <div className="li" key={t.id}>
+        <div className="ico-circle" style={{ background: `color-mix(in srgb, ${t.up ? 'var(--green)' : 'var(--text3)'} 16%, transparent)` }}><Icon name="globe2" size={18} color={t.up ? 'var(--green)' : 'var(--text3)'} /></div>
+        <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}><span style={{ fontWeight: 650, fontSize: 14 }} className="ellipsis">{t.name}</span>
+          <span className="badge">{VPN_KIND[t.kind] || t.kind}</span>{t.routing ? <span className="badge info">маршрут</span> : null}</div>
+          <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{t.endpoint ? '→ ' + t.endpoint : ''}{t.address ? ' · ' + t.address : ''}</div></div>
+        <div style={{ textAlign: 'right', fontSize: 12 }} className="dim">
+          <StatusBadge status={t.up ? 'online' : 'offline'} text={t.up ? 'подключён' : 'отключён'} />
+          {t.rx != null ? <div className="mono" style={{ marginTop: 3 }}>↓{fmt.bytes(t.rx)} ↑{fmt.bytes(t.tx)}</div> : null}</div>
+      </div>)}</div></Card> : null}
+    {servers.map(t => { const on = t.peers.filter(p => p.online).length;
+      return <Card key={t.id} title={<span className="row" style={{ gap: 8 }}><Icon name="shield" size={16} color="var(--accent)" />{t.name}</span>}
+        right={<span className="badge">{VPN_KIND[t.kind] || t.kind} · сервер</span>}>
+        <div className="row between dim" style={{ fontSize: 13, marginBottom: 10 }}>
+          <span>Онлайн: <b style={{ color: 'var(--text)' }}>{on}</b> из {t.peers.length}</span>
+          <span className="mono">↓{fmt.bytes(t.rx)} ↑{fmt.bytes(t.tx)}{t.listenPort ? ' · порт ' + t.listenPort : ''}</span></div>
+        <div className="list">{t.peers.map((p, i) => <div className="li" key={i}>
+          <span className={'dot ' + (p.online ? 'online' : 'offline')} style={{ marginTop: 7 }} />
+          <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 600, fontSize: 14 }} className="ellipsis">{p.name}</div>
+            <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{[p.subnet, p.endpoint].filter(Boolean).join(' · ') || '—'}</div></div>
+          <div style={{ textAlign: 'right', fontSize: 12 }} className="dim">
+            <div style={{ color: p.online ? 'var(--green)' : 'var(--text3)' }}>{hsText(p.handshake, now)}</div>
+            {p.rx ? <div className="mono dim3" style={{ marginTop: 2 }}>↓{fmt.bytes(p.rx)} ↑{fmt.bytes(p.tx)}</div> : null}</div>
+        </div>)}</div>
+      </Card>; })}
+  </div>;
 }
 
 function StorageTab({ storage }) {

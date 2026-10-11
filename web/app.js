@@ -196,6 +196,8 @@ const ICON_PATHS = {
   check: 'M5 12l5 5 9-11',
   wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0',
   globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
+  shield: 'M12 2l8 3v6c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V5z',
+  globe2: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   pulse: 'M2 12h4l3-8 4 16 3-8h6',
   cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2',
   alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
@@ -884,6 +886,10 @@ function DeviceSheet({
     id: 'clients',
     label: `Клиенты · ${st.clients.length}`
   });
+  if ((st.vpn || []).length) tabs.push({
+    id: 'vpn',
+    label: `VPN · ${st.vpn.filter(t => t.up).length}`
+  });
   if (st.storage) tabs.push({
     id: 'storage',
     label: 'Хранилище'
@@ -931,6 +937,8 @@ function DeviceSheet({
   }) : null, tab === 'clients' ? /*#__PURE__*/React.createElement(ClientsTab, {
     clients: st.clients,
     children: st.children
+  }) : null, tab === 'vpn' ? /*#__PURE__*/React.createElement(VpnTab, {
+    vpn: st.vpn
   }) : null, tab === 'storage' ? /*#__PURE__*/React.createElement(StorageTab, {
     storage: st.storage
   }) : null, tab === 'services' ? /*#__PURE__*/React.createElement(ServicesTab, {
@@ -1608,6 +1616,165 @@ function ClientsTab({
   }, c.rssi, " \u0434\u0411\u043C", c.rate ? ' · ' + c.rate + ' Мбит' : '') : /*#__PURE__*/React.createElement("div", null, c.segment)))), !list.length ? /*#__PURE__*/React.createElement("div", {
     className: "empty"
   }, "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E") : null)));
+}
+const VPN_KIND = {
+  wireguard: 'WireGuard',
+  openvpn: 'OpenVPN',
+  l2tp: 'L2TP',
+  pptp: 'PPTP',
+  sstp: 'SSTP',
+  ipsec: 'IPsec'
+};
+function hsText(ts, now) {
+  if (!ts) return 'не подключался';
+  const s = Math.max(0, Math.round(now - ts));
+  return s < 90 ? 'активен' : s < 3600 ? `${Math.floor(s / 60)} мин назад` : s < 86400 ? `${Math.floor(s / 3600)} ч назад` : `${Math.floor(s / 86400)} дн назад`;
+}
+function VpnTab({
+  vpn
+}) {
+  const {
+    data
+  } = useApp();
+  const now = data.now;
+  const servers = vpn.filter(t => t.role === 'server'),
+    clients = vpn.filter(t => t.role === 'client');
+  return /*#__PURE__*/React.createElement("div", {
+    className: "col",
+    style: {
+      gap: 12
+    }
+  }, clients.length ? /*#__PURE__*/React.createElement(Card, {
+    title: "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F \u043A VPN",
+    pad: false
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "list",
+    style: {
+      padding: '0 14px'
+    }
+  }, clients.map(t => /*#__PURE__*/React.createElement("div", {
+    className: "li",
+    key: t.id
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ico-circle",
+    style: {
+      background: `color-mix(in srgb, ${t.up ? 'var(--green)' : 'var(--text3)'} 16%, transparent)`
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "globe2",
+    size: 18,
+    color: t.up ? 'var(--green)' : 'var(--text3)'
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "grow",
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 650,
+      fontSize: 14
+    },
+    className: "ellipsis"
+  }, t.name), /*#__PURE__*/React.createElement("span", {
+    className: "badge"
+  }, VPN_KIND[t.kind] || t.kind), t.routing ? /*#__PURE__*/React.createElement("span", {
+    className: "badge info"
+  }, "\u043C\u0430\u0440\u0448\u0440\u0443\u0442") : null), /*#__PURE__*/React.createElement("div", {
+    className: "dim mono ellipsis",
+    style: {
+      fontSize: 12
+    }
+  }, t.endpoint ? '→ ' + t.endpoint : '', t.address ? ' · ' + t.address : '')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'right',
+      fontSize: 12
+    },
+    className: "dim"
+  }, /*#__PURE__*/React.createElement(StatusBadge, {
+    status: t.up ? 'online' : 'offline',
+    text: t.up ? 'подключён' : 'отключён'
+  }), t.rx != null ? /*#__PURE__*/React.createElement("div", {
+    className: "mono",
+    style: {
+      marginTop: 3
+    }
+  }, "\u2193", fmt.bytes(t.rx), " \u2191", fmt.bytes(t.tx)) : null))))) : null, servers.map(t => {
+    const on = t.peers.filter(p => p.online).length;
+    return /*#__PURE__*/React.createElement(Card, {
+      key: t.id,
+      title: /*#__PURE__*/React.createElement("span", {
+        className: "row",
+        style: {
+          gap: 8
+        }
+      }, /*#__PURE__*/React.createElement(Icon, {
+        name: "shield",
+        size: 16,
+        color: "var(--accent)"
+      }), t.name),
+      right: /*#__PURE__*/React.createElement("span", {
+        className: "badge"
+      }, VPN_KIND[t.kind] || t.kind, " \xB7 \u0441\u0435\u0440\u0432\u0435\u0440")
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "row between dim",
+      style: {
+        fontSize: 13,
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("span", null, "\u041E\u043D\u043B\u0430\u0439\u043D: ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: 'var(--text)'
+      }
+    }, on), " \u0438\u0437 ", t.peers.length), /*#__PURE__*/React.createElement("span", {
+      className: "mono"
+    }, "\u2193", fmt.bytes(t.rx), " \u2191", fmt.bytes(t.tx), t.listenPort ? ' · порт ' + t.listenPort : '')), /*#__PURE__*/React.createElement("div", {
+      className: "list"
+    }, t.peers.map((p, i) => /*#__PURE__*/React.createElement("div", {
+      className: "li",
+      key: i
+    }, /*#__PURE__*/React.createElement("span", {
+      className: 'dot ' + (p.online ? 'online' : 'offline'),
+      style: {
+        marginTop: 7
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "grow",
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600,
+        fontSize: 14
+      },
+      className: "ellipsis"
+    }, p.name), /*#__PURE__*/React.createElement("div", {
+      className: "dim mono ellipsis",
+      style: {
+        fontSize: 12
+      }
+    }, [p.subnet, p.endpoint].filter(Boolean).join(' · ') || '—')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'right',
+        fontSize: 12
+      },
+      className: "dim"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: p.online ? 'var(--green)' : 'var(--text3)'
+      }
+    }, hsText(p.handshake, now)), p.rx ? /*#__PURE__*/React.createElement("div", {
+      className: "mono dim3",
+      style: {
+        marginTop: 2
+      }
+    }, "\u2193", fmt.bytes(p.rx), " \u2191", fmt.bytes(p.tx)) : null)))));
+  }));
 }
 function StorageTab({
   storage

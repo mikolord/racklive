@@ -68,8 +68,27 @@ class DemoRouter(DemoBase):
                 'clients': clients,
                 'children': [{'key': k, 'name': n, 'kind': 'ap', 'model': 'Keenetic Orbiter Pro', 'ip': ip, 'mac': m, 'status': 'online',
                               'clients': sum(1 for w in WIFI if w[2] == k), 'uptime': int(t - T0 + 864_000), 'uplink': 1000, 'fw': '4.3.6'} for k, n, ip, m in APS],
+                'vpn': self._vpn(t),
                 'sections': [{'title': 'Сегменты', 'rows': [[k, f'{v} устр.'] for k, v in sorted(by.items(), key=lambda kv: -kv[1])]},
                              {'title': 'Интернет', 'rows': [['WAN IP', '203.0.113.24'], ['Провайдер', 'Оптика 1 Гбит/с']]}]}
+
+    def _vpn(self, t):
+        gw = [('Ноутбук · Директор', '10.20.0.2', True, 40), ('iPhone · Директор', '10.20.0.3', True, 120),
+              ('Дом · Склад', '10.20.0.4', True, 15), ('Ноутбук · Бухгалтер', '10.20.0.5', False, None)]
+        peers = [{'name': n, 'online': on, 'endpoint': f'{85 + i * 7}.{12 + i}.{i * 9}.{40 + i}:51820' if on else None,
+                  'subnet': ip, 'handshake': int(t - (hs or 0)) if on else None,
+                  'rx': int(2e8 * (i + 1) * (.5 + .5 * wave(t))) if on else 0, 'tx': int(6e7 * (i + 1)) if on else 0}
+                 for i, (n, ip, on, hs) in enumerate(gw)]
+        return [
+            {'id': 'wg0', 'name': 'Офисный VPN', 'kind': 'wireguard', 'role': 'server', 'up': True, 'address': '10.20.0.1',
+             'routing': False, 'listenPort': 51820, 'endpoint': None, 'handshake': None,
+             'rx': sum(p['rx'] for p in peers), 'tx': sum(p['tx'] for p in peers), 'peers': peers},
+            {'id': 'wg1', 'name': 'Выход · Нидерланды', 'kind': 'wireguard', 'role': 'client', 'up': True, 'address': '10.8.1.2',
+             'routing': True, 'endpoint': '194.5.53.17:51820', 'listenPort': None, 'peers': [],
+             'rx': int(3.2e10 * (.6 + .4 * wave(t))), 'tx': int(1.6e9), 'handshake': int(t - 40)},
+            {'id': 'ovpn', 'name': 'Бухгалтерия · банк', 'kind': 'openvpn', 'role': 'client', 'up': False, 'address': None,
+             'routing': False, 'endpoint': 'vpn.bank.example:1194', 'listenPort': None, 'peers': [],
+             'rx': None, 'tx': None, 'handshake': int(t - 7200)}]
 
 
 class DemoSwitch(DemoBase):
