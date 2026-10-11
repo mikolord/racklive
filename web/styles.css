@@ -328,13 +328,10 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 
 /* places: box / room tile view + type picker */
 .tilebox { background: var(--card); border: .5px solid var(--line); border-radius: 18px; padding: 16px; backdrop-filter: blur(20px); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; margin-top: 14px; }
 .tile { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 8px; min-height: 64px; padding: 12px 14px 12px 18px; border-radius: 13px; background: var(--bg2); border: .5px solid var(--line); cursor: pointer; overflow: hidden; transition: transform .14s, box-shadow .2s; }
 .tile:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
 .tile .strip { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; }
 .tile.passive { opacity: .82; }
-.tile.add { align-items: center; justify-content: center; flex-direction: row; gap: 8px; color: var(--accent); border-style: dashed; background: none; font-weight: 600; font-size: 14px; }
-.tile.add:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); transform: none; }
 .place-pick { display: flex; flex-direction: column; gap: 8px; }
 .place-opt { display: flex; align-items: center; gap: 12px; text-align: left; padding: 12px 14px; border-radius: 13px; border: 1.5px solid var(--line); background: var(--bg2); cursor: pointer; color: var(--text); }
 .place-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
@@ -348,10 +345,10 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .tile.free.grabbing { cursor: grabbing; box-shadow: var(--shadow-lg); z-index: 5; opacity: .95; transition: none; }
 
 /* floor plan */
-.plan-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.plan-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; overflow-x: auto; }
 .plan-palette { margin-bottom: 10px; }
 .plan-canvas { position: relative; height: calc(100vh - 290px); min-height: 440px; border-radius: 16px; overflow: hidden; border: .5px solid var(--line); background: var(--bg2); touch-action: none; }
-.plan-canvas.crosshair { cursor: crosshair; }
+.plan-canvas.crosshair { cursor: none; }                    /* PlanCursor draws a visible snap marker instead */
 .plan-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .plan-wall { stroke: var(--text2); stroke-width: 6; stroke-linecap: round; }
 .plan-wall.draft { stroke: var(--accent); stroke-dasharray: 6 6; opacity: .8; }
@@ -372,14 +369,12 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .pb-hint { font-size: 10.5px; fill: var(--text3); }
 .plan-link { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 8 5; cursor: pointer; }
 .plan-link-label { font-size: 11.5px; font-weight: 600; fill: var(--accent); paint-order: stroke; stroke: var(--bg2); stroke-width: 4px; }
-.plan-room-label { font-size: 11px; font-weight: 700; fill: var(--text2); paint-order: stroke; stroke: var(--bg2); stroke-width: 3px; }
 .plan-room.sel rect { stroke-width: 2.5 !important; }
 .plan-room-draft { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-dasharray: 5 5; }
 .ghost { opacity: .32; pointer-events: none; }
 .plan-wall.ghost { stroke-width: 4; stroke-dasharray: 4 6; }
 .plan-room-ghost { fill: none; stroke: var(--text3); stroke-dasharray: 4 5; }
 .plan-item-ghost { fill: none; stroke: var(--text3); stroke-width: 1.5; }
-.plan-tools { overflow-x: auto; }
 @media (max-width: 760px) {
   .plan-canvas { height: 62vh; min-height: 360px; }
   .plan-canvas .zoom-btns { bottom: 14px; }
@@ -389,8 +384,43 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 /* plan cursor + finished rooms + erase selection */
 .plan-cursor { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); stroke-width: 1.5; }
 .plan-cursor-x { stroke: var(--accent); stroke-width: 1.5; }
-.plan-canvas.crosshair { cursor: none; }
 .pr-fill { stroke-width: 2.5; }
 .plan-room.sel .pr-fill { stroke-width: 4; }
 .pr-tag { font-size: 11px; font-weight: 700; fill: #fff; }
 .plan-erase-draft { fill: color-mix(in srgb, var(--red) 12%, transparent); stroke: var(--red); stroke-dasharray: 5 5; }
+
+/* poles on the territory */
+.pole-bg { fill: var(--card-solid); stroke: var(--accent); stroke-width: 1.8; }
+.plan-pole.sel .pole-bg { stroke-width: 3.5; }
+.pole-mast { stroke: var(--text2); stroke-width: 2.2; stroke-linecap: round; }
+.pole-ins { fill: var(--accent); }
+
+/* device picker, UPS card, patch / cross port map */
+.dev-pick { display: flex; flex-wrap: wrap; gap: 6px; max-height: 190px; overflow: auto; padding: 2px; }
+.ups-big { font-size: 28px; font-weight: 800; letter-spacing: -.6px; line-height: 1.1; }
+.ups-big small { font-size: 14px; font-weight: 600; color: var(--text2); }
+.pm { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.pm-grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(26px, 1fr)); gap: 5px; padding: 10px; border-radius: 12px; background: #1c1c1e; overflow-x: auto; }
+.pm-port { position: relative; height: 30px; min-width: 26px; border-radius: 6px; border: 1px solid #3a3a3c; background: #2c2c2e; color: #aeaeb2; font: 600 10.5px var(--mono); cursor: pointer; overflow: hidden; }
+.pm-port.set { border-color: #636366; color: #fff; }
+.pm-port.down { border-color: #636366; color: #fff; box-shadow: inset 0 -3px 0 #48484a; }
+.pm-port.g { border-color: var(--green); color: #fff; box-shadow: inset 0 -3px 0 var(--green); }
+.pm-port.y { border-color: #ffd60a; color: #fff; box-shadow: inset 0 -3px 0 #ffd60a; }
+.pm-port.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pm-fiber { position: absolute; left: 0; top: 0; right: 0; height: 5px; }
+.pm-lg { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: #48484a; }
+.pm-lg.g { background: var(--green); } .pm-lg.y { background: #ffd60a; }
+.pm-detail { background: var(--fill); border-radius: 12px; padding: 10px 12px; font-size: 14px; display: flex; flex-direction: column; gap: 3px; }
+.pm-num { font: 700 12px var(--mono); min-width: 30px; height: 26px; padding: 0 6px; display: grid; place-items: center; border-radius: 7px; background: var(--fill); }
+.pm-table-wrap { overflow: auto; max-height: 60vh; margin: 0 -4px; }
+.pm-table td { padding: 4px 4px; } .pm-table th { position: sticky; top: 0; background: var(--card-solid); z-index: 1; }
+.pm-in { height: 32px; padding: 4px 8px; font-size: 13px; min-width: 90px; }
+.pm-sel { height: 32px; padding: 2px 6px; font-size: 13px; min-width: 70px; }
+.pm-port.pm-empty { opacity: .45; border-style: dashed; }
+
+/* modem sockets, swap highlight, unit hint */
+.pm-grid.named { grid-template-columns: repeat(var(--cols), minmax(52px, 1fr)); }
+.pm-port.named { font-size: 10px; padding: 0 4px; }
+.unit.swap { outline: 2px dashed var(--accent); outline-offset: -2px; opacity: .75; }
+.unit-hint { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; font-size: 13px; color: var(--text2);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }

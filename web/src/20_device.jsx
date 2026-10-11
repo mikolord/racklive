@@ -78,13 +78,14 @@ function Overview({ device, drv }) {
   if (s.mem != null) stats.push(<Stat key="mem" k="Память" v={Math.round(s.mem)} unit="%" level={s.mem > 90 ? 'warn' : ''} spark={hist} sparkField="mem" color="var(--purple)" />);
   if (s.temp != null) stats.push(<Stat key="temp" k="Температура" v={s.temp} unit="°C" level={s.temp > 65 ? 'warn' : ''} spark={hist} sparkField="temp" color="var(--orange)" />);
   if (s.uptime != null) stats.push(<Stat key="up" k="Аптайм" v={fmt.uptime(s.uptime)} />);
-  (st.metrics || []).forEach((m, i) => stats.push(<Stat key={'m' + i} k={m.label} v={m.value} unit={m.unit} level={m.level}
+  (st.ups ? [] : st.metrics || []).forEach((m, i) => stats.push(<Stat key={'m' + i} k={m.label} v={m.value} unit={m.unit} level={m.level}
     spark={m.label === 'Задержка' || m.label === 'PoE' ? hist : null} sparkField={m.label === 'Задержка' ? 'ms' : 'poe'} color="var(--green)" />));
   const devActions = (drv?.actions || []).filter(a => a.scope === 'device');
   return <>
     {st.error ? <div className="card pad" style={{ borderColor: 'var(--red)', color: 'var(--red)' }}><b>Нет связи:</b> {st.error}
       {st.updated && st.summary ? <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>Показаны последние известные данные</div> : null}</div> : null}
     {stats.length ? <div className="stats">{stats}</div> : null}
+    {st.ups ? <UpsCard ups={st.ups} /> : null}
     <Card title="Сведения">
       <KV rows={[['Модель', s.model], ['Прошивка', s.fw], ['IP-адрес', s.ip ? <span className="mono">{s.ip}</span> : null],
         ['MAC', s.mac ? <span className="mono">{s.mac}</span> : null], ['Тип подключения', drv?.title],
@@ -97,6 +98,44 @@ function Overview({ device, drv }) {
       <Btn key={a.id} kind="danger" icon="power" onClick={() => runAction(device, a)}>{a.label}</Btn>)}</div></Card> : null}
     <EventsList events={data.events.filter(e => e.device === device.id).slice(0, 8)} compact />
   </>;
+}
+
+const fmtMin = m => m == null ? '—' : m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
+function UpsCard({ ups }) {
+  const { data, openDevice } = useApp();
+  const chargeCol = ups.charge == null ? '' : ups.charge > 50 ? 'var(--green)' : ups.charge > 20 ? 'var(--orange)' : 'var(--red)';
+  const total = ups.connected.reduce((a, c) => a + c.w, 0) + (ups.extraW || 0);
+  return <Card title="ИБП" right={ups.estimated ? <span className="badge">расчёт без кабеля данных</span>
+    : <StatusBadge status={ups.onBattery ? 'warning' : 'online'} text={ups.onBattery ? 'От батареи' : 'От сети'} />}>
+    <div className="row" style={{ alignItems: 'flex-end', gap: 16 }}>
+      <div><div className="ups-big">{ups.runtimeEstimated ? '≈ ' : ''}{fmtMin(ups.runtimeMin)}</div>
+        <div className="dim" style={{ fontSize: 12.5 }}>хватит при отключении света</div></div>
+      <div className="grow" />
+      <div style={{ textAlign: 'right' }}><div className="ups-big">{ups.loadW}<small> Вт</small></div>
+        <div className="dim" style={{ fontSize: 12.5 }}>{ups.nominalW ? `из ${Math.round(ups.nominalW)} Вт · ${ups.loadPct}%` : 'нагрузка (укажите мощность ИБП для %)'}</div></div>
+    </div>
+    {ups.loadPct != null ? <div style={{ marginTop: 12 }}><div className="dim3" style={{ fontSize: 11.5, marginBottom: 4 }}>Нагрузка {ups.loadPct}%</div><Bar value={ups.loadPct} warnAt={70} badAt={85} /></div> : null}
+    {ups.charge != null ? <div style={{ marginTop: 10 }}><div className="dim3" style={{ fontSize: 11.5, marginBottom: 4 }}>Заряд {Math.round(ups.charge)}%{ups.charging ? ' · заряжается' : ''}</div>
+      <div className="bar"><i style={{ width: ups.charge + '%', background: chargeCol }} /></div></div> : null}
+    {ups.lowBattery || ups.replace ? <div className="badge offline" style={{ marginTop: 10 }}>{ups.replace ? 'Пора менять аккумулятор' : 'Батарея почти разряжена'}</div> : null}
+    <div style={{ marginTop: 12 }}><KV rows={[['Аккумулятор', `${ups.batteryDesc} · ≈ ${ups.batteryWh} Вт·ч`],
+      ...(ups.inputV != null ? [['Вход / выход', `${ups.inputV ?? '—'} В / ${ups.outputV ?? '—'} В`]] : []),
+      ['Данные', ups.mode === 'nut' ? 'по USB через NUT' : ups.mode === 'snmp' ? 'сетевая карта (SNMP)' : 'расчёт по подключённым устройствам']]} /></div>
+    <div className="card-title" style={{ margin: '14px 0 4px' }}>Подключено · {ups.connected.length + (ups.extraW ? 1 : 0)}</div>
+    <div className="list">{ups.connected.map(c => { const d = data.devices.find(x => x.id === c.id);
+      return <div className="li" key={c.id} style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && openDevice(d)}>
+        <KindIcon kind={c.kind || 'other'} size={30} round={8} />
+        <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{c.status ? <span className={'dot ' + c.status} /> : null}<b style={{ fontSize: 14 }} className="ellipsis">{c.name}</b></div>
+          <div className="dim3" style={{ fontSize: 12 }}>{c.src}</div></div>
+        <b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>; })}
+      {ups.extraW ? <div className="li"><div className="ico-circle"><Icon name="bolt" size={16} /></div><div className="grow"><b style={{ fontSize: 14 }}>Прочее</b>
+        <div className="dim3" style={{ fontSize: 12 }}>{ups.extraNote || 'без описания'}</div></div><b className="mono" style={{ fontSize: 13 }}>{ups.extraW} Вт</b></div> : null}
+      {!ups.connected.length && !ups.extraW ? <div className="empty" style={{ fontSize: 13 }}>Укажите в настройках, что подключено к ИБП</div> : null}
+    </div>
+    {ups.connected.length || ups.extraW ? <div className="row between" style={{ fontSize: 13, marginTop: 6 }}><span className="dim">Итого по списку</span><b className="mono">{total} Вт</b></div> : null}
+    {ups.estimated ? <div className="dim3" style={{ fontSize: 12, marginTop: 10, lineHeight: 1.45 }}>Время — оценка по ёмкости аккумулятора и типичному потреблению устройств
+      (у коммутатора учитывается реальный PoE, у NAS — число дисков). Подключите ИБП кабелем USB к NAS и включите там NUT-сервер — будут точные заряд, нагрузка и время.</div> : null}
+  </Card>;
 }
 
 function vlanColor(vid, vlans) { const v = (vlans || []).find(x => +x.vid === +vid); return v ? v.color : 'var(--text3)'; }
@@ -182,7 +221,9 @@ function PortsTab({ device, drv, initialPort }) {
       <KV rows={[['Скорость', p.link ? fmt.speed(p.speed) : '—'], ...(p.poe ? [['PoE', p.poeW ? `${p.poeW} Вт` : 'нет потребителя']] : []),
         ['VLAN (untagged)', (p.vlansU || []).map(v => vlanName(v, vlans)).join(', ')],
         ['VLAN (tagged)', (p.vlansT || []).map(v => vlanName(v, vlans)).join(', ')], ...(p.ip ? [['IP', p.ip]] : []), ['Интерфейс', p.name],
-        ...(p.lldp ? [['Сосед (LLDP)', p.lldp]] : []), ...(p.rxBytes != null ? [['Всего передано', `↓ ${fmt.bytes(p.txBytes)} · ↑ ${fmt.bytes(p.rxBytes)}`]] : [])]} />
+        ...(p.lldp ? [['Сосед (LLDP)', p.lldp]] : []),
+        ...patchesFor(data, device.id, p.n).map(x => [x.unit.type === 'cross' ? 'Оптический кросс' : 'Патч-панель',
+          `${x.unit.name}, порт ${x.n}${x.m.label ? ' → ' + x.m.label : ''}${x.m.color ? ' · ' + x.m.color : ''}`]), ...(p.rxBytes != null ? [['Всего передано', `↓ ${fmt.bytes(p.txBytes)} · ↑ ${fmt.bytes(p.rxBytes)}`]] : [])]} />
       {p.rxBytes != null ? <div style={{ marginTop: 14 }}><div className="card-title" style={{ marginBottom: 8 }}>Трафик за сутки</div><TrafficChart points={traffic} /></div> : null}
       {(p.peers || []).length ? <div style={{ marginTop: 12 }}>
         <div className="card-title" style={{ marginBottom: 4 }}>Подключено ({p.peers.length})</div>

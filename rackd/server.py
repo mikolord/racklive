@@ -1,5 +1,5 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, json, mimetypes, os, re, secrets, signal, threading, time, traceback
+import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threading, time, traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -8,7 +8,7 @@ from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.0.0'
+VERSION = '2.1.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -27,6 +27,8 @@ class App:
         self.states = {}
         self.running = set()
         self.last_start = {}
+        self.retried = set()
+        self._view_cache = {}
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -35,8 +37,12 @@ class App:
         drv = REGISTRY.get(d.get('driver'))
         t = time.time()
         try:
-            st = drv.poll(d)
+            # drivers like the UPS look at other devices' live data (PoE watts, disks)
+            st = drv.poll(dict(d, _ctx={'states': self.states, 'devices': self.store.cfg['devices']}) if getattr(drv, 'wants_ctx', False) else d)
             st['error'] = None
+            if st.pop('_retry', False) and d['id'] not in self.retried:
+                self.retried.add(d['id'])
+                threading.Timer(12, lambda: self.poll_device(d)).start()
         except DriverError as e:
             st = {'status': 'offline', 'error': str(e)}
         except Exception as e:
@@ -66,6 +72,7 @@ class App:
                             p['rxBps'], p['txBps'] = round(drx * 8 / dt), round(dtx * 8 / dt)
                             self.store.add_point(f"{d['id']}:p{p['n']}", {'t': int(st['updated']), 'rx': p['rxBps'], 'tx': p['txBps']}, avg=True)
             self.states[d['id']] = st
+            self.store.bump()
             prev, cur = old.get('status'), st.get('status')
             if prev is None and cur == 'offline':
                 self.store.add_event(d['id'], d.get('name'), 'offline', 'нет связи' + (f": {st.get('error')}" if st.get('error') else ''))
@@ -135,6 +142,15 @@ class App:
         return idx
 
     def view(self, authed):
+        """Built once per data change (topology + analysis are not free) and shared by every open window."""
+        key = (bool(authed), self.store.rev, len(self.states))
+        hit = self._view_cache.get(bool(authed))
+        if not hit or hit[0] != key:
+            hit = (key, self._view(authed))
+            self._view_cache[bool(authed)] = hit
+        return dict(hit[1], now=time.time())
+
+    def _view(self, authed):
         cfg = self.store.cfg
         idx = self.peer_index()
         devices = []
@@ -196,10 +212,19 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if n else b''
         return json.loads(raw) if raw else {}
 
+    def gz(self, b):
+        """gzip text bodies for clients that accept it — the state JSON and app.js shrink ~5x (matters on phones)"""
+        if len(b) > 1400 and 'gzip' in (self.headers.get('Accept-Encoding') or ''):
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Vary', 'Accept-Encoding')
+            return gzip.compress(b, 5)
+        return b
+
     def send(self, obj, code=200, headers=None):
-        b = json.dumps(obj, ensure_ascii=False).encode()
+        b = json.dumps(obj, ensure_ascii=False, separators=(',', ':')).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        b = self.gz(b)
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
         for k, v in (headers or {}).items():
@@ -233,7 +258,10 @@ class Handler(BaseHTTPRequestHandler):
         with open(full, 'rb') as f:
             b = f.read()
         self.send_response(200)
+        texty = ctype.startswith(('text', 'application/javascript', 'application/json', 'image/svg'))
         self.send_header('Content-Type', ctype + ('; charset=utf-8' if ctype.startswith(('text', 'application/javascript', 'application/json')) else ''))
+        if texty:
+            b = self.gz(b)
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-cache' if full.endswith(('.html', '.js', '.css')) else 'max-age=86400')
         self.send_header('X-Content-Type-Options', 'nosniff')
@@ -379,7 +407,8 @@ class Handler(BaseHTTPRequestHandler):
                 b = body.get('buildings')
                 if not isinstance(b, list):
                     return self.err('неверные данные')
-                st.cfg['plan'] = {'buildings': b, 'links': body.get('links') if isinstance(body.get('links'), list) else []}
+                st.cfg['plan'] = {'buildings': b, 'links': body.get('links') if isinstance(body.get('links'), list) else [],
+                                  'poles': body.get('poles') if isinstance(body.get('poles'), list) else []}
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/import' and method == 'POST':
@@ -450,10 +479,12 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = dict(body)
                 if body.get('id'):
                     old = st.device(body['id']) or {}
-                    for k in ('password', 'token'):
+                    for k in ('password', 'token', 'privateKey'):
                         if not cfg.get(k):
                             cfg[k] = old.get(k)
                 try:
+                    if getattr(drv, 'wants_ctx', False):
+                        cfg['_ctx'] = {'states': APP.states, 'devices': st.cfg['devices']}
                     res = drv.poll(cfg)
                     s = res.get('summary') or {}
                     return self.send({'ok': True, 'summary': s, 'ports': len(res.get('ports') or []), 'clients': len(res.get('clients') or [])})

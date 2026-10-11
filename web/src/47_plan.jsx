@@ -108,15 +108,41 @@ const BW = 240, BH = 150;
 function Territory({ plan, enter }) {
   const { data, edit, savePlan } = useApp();
   const toast = useToast(); const confirm = useConfirm();
-  const buildings = plan.buildings || []; const links = plan.links || [];
+  const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || [];
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   const wrap = useRef(null);
-  const [tool, setTool] = useState('select');               // select | link
+  const [tool, setTool] = useState('select');               // select | link | pole
   const [linkFrom, setLinkFrom] = useState(null);
   const [sel, setSel] = useState(null);
-  const save = (b, l) => savePlan({ buildings: b || buildings, links: l || links });
+  const save = (b, l, p) => savePlan({ ...plan, buildings: b || buildings, links: l || links, poles: p || poles });
   const pos = b => ({ x: typeof b.x === 'number' ? b.x : 40 + (buildings.indexOf(b) % 3) * (BW + 80), y: typeof b.y === 'number' ? b.y : 40 + Math.floor(buildings.indexOf(b) / 3) * (BH + 120) });
-  const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap: () => setSel(null) });
+  const nodeName = id => (buildings.find(x => x.id === id) || poles.find(x => x.id === id) || {}).name || '';
+  const [linkEdit, setLinkEdit] = useState(null);             // {link, isNew}
+  const pickNode = id => {                                    // link tool: building or pole, two taps
+    if (!linkFrom) { setLinkFrom(id); toast('Теперь выберите второй дом или столб'); return; }
+    if (linkFrom === id) { setLinkFrom(null); return; }
+    setLinkEdit({ link: { id: uid('l'), from: linkFrom, to: id, label: '' }, isNew: true });
+    setLinkFrom(null);
+  };
+  const saveLink = l => save(null, linkEdit.isNew ? [...links, l] : links.map(x => x.id === l.id ? l : x));
+  const onTap = w => {
+    if (tool === 'pole') { save(null, null, [...poles, { id: uid('p'), name: `Столб ${poles.length + 1}`, x: snap(w.x), y: snap(w.y) }]); return; }
+    setSel(null);
+  };
+  const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap });
+  const delPole = async id => { const p = poles.find(x => x.id === id);
+    if (!(await confirm(`Удалить «${p.name}» и его магистрали?`, { danger: true, ok: 'Удалить' }))) return;
+    save(null, links.filter(l => l.from !== id && l.to !== id), poles.filter(x => x.id !== id)); setSel(null); };
+  const dragPole = (p, e) => {
+    if (tool === 'link') { pickNode(p.id); return; }
+    if (!edit || tool !== 'select') return;
+    e.stopPropagation(); const sx = e.clientX, sy = e.clientY; let moved = false;
+    const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 5) moved = true; if (moved) {
+      const nx = snap(p.x + (ev.clientX - sx) / view.k), ny = snap(p.y + (ev.clientY - sy) / view.k);
+      savePlan({ ...plan, poles: poles.map(x => x.id === p.id ? { ...x, x: nx, y: ny } : x) }); } };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (!moved) setSel(p.id); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
 
   const addBuilding = () => { const id = uid('b'); const n = buildings.length;
     save([...buildings, { id, name: `Дом ${n + 1}`, x: 40 + (n % 3) * (BW + 80), y: 40 + Math.floor(n / 3) * (BH + 120),
@@ -125,15 +151,14 @@ function Territory({ plan, enter }) {
     if (!(await confirm(`Удалить дом «${b.name}» со всеми этажами? Оборудование и шкафы останутся — удалится только их размещение на плане.`, { danger: true, ok: 'Удалить дом' }))) return;
     save(buildings.filter(x => x.id !== id), links.filter(l => l.from !== id && l.to !== id)); setSel(null); };
   const dragB = (b, e) => {
-    if (tool === 'link') { if (!linkFrom) { setLinkFrom(b.id); toast('Теперь выберите второй дом'); } else if (linkFrom !== b.id) {
-        const label = prompt('Подпись магистрали (например «Оптика 1 Гбит»)', '') || '';
-        save(null, [...links, { id: uid('l'), from: linkFrom, to: b.id, label }]); setLinkFrom(null); } else setLinkFrom(null); return; }
+    if (tool === 'link') { pickNode(b.id); return; }
+    if (tool === 'pole') return;
     if (!edit) { enter(b.id); return; }
     e.stopPropagation(); const p = pos(b); const r = wrap.current.getBoundingClientRect();
     const sx = e.clientX, sy = e.clientY; let moved = false;
     const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 5) moved = true; if (moved) {
       const nx = snap(p.x + (ev.clientX - sx) / view.k), ny = snap(p.y + (ev.clientY - sy) / view.k);
-      savePlan({ buildings: buildings.map(x => x.id === b.id ? { ...x, x: nx, y: ny } : x), links }); } };
+      savePlan({ ...plan, buildings: buildings.map(x => x.id === b.id ? { ...x, x: nx, y: ny } : x) }); } };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (!moved) { setSel(b.id); } };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
@@ -144,33 +169,40 @@ function Territory({ plan, enter }) {
     {edit ? <Btn kind="primary" icon="home" onClick={addBuilding}>Создать дом</Btn> : <div className="dim">Включите «Редактирование», чтобы начать.</div>}
   </div>;
 
-  const center = b => { const p = pos(b); return { x: p.x + BW / 2, y: p.y + BH / 2 }; };
-  const selB = buildings.find(b => b.id === sel);
+  const center = id => { const b = buildings.find(x => x.id === id); if (b) { const p = pos(b); return { x: p.x + BW / 2, y: p.y + BH / 2 }; }
+    const p = poles.find(x => x.id === id); return p ? { x: p.x, y: p.y } : null; };
+  const selB = buildings.find(b => b.id === sel), selP = poles.find(p => p.id === sel);
   return <div className="plan">
     {edit ? <div className="plan-tools">
-      <Seg value={tool} onChange={v => { setTool(v); setLinkFrom(null); }} options={[{ value: 'select', label: 'Дома', icon: 'cursor' }, { value: 'link', label: 'Магистраль', icon: 'link' }]} />
+      <Seg value={tool} onChange={v => { setTool(v); setLinkFrom(null); }} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' },
+        { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }]} />
       <Btn size="sm" icon="plus" onClick={addBuilding}>Дом</Btn>
       {selB ? <><span className="dim" style={{ fontSize: 13 }}>·</span>
         <Btn size="sm" onClick={() => { const name = prompt('Название дома', selB.name); if (name && name.trim()) save(buildings.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
         <Btn size="sm" kind="danger" icon="trash" onClick={() => delBuilding(sel)}>Удалить дом</Btn></> : null}
+      {selP ? <><span className="dim" style={{ fontSize: 13 }}>·</span>
+        <Btn size="sm" onClick={() => { const name = prompt('Название столба', selP.name); if (name && name.trim()) save(null, null, poles.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
+        <Btn size="sm" kind="danger" icon="trash" onClick={() => delPole(sel)}>Удалить столб</Btn></> : null}
     </div> : null}
-    {linkFrom ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="link" size={15} />Выберите второй дом для магистрали</div> : null}
+    {linkFrom ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="link" size={15} />От «{nodeName(linkFrom)}» — выберите второй дом или столб</div> : null}
+    {tool === 'pole' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="pole" size={15} />Нажмите на план, куда поставить столб</div> : null}
     <div className="plan-canvas" ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridT" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
         <rect x={0} y={0} width="100%" height="100%" fill="url(#pgridT)" />
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-          {links.map((l, idx) => { const a = buildings.find(x => x.id === l.from), b = buildings.find(x => x.id === l.to); if (!a || !b) return null;
+          {links.map((l, idx) => { const c1 = center(l.from), c2 = center(l.to); if (!c1 || !c2) return null;
             const key = [l.from, l.to].sort().join('>');                    // offset parallel links between the same pair
             const sib = links.filter(x => [x.from, x.to].sort().join('>') === key);
             const pos2 = sib.indexOf(l), off = (pos2 - (sib.length - 1) / 2) * 22;
-            const c1 = center(a), c2 = center(b); const dx = c2.x - c1.x, dy = c2.y - c1.y, len = Math.hypot(dx, dy) || 1;
+            const dx = c2.x - c1.x, dy = c2.y - c1.y, len = Math.hypot(dx, dy) || 1;
             const nx = -dy / len * off, ny = dx / len * off;
             const p1 = { x: c1.x + nx, y: c1.y + ny }, p2 = { x: c2.x + nx, y: c2.y + ny };
             return <g key={l.id}>
-              <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="plan-link" onClick={() => edit && confirm('Удалить эту магистраль?', { danger: true, ok: 'Удалить' }).then(ok => ok && save(null, links.filter(x => x.id !== l.id)))} />
-              {l.label ? <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 8} textAnchor="middle" className="plan-link-label">{l.label}</text> : null}</g>; })}
+              <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="plan-link" onClick={() => edit && setLinkEdit({ link: l })} />
+              {l.label || l.via ? <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 8} textAnchor="middle" className="plan-link-label">
+                {[l.label, viaText(data, l.via, true)].filter(Boolean).join(' · ')}</text> : null}</g>; })}
           {buildings.map(b => { const p = pos(b); const devs = (b.floors || []).flatMap(f => floorDevices(f, data, devById)); const st = worst(devs);
             const hasYard = (b.floors || []).some(f => f.outdoor);
             return <g key={b.id} className={'plan-item plan-building' + (sel === b.id ? ' sel' : '') + (linkFrom === b.id ? ' sel' : '')} transform={`translate(${p.x},${p.y})`}
@@ -183,11 +215,50 @@ function Territory({ plan, enter }) {
               <circle cx={BW - 20} cy={22} r={6} fill={statusColor(st)} />
               <text x={18} y={BH - 18} className="pb-hint">{edit ? 'перетащите · нажмите — внутрь' : 'нажмите, чтобы зайти'}</text>
             </g>; })}
+          {poles.map(p => <g key={p.id} className={'plan-item plan-pole' + (sel === p.id || linkFrom === p.id ? ' sel' : '')} transform={`translate(${p.x},${p.y})`}
+            onPointerDown={e => dragPole(p, e)} style={{ cursor: edit && tool === 'select' ? 'move' : 'pointer' }}>
+            <circle r={16} className="pole-bg" />
+            <line x1={0} y1={-8} x2={0} y2={11} className="pole-mast" /><line x1={-9} y1={-8} x2={9} y2={-8} className="pole-mast" />
+            <circle cx={-9} cy={-10.5} r={2} className="pole-ins" /><circle cx={0} cy={-10.5} r={2} className="pole-ins" /><circle cx={9} cy={-10.5} r={2} className="pole-ins" />
+            <text y={30} textAnchor="middle" className="pi-label">{p.name.length > 16 ? p.name.slice(0, 15) + '…' : p.name}</text></g>)}
         </g>
       </svg>
       <ZoomBtns setView={setView} />
     </div>
+    {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}
+      onSave={saveLink} onDelete={() => save(null, links.filter(x => x.id !== linkEdit.link.id))} onClose={() => setLinkEdit(null)} /> : null}
   </div>;
+}
+
+/* the physical cable behind a backbone: a fibre of an optical cross or a patch-panel port */
+function viaText(data, via, short) {
+  if (!via) return '';
+  const u = allUnits(data).find(x => x.id === via.unit); if (!u) return '';
+  const m = ((u.portmap || {}).ports || {})[via.port] || {};
+  return short ? `${u.type === 'cross' ? 'волокно' : 'порт'} ${via.port}${m.color ? ' ' + m.color : ''}`
+    : `${u.name} · ${u.type === 'cross' ? 'волокно' : 'порт'} ${via.port}${m.color ? ' (' + m.color + ')' : ''}${m.label ? ' · ' + m.label : ''}`;
+}
+function LinkEditor({ link, isNew, title, onSave, onDelete, onClose }) {
+  const { data } = useApp(); const confirm = useConfirm();
+  const [label, setLabel] = useState(link.label || '');
+  const [via, setVia] = useState(link.via ? link.via.unit + '|' + link.via.port : '');
+  const opts = allUnits(data).filter(u => u.portmap && (u.type === 'cross' || u.type === 'patch')).flatMap(u =>
+    Array.from({ length: u.portmap.count }, (_, i) => { const n = i + 1, m = u.portmap.ports[n] || {};
+      return { v: u.id + '|' + n, u, t: viaText(data, { unit: u.id, port: n }), used: !!(m.label || m.color || m.dev) }; }));
+  const groups = [...new Set(opts.map(o => o.u.id))].map(id => opts.filter(o => o.u.id === id));
+  const save = () => { const [unit, port] = via ? via.split('|') : [];
+    onSave({ ...link, label: label.trim(), via: via ? { unit, port: +port } : undefined }); onClose(); };
+  return <Modal title={isNew ? 'Новая магистраль' : 'Магистраль'} onClose={onClose}
+    footer={<>{!isNew ? <Btn kind="danger" icon="trash" onClick={async () => { if (await confirm('Удалить эту магистраль?', { danger: true, ok: 'Удалить' })) { onDelete(); onClose(); } }}>Удалить</Btn> : null}
+      <div className="grow" /><Btn onClick={onClose}>Отмена</Btn><Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
+    <div className="dim" style={{ fontSize: 13.5 }}>{title}</div>
+    <Field label="Подпись"><input className="input" value={label} autoFocus placeholder="Оптика 1 Гбит, воздушка, витая пара…" onChange={e => setLabel(e.target.value)} /></Field>
+    <Field label="Физически идёт через" hint={opts.length ? 'Волокно оптического кросса или порт патч-панели — у кросса тоже будет видно, что это за магистраль' : 'Подпишите порты кросса или патч-панели на вкладке «Размещение» — тогда их можно будет выбрать здесь'}>
+      <select className="select" value={via} onChange={e => setVia(e.target.value)}>
+        <option value="">— не указано —</option>
+        {groups.map(g => <optgroup key={g[0].u.id} label={g[0].u.name}>{g.sort((a, b) => b.used - a.used).map(o => <option key={o.v} value={o.v}>{o.t}</option>)}</optgroup>)}
+      </select></Field>
+  </Modal>;
 }
 
 /* ───────── one building: floors with walls, rooms, equipment ───────── */
@@ -208,7 +279,7 @@ function BuildingPlan({ building, plan, back }) {
   useEffect(() => { if (!building.floors.find(f => f.id === fid)) setFid(building.floors[0] && building.floors[0].id); }, [building.floors.length]);
   useEffect(() => { if (!edit) { setTool('select'); setPending(null); setWallPt(null); } }, [edit]);
 
-  const saveFloors = floors => savePlan({ buildings: buildings.map(b => b.id === building.id ? { ...b, floors } : b), links });
+  const saveFloors = floors => savePlan({ ...plan, buildings: buildings.map(b => b.id === building.id ? { ...b, floors } : b), links });
   const mutate = fn => saveFloors(building.floors.map(f => f.id === floor.id ? fn(f) : f));
   const addFloor = outdoor => { const id = uid('f');
     saveFloors([...building.floors, { id, name: outdoor ? 'Двор' : `${building.floors.filter(f => !f.outdoor).length + 1} этаж`, outdoor, walls: [], rooms: [], items: [] }]); setFid(id); };

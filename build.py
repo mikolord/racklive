@@ -34,7 +34,8 @@ def main():
         for f in src:
             out.write(f'\n/* ── {os.path.basename(f)} ── */\n')
             out.write(open(f, encoding='utf-8').read())
-    sh(['npx', 'babel', '.bundle.jsx', '--presets=@babel/preset-react', '--compact=false', '-o', 'app.js'])
+    # --minified strips whitespace/comments (names stay readable in errors); the server also gzips it
+    sh(['npx', 'babel', '.bundle.jsx', '--presets=@babel/preset-react', '--minified', '--no-comments', '-o', 'app.js'])
     os.remove(bundle)
     print('ok:', os.path.getsize(os.path.join(WEB, 'app.js')), 'bytes')
 

@@ -43,11 +43,12 @@ function DevicesView() {
   </>;
 }
 
-function DeviceEditor({ device, onClose, onCreated }) {
+function DeviceEditor({ device, onClose, onCreated, preset }) {
   const { data, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
-  const [drvId, setDrvId] = useState(device ? device.driver : null);
+  const [drvId, setDrvId] = useState(device ? device.driver : (preset && preset.driver) || null);
   const drv = data.drivers.find(d => d.id === drvId);
-  const [f, setF] = useState(() => device ? { ...device } : { name: '', location: 'local', site: '', notes: '', enabled: true });
+  const [f, setF] = useState(() => device ? { ...device } : { name: (preset && preset.name) || '', location: 'local', site: '', notes: '', enabled: true,
+    ...(preset && preset.kind ? { kind: preset.kind } : {}) });
   const [test, setTest] = useState(null);
   const [token, setToken] = useState(null);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
@@ -65,8 +66,28 @@ function DeviceEditor({ device, onClose, onCreated }) {
     try { const r = await api('/api/test', { method: 'POST', body: payload() }); setTest(r); }
     catch (e) { setTest({ ok: false, error: e.message }); }
   };
+  const visible = fl => !fl.showIf || fl.showIf.in.includes(f[fl.showIf.field] != null ? f[fl.showIf.field]
+    : (drv.fields.find(x => x.name === fl.showIf.field) || {}).default);
+  const renderField = fl => {
+    const ph = fl.secret && device && device[fl.name + 'Set'] ? '•••••••• (не менять)' : (fl.placeholder || '');
+    if (fl.type === 'select') return <Field key={fl.name} label={fl.label} hint={fl.hint}>
+      <select className="select" value={f[fl.name] || fl.default || ''} onChange={e => set(fl.name, e.target.value)}>
+        {fl.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>;
+    if (fl.type === 'textarea') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}>
+      <textarea className="textarea mono" style={{ fontSize: 12, minHeight: 90 }} value={f[fl.name] || ''} placeholder={ph} onChange={e => set(fl.name, e.target.value)} autoComplete="off" spellCheck={false} /></Field></div>;
+    if (fl.type === 'devices') { const cur = f[fl.name] || [];
+      const opts = data.devices.filter(d => !device || d.id !== device.id);
+      return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={`${fl.label}${cur.length ? ' · ' + cur.length : ''}`} hint={fl.hint}>
+        <div className="dev-pick">{opts.map(d => { const on = cur.includes(d.id);
+          return <button type="button" key={d.id} className={'chip' + (on ? ' on' : '')} onClick={() => set(fl.name, on ? cur.filter(x => x !== d.id) : [...cur, d.id])}>
+            <Icon name={on ? 'check' : d.kind} size={13} />{d.name}</button>; })}
+          {!opts.length ? <span className="dim" style={{ fontSize: 13 }}>Сначала добавьте устройства</span> : null}</div></Field></div>; }
+    return <Field key={fl.name} label={fl.label} hint={fl.hint}>
+      <input className="input" type={fl.type === 'password' ? 'password' : 'text'} value={f[fl.name] || ''} onChange={e => set(fl.name, e.target.value)}
+        placeholder={ph} autoComplete="off" /></Field>;
+  };
   const save = async () => {
-    const missing = drv.fields.filter(fl => fl.required && !f[fl.name] && !(device && device[fl.name + 'Set']));
+    const missing = drv.fields.filter(fl => fl.required && visible(fl) && !f[fl.name] && !(device && device[fl.name + 'Set']));
     if (!f.name.trim()) return toast('Укажите название', true);
     if (missing.length) return toast('Заполните: ' + missing.map(m => m.label).join(', '), true);
     try {
@@ -92,9 +113,7 @@ function DeviceEditor({ device, onClose, onCreated }) {
       <Field label="Название"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} placeholder="Например, Роутер дома" /></Field>
       <Field label="Тип (иконка)"><select className="select" value={f.kind || drv.kind} onChange={e => set('kind', e.target.value)}>
         {DEVICE_KINDS.map(k => <option key={k} value={k}>{KIND_TEXT[k]}</option>)}</select></Field>
-      {drv.fields.map(fl => <Field key={fl.name} label={fl.label} hint={fl.hint}>
-        <input className="input" type={fl.type === 'password' ? 'password' : 'text'} value={f[fl.name] || ''} onChange={e => set(fl.name, e.target.value)}
-          placeholder={fl.secret && device && device[fl.name + 'Set'] ? '•••••••• (не менять)' : (fl.placeholder || '')} autoComplete="off" /></Field>)}
+      {drv.fields.filter(visible).map(renderField)}
       <Field label="Расположение"><Seg value={f.location || 'local'} onChange={v => set('location', v)} options={[{ value: 'local', label: 'Локальное' }, { value: 'remote', label: 'Удалённое' }]} /></Field>
       <Field label="Площадка / объект" hint="Например «Дача» или «Офис» — устройства группируются по площадкам"><input className="input" value={f.site || ''} onChange={e => set('site', e.target.value)} /></Field>
     </div>

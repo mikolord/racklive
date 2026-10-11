@@ -13,10 +13,10 @@ DEFAULT = {
     'racks': [{'id': 'rack0', 'name': 'Серверный шкаф', 'totalU': 18, 'units': []}],
     'map': {'positions': {}, 'links': [], 'collapsed': {}},
     # floor plan: buildings → floors (incl. outdoor "yard") with walls, rooms and placed items; links = backbone between buildings
-    'plan': {'buildings': [], 'links': []},
+    'plan': {'buildings': [], 'links': [], 'poles': []},
 }
 
-SECRET_KEYS = ('password', 'token', 'agentToken')
+SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey')
 
 
 class Store:
@@ -47,6 +47,7 @@ class Store:
         with self.lock:
             self.cable.setdefault(did, {})[str(port)] = res
             self._dump('cable.json', self.cable)
+            self.bump()
 
     def _load(self, name, default):
         p = os.path.join(self.dir, name)
@@ -67,9 +68,15 @@ class Store:
         except OSError:
             pass
 
+    rev = 0                                                  # bumped on every change; the server caches its view by it
+
+    def bump(self):
+        self.rev += 1
+
     def save(self):
         with self.lock:
             self._dump('config.json', self.cfg)
+            self.bump()
 
     def save_runtime(self):
         with self.lock:
@@ -124,6 +131,7 @@ class Store:
         with self.lock:
             self.events.append({'t': time.time(), 'device': device_id, 'name': name, 'level': level, 'text': text})
             self.events = self.events[-500:]
+            self.bump()
             try:
                 self._dump('events.json', self.events)
             except OSError:

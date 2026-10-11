@@ -4,12 +4,17 @@ const PLACE_KINDS = { rack: { label: 'Стойка 19″', icon: 'rack', hint: '
   box: { label: 'Щиток / бокс', icon: 'box', hint: 'Настенный бокс, GPON-щиток — устройства плиткой' },
   place: { label: 'Комната', icon: 'home', hint: 'Оборудование разбросано — просто карточки устройств' } };
 const placeKind = r => PLACE_KINDS[r.kind] || PLACE_KINDS.rack;
+// unit type → the connection that usually fits it (offered when a unit has no device yet)
+const UNIT_DRIVER = { ups: 'ups', server: 'ssh', nas: 'synology', router: 'keenetic', switch: 'tplink_jetstream', modem: 'ping', nvr: 'ping', pdu: 'snmp' };
 const UNIT_COLORS = ['#0a84ff', '#30d158', '#bf5af2', '#ff9f0a', '#ff453a', '#64d2ff', '#5e5ce6', '#ffd60a', '#8e8e93'];
 
 function deviceLine(dev) {
   if (!dev) return '';
   const st = dev.state || {}; const s = st.summary || {};
   if (st.status === 'offline') return st.error ? 'Нет связи · ' + st.error : 'Нет связи';
+  if (st.ups) { const u = st.ups, m = u.runtimeMin;
+    return [`${u.loadW} Вт${u.loadPct != null ? ` (${u.loadPct}%)` : ''}`, m != null ? `${u.runtimeEstimated ? '≈' : ''}${m >= 60 ? Math.floor(m / 60) + ' ч ' + (m % 60) + ' мин' : m + ' мин'}` : '',
+      u.charge != null ? `заряд ${Math.round(u.charge)}%` : '', u.onBattery ? 'от батареи!' : ''].filter(Boolean).join(' · '); }
   const parts = [];
   const ports = st.ports || [];
   if (ports.length > 6) {
@@ -34,11 +39,15 @@ function Leds({ ports }) {
     {list.map(p => <i key={p.n} className={p.disabled ? 'off' : speedClass(p)} />)}</div>;
 }
 
-function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, top }) {
+function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, swap, top }) {
+  const { data } = useApp();
   const kind = PASSIVE.includes(unit.type) ? unit.type : (dev && dev.kind) || unit.type;
+  // patch / cross: light each port by the switch port it is wired to
+  const pmPorts = unit.portmap ? Array.from({ length: unit.portmap.count }, (_, i) => { const lp = linkedPort(data, (unit.portmap.ports || {})[i + 1]);
+    return { n: i + 1, kind: 'rj45', link: !!(lp && lp.p && lp.p.link), speed: lp && lp.p ? lp.p.speed : 0 }; }) : null;
   const st = dev && dev.state ? dev.state.status : null;
   const h = unit.uSize * U_PX - 4;
-  return <div className={['unit', PASSIVE.includes(unit.type) ? 'passive' : '', unit.type === 'blank' ? 'blank' : '', dragging ? 'dragging' : ''].join(' ')}
+  return <div className={['unit', PASSIVE.includes(unit.type) ? 'passive' : '', unit.type === 'blank' ? 'blank' : '', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
     style={{ top: top + 2, height: h, cursor: edit ? 'grab' : 'pointer' }} onClick={onClick} onPointerDown={onPointerDown}>
     <div className="strip" style={{ background: unit.color || '#0a84ff' }} />
     {unit.type !== 'blank' ? <div className="uicon"><Icon name={kind} size={16} color="#f5f5f7" /></div> : null}
@@ -46,7 +55,7 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, top }) {
       <div className="row" style={{ gap: 7 }}>{st ? <span className={'dot ' + st} /> : null}<span className="uname ellipsis">{unit.name}</span></div>
       {h > 30 ? <div className="umeta ellipsis">{dev ? deviceLine(dev) : (KIND_TEXT[unit.type] || '') + (unit.uSize > 1 ? ` · ${unit.uSize}U` : '')}</div> : null}
     </div>
-    <Leds ports={dev && dev.state && dev.state.ports} />
+    <Leds ports={pmPorts || (dev && dev.state && dev.state.ports)} />
   </div>;
 }
 
@@ -54,8 +63,10 @@ function RackView() {
   const { data, edit, saveRack, saveRacks, openDevice } = useApp();
   const [rackId, setRackId] = useState(() => { const p = new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
   const [side, setSide] = useState('front');
-  const [editing, setEditing] = useState(null);       // unit being edited / created
-  const [info, setInfo] = useState(null);
+  const [editing, setEditing] = useState(() => { const id = new URLSearchParams(location.search).get('editunit');   // unit being edited / created
+    return id && edit ? data.racks.flatMap(r => r.units).find(u => u.id === id) || null : null; });
+  const [info, setInfo] = useState(() => { const id = new URLSearchParams(location.search).get('unit');
+    return id ? data.racks.flatMap(r => r.units).find(u => u.id === id) || null : null; });
   const [rackSettings, setRackSettings] = useState(null);
   const [drag, setDrag] = useState(null);              // {id, slot}
   const slotsRef = useRef(null);
@@ -91,14 +102,40 @@ function RackView() {
       const slot = Math.floor((ev.clientY - rect.top) / U_PX) + 1 - offset;
       setDrag(null);
       if (!moved) { setEditing(u); return; }
-      if (slot !== u.uStart && fits(u, slot, u.id)) saveRack({ ...rack, units: rack.units.map(x => x.id === u.id ? { ...x, uStart: slot } : x) });
+      const plan = planMove(u, slot);
+      if (plan) saveRack({ ...rack, units: rack.units.map(x => plan[x.id] ? { ...x, uStart: plan[x.id] } : x) });
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  // move into free space, or swap with the one unit sitting where it is dropped → {unitId: newStart}
+  const planMove = (u, slot) => {
+    if (slot === u.uStart) return null;
+    if (fits(u, slot, u.id)) return { [u.id]: slot };
+    const hit = units.filter(o => o.id !== u.id && o.uStart < slot + u.uSize && slot < o.uStart + o.uSize);
+    if (hit.length !== 1) return null;
+    const o = hit[0];
+    const ok = (a, b) => {
+      if (a < 1 || a + u.uSize - 1 > total || b < 1 || b + o.uSize - 1 > total) return false;
+      if (a < b + o.uSize && b < a + u.uSize) return false;
+      const busy = new Array(total + 2).fill(false);
+      units.forEach(x => { if (x.id !== u.id && x.id !== o.id) for (let i = x.uStart; i < x.uStart + x.uSize; i++) busy[i] = true; });
+      for (let i = a; i < a + u.uSize; i++) if (busy[i]) return false;
+      for (let i = b; i < b + o.uSize; i++) if (busy[i]) return false;
+      return true;
+    };
+    const top = Math.min(u.uStart, o.uStart);
+    const cands = [[o.uStart, u.uStart],                                              // same top positions
+      u.uStart < o.uStart ? [top + o.uSize, top] : [top, top + u.uSize],           // swap order in a contiguous block
+      [o.uStart + o.uSize - u.uSize, u.uStart + u.uSize - o.uSize]];               // bottom-aligned
+    const c = cands.find(([a, b]) => ok(a, b));
+    return c ? { [u.id]: c[0], [o.id]: c[1] } : null;
   };
 
   const occ = occupied();
   const dragUnit = drag && units.find(u => u.id === drag.id);
-  const dropOk = dragUnit && fits(dragUnit, drag.slot, drag.id);
+  const dropPlan = dragUnit && planMove(dragUnit, drag.slot);
+  const dropOk = !!dropPlan;
+  const swapWith = dropPlan && Object.keys(dropPlan).length > 1 ? Object.keys(dropPlan).find(id => id !== drag.id) : null;
 
   const devices = data.devices; const problems = devices.filter(d => ['offline', 'warning'].includes(d.state && d.state.status));
   const allPorts = devices.flatMap(d => (d.state && d.state.ports) || []);
@@ -129,7 +166,7 @@ function RackView() {
                 onClick={() => edit && !occ[n] && setEditing({ id: null, name: '', type: 'switch', uSize: 1, uStart: n, side, color: '#0a84ff', deviceId: null, notes: '' })} />;
             })}
             {units.map(u => <RackUnit key={u.id} unit={u} dev={devById[u.deviceId]} edit={edit} top={(u.uStart - 1) * U_PX}
-              dragging={drag && drag.id === u.id}
+              dragging={drag && drag.id === u.id} swap={swapWith === u.id}
               onPointerDown={e => startDrag(u, e)}
               onClick={() => { if (edit) return; const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} />)}
           </div>
@@ -176,8 +213,9 @@ function RackView() {
     {rackSettings ? <RackSettings rack={rackSettings} canDelete={data.racks.length > 1} onClose={() => setRackSettings(null)}
       onSelect={setRackId} /> : null}
     {newPlace ? <NewPlace onClose={() => setNewPlace(false)} onCreate={addPlace} /> : null}
-    {info ? <Modal title={info.name} onClose={() => setInfo(null)} icon={<KindIcon kind={info.type} />}>
-      <KV rows={[['Тип', KIND_TEXT[info.type]], ['Позиция', `U${info.uStart}${info.uSize > 1 ? '–' + (info.uStart + info.uSize - 1) : ''}`], ['Сторона', info.side === 'back' ? 'Тыл' : 'Фронт']]} />
+    {info ? <Modal title={info.name} onClose={() => setInfo(null)} icon={<KindIcon kind={info.type} />} wide={!!info.portmap}>
+      <KV rows={[['Тип', KIND_TEXT[info.type]], ...(rack.kind === 'rack' || !rack.kind ? [['Позиция', `U${info.uStart}${info.uSize > 1 ? '–' + (info.uStart + info.uSize - 1) : ''}`], ['Сторона', info.side === 'back' ? 'Тыл' : 'Фронт']] : [])]} />
+      {info.portmap ? <PortMapView unit={info} /> : null}
       {info.notes ? <div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }} className="card pad">{info.notes}</div> : null}
       {info.webUrl ? <a className="btn" href={info.webUrl} target="_blank" rel="noreferrer">Открыть веб-интерфейс</a> : null}
     </Modal> : null}
@@ -274,20 +312,32 @@ function RackSettings({ rack, canDelete, onClose, onSelect }) {
     <Field label="Тип места"><div className="place-pick">{Object.entries(PLACE_KINDS).map(([k, v]) => <button key={k} className={'place-opt' + (kind === k ? ' on' : '')} onClick={() => setKind(k)}>
       <Icon name={v.icon} size={22} color={kind === k ? 'var(--accent)' : 'var(--text2)'} /><div><b>{v.label}</b><small>{v.hint}</small></div></button>)}</div></Field>
     {kind === 'rack' && rack.kind && rack.kind !== 'rack' && used ? <div className="dim" style={{ fontSize: 13 }}>При переходе в стойку устройства встанут в юниты по порядку — потом поправьте позиции.</div> : null}
-    {!canDelete ? <div className="dim" style={{ fontSize: 13 }}>Это единственное место — удалить нельзя. Добавьте ещё одно на вкладке «Шкаф».</div> : null}
+    {!canDelete ? <div className="dim" style={{ fontSize: 13 }}>Это единственное место — удалить нельзя. Добавьте ещё одно кнопкой «+ Место».</div> : null}
   </Modal>;
 }
 
 function UnitEditor({ unit, rack, onClose, fits }) {
-  const { data, saveRack } = useApp();
-  const confirm = useConfirm();
+  const { data, saveRack, refresh } = useApp();
+  const confirm = useConfirm(); const toast = useToast();
   const [f, setF] = useState({ ...unit });
   const [addDev, setAddDev] = useState(false);
+  const [pmOpen, setPmOpen] = useState(() => new URLSearchParams(location.search).has('pm'));
+  const [autoUps, setAutoUps] = useState(true);              // a UPS needs no connection data → create its device automatically
+  const sugg = UNIT_DRIVER[f.type]; const suggDrv = sugg && data.drivers.find(d => d.id === sugg && !d.hidden);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
+  const pm = isPortMap(f.type) ? (f.portmap || pmDefault(f.type)) : null;
+  const setPm = (k, v) => set('portmap', { ...pm, [k]: v });
+  const pmFilled = pm ? Object.values(pm.ports || {}).filter(m => m && (m.label || m.dev)).length : 0;
   const isRack = rack.kind === 'rack' || !rack.kind;         // box / place don't use U positions
   const ok = !isRack || fits(f, +f.uStart, unit.id);
-  const save = () => {
+  const save = async () => {
     const u = { ...f, uStart: +f.uStart, uSize: +f.uSize, name: f.name.trim() || (f.deviceId ? (data.devices.find(d => d.id === f.deviceId) || {}).name : KIND_TEXT[f.type]) };
+    if (isPortMap(u.type)) u.portmap = pm; else delete u.portmap;
+    if (u.type === 'ups' && !u.deviceId && autoUps) {
+      try { const r = await api('/api/devices', { method: 'POST', body: { driver: 'ups', name: u.name, kind: 'ups', mode: 'manual', batteryV: '12', batteryAh: '9', batteryCount: '1', enabled: true, location: 'local' } });
+        u.deviceId = r.device.id; toast('ИБП добавлен в «Устройства» — откройте его и отметьте, что подключено'); refresh(); }
+      catch (e) { toast(e.message, true); }
+    }
     const units = unit.id ? rack.units.map(x => x.id === unit.id ? u : x) : [...rack.units, { ...u, id: 'u' + Date.now().toString(36) }];
     saveRack({ ...rack, units }); onClose();
   };
@@ -303,7 +353,12 @@ function UnitEditor({ unit, rack, onClose, fits }) {
           {data.devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
         <Btn icon="plus" onClick={() => setAddDev(true)} title="Добавить новое устройство">Устройство</Btn>
       </div></Field>
-    {addDev ? <DeviceEditor device={null} onClose={() => setAddDev(false)} onCreated={d => {
+    {!f.deviceId && f.type === 'ups' ? <label className="row" style={{ gap: 8, fontSize: 13.5, cursor: 'pointer' }}>
+      <Switch on={autoUps} onChange={setAutoUps} /><span>Следить за ИБП — добавить его в «Устройства» (нагрузка, сколько продержится)</span></label> : null}
+    {!f.deviceId && suggDrv && f.type !== 'ups' ? <div className="unit-hint">
+      <Icon name="pulse" size={15} /><span className="grow">Сейчас это просто место в шкафу. Чтобы видеть живые данные, подключите устройство:</span>
+      <Btn size="sm" kind="primary" onClick={() => setAddDev(true)}>{suggDrv.title}</Btn></div> : null}
+    {addDev ? <DeviceEditor device={null} preset={suggDrv ? { driver: suggDrv.id, name: f.name || '', kind: f.type } : null} onClose={() => setAddDev(false)} onCreated={d => {
       setF(x => ({ ...x, deviceId: d.id, name: x.name && x.name !== KIND_TEXT[x.type] ? x.name : d.name,
         type: UNIT_TYPES.includes(d.kind) ? d.kind : x.type })); }} /> : null}
     <Field label="Название"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} placeholder="Например, Коммутатор ядра" /></Field>
@@ -313,6 +368,19 @@ function UnitEditor({ unit, rack, onClose, fits }) {
       {isRack ? <Field label="Позиция"><select className="select" value={f.uStart} onChange={e => set('uStart', +e.target.value)}>{Array.from({ length: rack.totalU }, (_, i) => <option key={i} value={i + 1}>U{i + 1}</option>)}</select></Field> : null}
     </div>
     {!ok ? <div style={{ color: 'var(--red)', fontSize: 13 }}>На этом месте не хватает свободных юнитов</div> : null}
+    {pm ? <div className="card pad" style={{ background: 'var(--fill)', border: 0 }}>
+      <div className="card-title" style={{ marginBottom: 8 }}>{PM_TITLE[f.type]}</div>
+      <div className="row wrap" style={{ alignItems: 'flex-start' }}>
+        <Field label={f.type === 'cross' ? 'Портов (волокон)' : f.type === 'modem' ? 'Гнёзд' : 'Портов'}><select className="select" value={pm.count} onChange={e => setPm('count', +e.target.value)}>
+          {(f.type === 'cross' ? CROSS_COUNTS : f.type === 'modem' ? MODEM_COUNTS : PATCH_COUNTS).map(n => <option key={n} value={n}>{n}</option>)}</select></Field>
+        {f.type === 'cross' ? <><Field label="Разъём"><select className="select" value={pm.connector || 'SC'} onChange={e => setPm('connector', e.target.value)}>
+          {CONNECTORS.map(c => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="Волокно"><select className="select" value={pm.fiber || 'SM'} onChange={e => setPm('fiber', e.target.value)}>
+            <option value="SM">Одномод (SM, жёлтый кабель)</option><option value="MM">Многомод (MM, оранжевый / бирюзовый)</option></select></Field></> : null}
+      </div>
+      <Btn icon="edit" onClick={() => setPmOpen(true)}>{f.type === 'modem' ? 'Гнёзда и подключения' : 'Распиновка портов'} · подписано {pmFilled} из {pm.count}</Btn>
+    </div> : null}
+    {pmOpen ? <PortMapEditor unit={{ ...f, portmap: pm }} onClose={() => setPmOpen(false)} onSave={v => set('portmap', v)} /> : null}
     {isRack ? <Field label="Сторона"><Seg value={f.side || 'front'} onChange={v => set('side', v)} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></Field> : null}
     <Field label="Цвет"><div className="row">{UNIT_COLORS.map(c => <button key={c} onClick={() => set('color', c)} style={{ width: 28, height: 28, borderRadius: 8, border: f.color === c ? '3px solid var(--text)' : '0', background: c, cursor: 'pointer' }} />)}</div></Field>
     <Field label="Ссылка на веб-интерфейс"><input className="input" value={f.webUrl || ''} onChange={e => set('webUrl', e.target.value)} placeholder="http://192.168.1.1" /></Field>

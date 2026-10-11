@@ -1,6 +1,6 @@
 ﻿/* App shell */
 const TABS = [
-  { id: 'rack', label: 'Шкаф', icon: 'rack' },
+  { id: 'rack', label: 'Размещение', icon: 'rack' },
   { id: 'map', label: 'Карта сети', icon: 'map' },
   { id: 'plan', label: 'План', icon: 'home' },
   { id: 'devices', label: 'Устройства', icon: 'list' },
@@ -32,7 +32,7 @@ function App() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [tab, setTab] = useState(() => (location.hash.slice(1) || lsGet('rl_tab', 'rack')));
-  const [mode, setMode] = useState('view');
+  const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
   const [editor, setEditor] = useState(undefined);
   const [login, setLogin] = useState(false);
@@ -87,7 +87,7 @@ function App() {
   const tabs = TABS.filter(t => !t.admin || admin);
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
   const subtitle = {
-    rack: `${data.racks.length > 1 ? data.racks.length + ' шкафа · ' : ''}${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
+    rack: `Шкафы, щитки и комнаты${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''} · ${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
@@ -128,4 +128,20 @@ function App() {
   </AppCtx.Provider>;
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<ToastHost><ConfirmHost><App /></ConfirmHost></ToastHost>);
+/* a render error shows a readable message instead of a blank page (and marks <html data-js-error> for the smoke test) */
+const markError = msg => { document.documentElement.dataset.jsError = String(msg || 'error').slice(0, 300); };
+window.addEventListener('error', e => markError(e.message));
+window.addEventListener('unhandledrejection', e => { if (e.reason && !e.reason.status) markError(e.reason.message || e.reason); });
+class Crash extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err) { markError(err && err.message); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return <div className="auth"><div className="card pad" id="rl-crash" style={{ maxWidth: 460 }}>
+      <b style={{ fontSize: 17 }}>Что-то пошло не так в интерфейсе</b>
+      <div className="dim mono" style={{ fontSize: 12, margin: '8px 0 14px', wordBreak: 'break-word' }}>{String(this.state.err && this.state.err.message || this.state.err)}</div>
+      <button className="btn primary" onClick={() => location.reload()}>Обновить страницу</button></div></div>;
+  }
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Crash><ToastHost><ConfirmHost><App /></ConfirmHost></ToastHost></Crash>);

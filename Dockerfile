@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
-# ping for the "availability" driver; everything else is the Python standard library
-RUN apk add --no-cache iputils tzdata
+# ping for the "availability" driver, ssh + sshpass for the SSH driver; everything else is the Python standard library
+RUN apk add --no-cache iputils tzdata openssh-client sshpass
 WORKDIR /app
 COPY rackd ./rackd
 COPY web/index.html web/styles.css web/app.js web/agent.py web/icon.svg web/icon-512.png web/manifest.json ./web/
