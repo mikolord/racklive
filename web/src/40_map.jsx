@@ -8,15 +8,18 @@ function layoutMap(data, collapsed) {
   const parentEdge = {}; const kids = {};
   tree.forEach(e => { parentEdge[e.target] = e; (kids[e.source] = kids[e.source] || []).push(e); });
 
-  // rack units shown on the map (front + back, linked ones get live data)
-  const units = [...data.rack.units].sort((a, b) => (a.side === 'back') - (b.side === 'back') || a.uStart - b.uStart);
+  // racks stacked vertically on the left; each unit keeps its rack id
+  const racks = data.racks || [];
+  const rackMeta = {}; let ry = 0;
+  racks.forEach(r => { rackMeta[r.id] = { id: r.id, name: r.name, total: r.totalU, y: ry, units: r.units }; ry += r.totalU * M.RU + 92; });
+  const stackH = Math.max(0, ry - 92);
+  const units = racks.flatMap(r => r.units.map(u => ({ ...u, rackId: r.id }))).sort((a, b) => (a.side === 'back') - (b.side === 'back') || a.uStart - b.uStart);
   const rackNode = {}; units.forEach(u => { if (u.deviceId && nodes['d:' + u.deviceId]) rackNode['d:' + u.deviceId] = u; });
   const hasRack = Object.keys(rackNode).length > 0;
   const pos = {};
-  const total = data.rack.totalU;
   Object.entries(rackNode).forEach(([id, u]) => {
-    const y = (u.uStart - 1) * M.RU + (u.side === 'back' ? 0 : 0);
-    pos[id] = { x: 0, y, w: M.RW, h: u.uSize * M.RU - 4, rack: true };
+    const base = (rackMeta[u.rackId] || {}).y || 0;
+    pos[id] = { x: 0, y: base + (u.uStart - 1) * M.RU, w: M.RW, h: u.uSize * M.RU - 4, rack: true, rackId: u.rackId };
   });
 
   // collapse big groups of Wi-Fi leaf clients
@@ -70,19 +73,20 @@ function layoutMap(data, collapsed) {
   remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) - (M.NW + 50) * (i + 1), y: topY, w: M.NW, h: M.NH }; col[id] = -1; });
   // nodes never reached (shouldn't happen) go to a bottom row
   let stray = 0; Object.keys(nodes).forEach(id => { if (!pos[id] && !hiddenIds.has(id)) {
-    const [w, h] = sizeOf(id); pos[id] = { x: colX(1) + stray * (w + 20), y: total * M.RU + 80, w, h }; stray++; } });
+    const [w, h] = sizeOf(id); pos[id] = { x: colX(1) + stray * (w + 20), y: stackH + 80, w, h }; stray++; } });
   // user overrides (edit mode drag)
   Object.entries(data.map.positions || {}).forEach(([id, [x, y]]) => { if (pos[id] && !pos[id].rack) Object.assign(pos[id], { x, y }); });
   const edges = [...Object.values(kids).flat().filter(e => !e.hidden), ...topo.edges.filter(e => (e.extra || e.manual) && pos[e.source] && pos[e.target])];
-  return { nodes, pos, edges, groups, hasRack, units, rackNode };
+  return { nodes, pos, edges, groups, hasRack, units, rackNode, racks: Object.values(rackMeta) };
 }
 
 function edgePath(e, L) {
   const a = L.pos[e.source], b = L.pos[e.target];
   if (!a || !b) return null;
-  if (a.rack && b.rack) {            // patch cable inside the rack: loop on the left side
-    const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, d = 26 + Math.min(70, Math.abs(y2 - y1) * .18);
-    return { d: `M0,${y1} C${-d},${y1} ${-d},${y2} 0,${y2}`, lx: -d * .75, ly: (y1 + y2) / 2, inside: true };
+  if (a.rack && b.rack) {            // both in a rack: patch cable (same rack) or backbone (between racks)
+    const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, cross = a.rackId !== b.rackId;
+    const d = cross ? 80 + Math.min(130, Math.abs(y2 - y1) * .12) : 26 + Math.min(70, Math.abs(y2 - y1) * .18);
+    return { d: `M0,${y1} C${-d},${y1} ${-d},${y2} 0,${y2}`, lx: -d + 8, ly: (y1 + y2) / 2, inside: true, cross };
   }
   if (e.source === 'inet' && b.rack) {
     const sx = a.x + a.w / 2, sy = a.y + a.h, ty = b.y + b.h / 2, tx = M.RW;
@@ -147,8 +151,9 @@ function MapView() {
 
   const bbox = () => {
     const ps = Object.values(L.pos); if (!ps.length) return { x: 0, y: 0, w: 100, h: 100 };
+    const rackBottom = Math.max(0, ...(L.racks || []).map(r => r.y + r.total * M.RU));   // include empty racks
     const x1 = Math.min(-110, ...ps.map(p => p.x)) - 20, y1 = Math.min(-60, ...ps.map(p => p.y)) - 20;
-    const x2 = Math.max(...ps.map(p => p.x + p.w)) + 20, y2 = Math.max(data.rack.totalU * M.RU, ...ps.map(p => p.y + p.h)) + 30;
+    const x2 = Math.max(...ps.map(p => p.x + p.w)) + 20, y2 = Math.max(rackBottom, ...ps.map(p => p.y + p.h)) + 30;
     return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
   };
   const fit = () => {
@@ -275,7 +280,7 @@ function MapView() {
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
     <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>
       <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} total={data.rack.totalU} /> : null}
+        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} /> : null}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
           return <g key={e.id} className={dim}>
@@ -283,6 +288,8 @@ function MapView() {
             {(e.kind === 'wan' || (e.kind === 'wire' && e.speed >= 1000)) && !e.extra ? <path className="edge flow" d={g.d} stroke="#fff" opacity=".5" /> : null}
             {e.manual ? <path className="edge-hit" d={g.d} onClick={() => edgeClick(e)} /> : null}
             {e.sourcePort && !g.inside ? <g className="port-pill" transform={`translate(${g.lx - 14},${g.ly - 9})`}><rect width="28" height="18" rx="9" /><text x="14" y="12.5" textAnchor="middle">{e.sourcePort}</text></g> : null}
+            {g.cross ? <g transform={`translate(${g.lx},${g.ly})`}><rect x={-52} y={-10} width={104} height={20} rx={10} fill="var(--accent)" opacity=".92" />
+              <text x={0} y={4} textAnchor="middle" fontSize="11" fontWeight="600" fill="#fff">между шкафами{e.sourcePort ? ' · ' + e.sourcePort : ''}</text></g> : null}
             {e.poeW > 0 && g.mx ? <g transform={`translate(${g.lx - 14 - 50},${g.ly - 9})`}><rect width="44" height="18" rx="9" fill="#ffd60a" /><text x="22" y="12.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="#000">⚡{e.poeW}W</text></g> : null}
             {(e.label && (e.manual || e.kind === 'wan')) ? <text x={g.lx} y={g.ly - 14} fontSize="11" fill="var(--text2)" textAnchor="middle">{e.label}</text> : null}
           </g>; })}
@@ -305,14 +312,18 @@ function MapView() {
   </div>;
 }
 
-function RackBox({ L, data, devById, dimSet, markSet, onOpen, total }) {
-  const h = total * M.RU;
-  return <g className="rackbox">
+function RackBox({ L, data, devById, dimSet, markSet, onOpen }) {
+  return <>{L.racks.map(rk => <RackFrame key={rk.id} rk={rk} devById={devById} dimSet={dimSet} markSet={markSet} onOpen={onOpen} />)}</>;
+}
+
+function RackFrame({ rk, devById, dimSet, markSet, onOpen }) {
+  const total = rk.total, h = total * M.RU;
+  return <g className="rackbox" transform={`translate(0,${rk.y})`}>
     <rect className="frame" x={-14} y={-46} width={M.RW + 28} height={h + 60} rx={16} />
-    <text x={0} y={-22} fontSize="14" fontWeight="700">{data.settings.title}</text>
+    <text x={0} y={-22} fontSize="14" fontWeight="700">{rk.name}</text>
     <text x={M.RW} y={-22} fontSize="11" textAnchor="end" className="usub">{total}U</text>
     {Array.from({ length: total }, (_, i) => <text key={i} x={-7} y={i * M.RU + M.RU / 2 + 3} fontSize="8" textAnchor="middle" className="usub">{i + 1}</text>)}
-    {L.units.filter(u => (u.side || 'front') === 'front').map(u => {
+    {rk.units.filter(u => (u.side || 'front') === 'front').map(u => {
       const d = devById[u.deviceId]; const st = d && d.state; const y = (u.uStart - 1) * M.RU; const hh = u.uSize * M.RU - 4;
       const dim = dimSet && !(d && dimSet.has('d:' + d.id));
       const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;

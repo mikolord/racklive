@@ -313,3 +313,8 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 @media (max-width: 760px) { .health-panel { left: 10px; right: 10px; width: auto; top: 60px; max-height: calc(100% - 140px); } .spof { grid-template-columns: 1fr; } }
 .spof-mark { fill: none; stroke: var(--orange); stroke-width: 2; stroke-dasharray: 6 4; animation: spofdash 1.2s linear infinite; }
 @keyframes spofdash { to { stroke-dashoffset: -20; } }
+
+/* multiple racks */
+.rack-tabs .chip { gap: 5px; }
+.icon-link { border: 0; background: none; padding: 2px 4px; margin-left: 6px; color: var(--text3); cursor: pointer; vertical-align: middle; border-radius: 6px; }
+.icon-link:hover { color: var(--accent); background: var(--fill); }

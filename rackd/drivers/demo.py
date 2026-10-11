@@ -222,16 +222,21 @@ def seed(store):
     D(name='VPS · Франкфурт', driver='demo_server', kind='server', host='198.51.100.40', location='remote', site='Облако')
     D(name='Сайт компании', driver='demo_site', kind='web', host='https://example.com', location='remote', site='Облако')
     U = lambda **k: dict({'id': 'u' + secrets.token_hex(3), 'side': 'front', 'notes': '', 'deviceId': None}, **k)
-    store.cfg['rack'] = {'totalU': 15, 'units': [
+    store.cfg['racks'] = [{'id': 'rack0', 'name': 'Серверная', 'totalU': 15, 'units': [
         U(name='Оптический терминал', type='modem', uSize=1, uStart=1, color='#bf5af2'),
         U(name='Роутер', type='router', uSize=1, uStart=2, color='#0a84ff', deviceId=r),
         U(name='Патч-панель 24', type='patch', uSize=1, uStart=3, color='#8e8e93'),
         U(name='Коммутатор ядра', type='switch', uSize=1, uStart=4, color='#30d158', deviceId=s),
         U(name='Органайзер', type='organizer', uSize=1, uStart=5, color='#8e8e93'),
         U(name='Хранилище', type='nas', uSize=2, uStart=6, color='#64d2ff', deviceId=n),
-        U(name='Home Assistant', type='server', uSize=1, uStart=8, color='#5e5ce6', deviceId=h),
-        U(name='Полка', type='shelf', uSize=1, uStart=9, color='#8e8e93'),
-        U(name='ИБП 1500 ВА', type='ups', uSize=2, uStart=13, color='#ff9f0a')]}
+        U(name='Полка', type='shelf', uSize=1, uStart=8, color='#8e8e93'),
+        U(name='ИБП 1500 ВА', type='ups', uSize=2, uStart=13, color='#ff9f0a')]},
+        {'id': 'rack1', 'name': 'Этаж 2 · ИТ-комната', 'totalU': 9, 'units': [
+            U(name='Патч-панель 24', type='patch', uSize=1, uStart=1, color='#8e8e93'),
+            U(name='Органайзер', type='organizer', uSize=1, uStart=2, color='#8e8e93'),
+            U(name='Home Assistant', type='server', uSize=1, uStart=3, color='#5e5ce6', deviceId=h),
+            U(name='Полка', type='shelf', uSize=1, uStart=5, color='#8e8e93'),
+            U(name='ИБП 1000 ВА', type='ups', uSize=2, uStart=8, color='#ff9f0a')]}]
     store.cfg['settings'].update(title='Офис · серверная', publicView=True, vlans=[
         {'vid': 1, 'name': 'Основная', 'color': '#0A84FF'}, {'vid': 10, 'name': 'Камеры', 'color': '#FF453A'},
         {'vid': 20, 'name': 'IoT', 'color': '#30D158'}, {'vid': 30, 'name': 'Гости', 'color': '#BF5AF2'}])

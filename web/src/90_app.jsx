@@ -62,17 +62,18 @@ function App() {
 
   const admin = !!data.authed;
   const edit = admin && mode === 'edit';
-  const saveRack = async rack => {
-    setData(d => ({ ...d, rack }));
-    try { await api('/api/rack', { method: 'PUT', body: rack }); } catch (e) { toast(e.message, true); refresh(); }
+  const saveRacks = async racks => {
+    setData(d => ({ ...d, racks }));
+    try { await api('/api/racks', { method: 'PUT', body: { racks } }); } catch (e) { toast(e.message, true); refresh(); }
   };
+  const saveRack = rack => saveRacks(data.racks.map(r => r.id === rack.id ? rack : r));
   const saveMap = async part => {
     setData(d => ({ ...d, map: { ...d.map, ...part } }));
     try { await api('/api/map', { method: 'PUT', body: part }); refresh(); } catch (e) { toast(e.message, true); }
   };
   const logout = async () => { await api('/api/logout', { method: 'POST' }); setMode('view'); refresh(); };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, refresh, saveRack, saveMap, logout, applyState,
+  const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, logout, applyState,
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d) };
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
@@ -81,7 +82,7 @@ function App() {
   const tabs = TABS.filter(t => !t.admin || admin);
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
   const subtitle = {
-    rack: `${data.rack.units.length} юнитов · ${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
+    rack: `${data.racks.length > 1 ? data.racks.length + ' шкафа · ' : ''}${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',

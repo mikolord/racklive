@@ -10,7 +10,7 @@ DEFAULT = {
     'settings': {'title': 'Серверный шкаф', 'poll': 60, 'publicView': False, 'showClients': True, 'vlans': DEFAULT_VLANS},
     'auth': None,
     'devices': [],
-    'rack': {'totalU': 18, 'units': []},
+    'racks': [{'id': 'rack0', 'name': 'Серверный шкаф', 'totalU': 18, 'units': []}],
     'map': {'positions': {}, 'links': [], 'collapsed': {}},
 }
 
@@ -27,6 +27,11 @@ class Store:
         if os.path.exists(self.path):
             with open(self.path, encoding='utf-8') as f:
                 loaded = json.load(f)
+            if 'racks' not in loaded:                      # migrate the old single-rack config
+                r = loaded.pop('rack', None) or {'totalU': 18, 'units': []}
+                loaded['racks'] = [{'id': 'rack0', 'name': loaded.get('settings', {}).get('title') or 'Серверный шкаф',
+                                    'totalU': int(r.get('totalU') or 18), 'units': r.get('units') or []}]
+            loaded.pop('rack', None)
             for k, v in DEFAULT.items():
                 loaded.setdefault(k, copy.deepcopy(v))
             for k, v in DEFAULT['settings'].items():
@@ -104,9 +109,10 @@ class Store:
     def delete_device(self, did):
         with self.lock:
             self.cfg['devices'] = [d for d in self.cfg['devices'] if d['id'] != did]
-            for u in self.cfg['rack']['units']:
-                if u.get('deviceId') == did:
-                    u['deviceId'] = None
+            for r in self.cfg['racks']:
+                for u in r['units']:
+                    if u.get('deviceId') == did:
+                        u['deviceId'] = None
             self.save()
             if self.cable.pop(did, None) is not None:
                 self._dump('cable.json', self.cable)
@@ -139,6 +145,10 @@ class Store:
                 h.append(dict(point, t0=point['t']))
             del h[:-288]
 
+    def all_units(self):
+        """Every unit across all racks, each tagged with its rack id (for topology / the map)."""
+        return [dict(u, rackId=r['id']) for r in self.cfg['racks'] for u in r['units']]
+
     # ── import of the old rack-constructor format ──
     @staticmethod
     def import_old_rack(old):
@@ -148,4 +158,4 @@ class Store:
                           'uSize': int(u.get('uSize') or 1), 'uStart': int(u.get('uStart') or 1), 'side': u.get('side') or 'front',
                           'color': u.get('color') or '#0A84FF', 'deviceId': None, 'notes': u.get('config') if isinstance(u.get('config'), str) else '',
                           'webUrl': u.get('webUrl') or ''})
-        return {'totalU': int(old.get('totalU') or 18), 'units': units}
+        return {'id': 'rack0', 'name': old.get('name') or 'Серверный шкаф', 'totalU': int(old.get('totalU') or 18), 'units': units}

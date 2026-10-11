@@ -19,7 +19,7 @@ def _is_ip(s):
 
 def build(devices, states, rack_units, manual_links, show_clients=True, drivers=None):
     nodes, edges, attached = {}, [], set()
-    unit_by_dev = {u['deviceId']: u for u in rack_units if u.get('deviceId')}
+    unit_by_dev = {u['deviceId']: u for u in rack_units if u.get('deviceId')}       # each unit carries rackId
 
     def add(n):
         nodes.setdefault(n['id'], n)
@@ -44,7 +44,8 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         drv_kind = getattr((drivers or {}).get(d.get('driver')), 'kind', 'other')
         nid = add({'id': 'd:' + d['id'], 'label': d.get('name') or d.get('host'), 'sub': s.get('ip') or d.get('host', ''),
                    'kind': d.get('kind') or drv_kind, 'status': st.get('status', 'unknown'), 'deviceId': d['id'],
-                   'rackUnit': (unit_by_dev.get(d['id']) or {}).get('id'), 'remote': d.get('location') == 'remote',
+                   'rackUnit': (unit_by_dev.get(d['id']) or {}).get('id'), 'rackId': (unit_by_dev.get(d['id']) or {}).get('rackId'),
+                   'remote': d.get('location') == 'remote',
                    'model': s.get('model')})
         for mac in [s.get('mac'), d.get('mac')] + list(s.get('macs') or []):
             if mac:

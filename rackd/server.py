@@ -1,5 +1,5 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, json, mimetypes, os, re, signal, threading, time, traceback
+import concurrent.futures, json, mimetypes, os, re, secrets, signal, threading, time, traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -151,19 +151,20 @@ class App:
                 pd['host'] = ''
             pd['state'] = st
             devices.append(pd)
-        topo = topology.build(cfg['devices'], self.states, cfg['rack']['units'], cfg['map'].get('links'),
+        units = self.store.all_units()
+        topo = topology.build(cfg['devices'], self.states, units, cfg['map'].get('links'),
                               cfg['settings'].get('showClients', True), REGISTRY)
         try:
             # analysis always sees the clients, even when the map hides them
             full = topo if cfg['settings'].get('showClients', True) else topology.build(
-                cfg['devices'], self.states, cfg['rack']['units'], cfg['map'].get('links'), True, REGISTRY)
+                cfg['devices'], self.states, units, cfg['map'].get('links'), True, REGISTRY)
             health = analysis.analyze(full, cfg['devices'], self.states, self.store.cable)
         except Exception:
             traceback.print_exc()
             health = None
-        return {'health': health,'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
+        return {'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
-                'devices': devices, 'rack': cfg['rack'], 'map': cfg['map'], 'topology': topo,
+                'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'topology': topo,
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
 
 
@@ -350,15 +351,20 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send({'ok': True}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
                 st.save()
                 return self.send({'ok': True})
-            if path == '/api/rack' and method == 'PUT':
-                units = body.get('units')
-                if not isinstance(units, list):
+            if path == '/api/racks' and method == 'PUT':
+                racks = body.get('racks')
+                if not isinstance(racks, list) or not racks:
                     return self.err('неверные данные')
-                need = max([int(u.get('uStart') or 1) + int(u.get('uSize') or 1) - 1 for u in units] + [1])
-                total = max(1, min(60, int(body.get('totalU') or 18)))
-                if total < need:
-                    return self.err(f'шкаф меньше занятого места: оборудование стоит до U{need}')
-                st.cfg['rack'] = {'totalU': total, 'units': units}
+                out = []
+                for r in racks:
+                    units = r.get('units') if isinstance(r.get('units'), list) else []
+                    need = max([int(u.get('uStart') or 1) + int(u.get('uSize') or 1) - 1 for u in units] + [1])
+                    total = max(1, min(60, int(r.get('totalU') or 18)))
+                    if total < need:
+                        return self.err(f"«{r.get('name') or 'Шкаф'}»: шкаф меньше занятого места — оборудование стоит до U{need}")
+                    out.append({'id': r.get('id') or 'rack' + secrets.token_hex(3), 'name': (r.get('name') or 'Шкаф').strip()[:40],
+                                'totalU': total, 'units': units})
+                st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/map' and method == 'PUT':
@@ -374,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
                     st.cfg = data
                     st.cfg['auth'] = keep_auth
                 else:
-                    st.cfg['rack'] = st.import_old_rack(data)
+                    st.cfg['racks'] = [st.import_old_rack(data)]
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/devices' and method == 'POST':

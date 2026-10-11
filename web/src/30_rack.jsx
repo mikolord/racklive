@@ -47,15 +47,20 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, top }) {
 }
 
 function RackView() {
-  const { data, edit, saveRack, openDevice } = useApp();
+  const { data, edit, saveRack, saveRacks, openDevice } = useApp();
+  const [rackId, setRackId] = useState(data.racks[0].id);
   const [side, setSide] = useState('front');
   const [editing, setEditing] = useState(null);       // unit being edited / created
   const [info, setInfo] = useState(null);
+  const [rackSettings, setRackSettings] = useState(null);
   const [drag, setDrag] = useState(null);              // {id, slot}
   const slotsRef = useRef(null);
-  const toast = useToast();
-  const rack = data.rack; const total = rack.totalU;
+  const toast = useToast(); const confirm = useConfirm();
+  useEffect(() => { if (!data.racks.find(r => r.id === rackId)) setRackId(data.racks[0].id); }, [data.racks]);
+  const rack = data.racks.find(r => r.id === rackId) || data.racks[0]; const total = rack.totalU;
   const minU = Math.max(1, ...rack.units.map(u => u.uStart + u.uSize - 1));
+  const addRack = () => { const id = 'rack' + Date.now().toString(36);
+    saveRacks([...data.racks, { id, name: `Шкаф ${data.racks.length + 1}`, totalU: 12, units: [] }]); setRackId(id); };
   const units = rack.units.filter(u => (u.side || 'front') === side);
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
 
@@ -97,8 +102,14 @@ function RackView() {
 
   return <div className="rack-layout">
     <div>
+      {data.racks.length > 1 || edit ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
+        {data.racks.map(r => <button key={r.id} className={'chip' + (r.id === rackId ? ' on' : '')} onClick={() => setRackId(r.id)}>
+          <Icon name="rack" size={13} />{r.name}</button>)}
+        {edit ? <Btn size="sm" icon="plus" onClick={addRack}>Шкаф</Btn> : null}
+      </div> : null}
       <div className="rack">
-        <div className="rack-top"><div><div className="title">{data.settings.title}</div>
+        <div className="rack-top"><div><div className="title">{rack.name}
+          {edit ? <button className="icon-link" onClick={() => setRackSettings(rack)} title="Настройки шкафа"><Icon name="settings" size={15} /></button> : null}</div>
           <div className="meta">{total}U · занято {occ.filter(Boolean).length}U · {side === 'front' ? 'вид спереди' : 'вид сзади'}</div></div>
           <Seg value={side} onChange={setSide} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} />
         </div>
@@ -152,7 +163,9 @@ function RackView() {
       <EventsList events={data.events.slice(0, 6)} compact />
     </div>
 
-    {editing ? <UnitEditor unit={editing} onClose={() => setEditing(null)} fits={fits} /> : null}
+    {editing ? <UnitEditor unit={editing} rack={rack} onClose={() => setEditing(null)} fits={fits} /> : null}
+    {rackSettings ? <RackSettings rack={rackSettings} canDelete={data.racks.length > 1} onClose={() => setRackSettings(null)}
+      onSelect={setRackId} /> : null}
     {info ? <Modal title={info.name} onClose={() => setInfo(null)} icon={<KindIcon kind={info.type} />}>
       <KV rows={[['Тип', KIND_TEXT[info.type]], ['Позиция', `U${info.uStart}${info.uSize > 1 ? '–' + (info.uStart + info.uSize - 1) : ''}`], ['Сторона', info.side === 'back' ? 'Тыл' : 'Фронт']]} />
       {info.notes ? <div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }} className="card pad">{info.notes}</div> : null}
@@ -161,7 +174,23 @@ function RackView() {
   </div>;
 }
 
-function UnitEditor({ unit, onClose, fits }) {
+function RackSettings({ rack, canDelete, onClose, onSelect }) {
+  const { data, saveRack, saveRacks } = useApp(); const confirm = useConfirm(); const toast = useToast();
+  const [name, setName] = useState(rack.name);
+  const used = rack.units.filter(u => u.deviceId).length;
+  const save = () => { saveRack({ ...rack, name: name.trim() || 'Шкаф' }); onClose(); };
+  const del = async () => {
+    if (!(await confirm(`Удалить шкаф «${rack.name}»? Его юниты будут удалены${used ? `, ${used} устройств отвяжутся (сами устройства останутся)` : ''}.`, { danger: true, ok: 'Удалить шкаф' }))) return;
+    const rest = data.racks.filter(r => r.id !== rack.id); onSelect(rest[0].id); saveRacks(rest); onClose();
+  };
+  return <Modal title="Настройки шкафа" onClose={onClose}
+    footer={<>{canDelete ? <Btn kind="danger" icon="trash" onClick={del}>Удалить шкаф</Btn> : null}<div className="grow" /><Btn onClick={onClose}>Отмена</Btn><Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
+    <Field label="Название шкафа" hint="Например «Серверная», «Этаж 2», «Дача»"><input className="input" value={name} autoFocus onChange={e => setName(e.target.value)} /></Field>
+    {!canDelete ? <div className="dim" style={{ fontSize: 13 }}>Это единственный шкаф — удалить нельзя. Добавьте ещё один на вкладке «Шкаф».</div> : null}
+  </Modal>;
+}
+
+function UnitEditor({ unit, rack, onClose, fits }) {
   const { data, saveRack } = useApp();
   const confirm = useConfirm();
   const [f, setF] = useState({ ...unit });
@@ -169,10 +198,10 @@ function UnitEditor({ unit, onClose, fits }) {
   const ok = fits(f, +f.uStart, unit.id);
   const save = () => {
     const u = { ...f, uStart: +f.uStart, uSize: +f.uSize, name: f.name.trim() || (f.deviceId ? (data.devices.find(d => d.id === f.deviceId) || {}).name : KIND_TEXT[f.type]) };
-    const units = unit.id ? data.rack.units.map(x => x.id === unit.id ? u : x) : [...data.rack.units, { ...u, id: 'u' + Date.now().toString(36) }];
-    saveRack({ ...data.rack, units }); onClose();
+    const units = unit.id ? rack.units.map(x => x.id === unit.id ? u : x) : [...rack.units, { ...u, id: 'u' + Date.now().toString(36) }];
+    saveRack({ ...rack, units }); onClose();
   };
-  const del = async () => { if (await confirm(`Убрать «${unit.name}» из шкафа?`, { danger: true, ok: 'Убрать' })) { saveRack({ ...data.rack, units: data.rack.units.filter(x => x.id !== unit.id) }); onClose(); } };
+  const del = async () => { if (await confirm(`Убрать «${unit.name}» из шкафа?`, { danger: true, ok: 'Убрать' })) { saveRack({ ...rack, units: rack.units.filter(x => x.id !== unit.id) }); onClose(); } };
   return <Modal title={unit.id ? 'Юнит' : 'Новый юнит'} onClose={onClose}
     footer={<>{unit.id ? <Btn kind="danger" icon="trash" onClick={del}>Убрать</Btn> : null}<div className="grow" /><Btn onClick={onClose}>Отмена</Btn>
       <Btn kind="primary" onClick={save} disabled={!ok}>Сохранить</Btn></>}>
@@ -185,7 +214,7 @@ function UnitEditor({ unit, onClose, fits }) {
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <Field label="Тип"><select className="select" value={f.type} onChange={e => set('type', e.target.value)}>{UNIT_TYPES.map(t => <option key={t} value={t}>{KIND_TEXT[t]}</option>)}</select></Field>
       <Field label="Высота"><select className="select" value={f.uSize} onChange={e => set('uSize', +e.target.value)}>{[1, 2, 3, 4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n}U</option>)}</select></Field>
-      <Field label="Позиция"><select className="select" value={f.uStart} onChange={e => set('uStart', +e.target.value)}>{Array.from({ length: data.rack.totalU }, (_, i) => <option key={i} value={i + 1}>U{i + 1}</option>)}</select></Field>
+      <Field label="Позиция"><select className="select" value={f.uStart} onChange={e => set('uStart', +e.target.value)}>{Array.from({ length: rack.totalU }, (_, i) => <option key={i} value={i + 1}>U{i + 1}</option>)}</select></Field>
     </div>
     {!ok ? <div style={{ color: 'var(--red)', fontSize: 13 }}>На этом месте не хватает свободных юнитов</div> : null}
     <Field label="Сторона"><Seg value={f.side || 'front'} onChange={v => set('side', v)} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></Field>

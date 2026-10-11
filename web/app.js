@@ -2098,17 +2098,34 @@ function RackView() {
     data,
     edit,
     saveRack,
+    saveRacks,
     openDevice
   } = useApp();
+  const [rackId, setRackId] = useState(data.racks[0].id);
   const [side, setSide] = useState('front');
   const [editing, setEditing] = useState(null); // unit being edited / created
   const [info, setInfo] = useState(null);
+  const [rackSettings, setRackSettings] = useState(null);
   const [drag, setDrag] = useState(null); // {id, slot}
   const slotsRef = useRef(null);
   const toast = useToast();
-  const rack = data.rack;
+  const confirm = useConfirm();
+  useEffect(() => {
+    if (!data.racks.find(r => r.id === rackId)) setRackId(data.racks[0].id);
+  }, [data.racks]);
+  const rack = data.racks.find(r => r.id === rackId) || data.racks[0];
   const total = rack.totalU;
   const minU = Math.max(1, ...rack.units.map(u => u.uStart + u.uSize - 1));
+  const addRack = () => {
+    const id = 'rack' + Date.now().toString(36);
+    saveRacks([...data.racks, {
+      id,
+      name: `Шкаф ${data.racks.length + 1}`,
+      totalU: 12,
+      units: []
+    }]);
+    setRackId(id);
+  };
   const units = rack.units.filter(u => (u.side || 'front') === side);
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   const occupied = exceptId => {
@@ -2168,13 +2185,36 @@ function RackView() {
   const poe = allPorts.reduce((a, p) => a + (p.poeW || 0), 0);
   return /*#__PURE__*/React.createElement("div", {
     className: "rack-layout"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, data.racks.length > 1 || edit ? /*#__PURE__*/React.createElement("div", {
+    className: "row wrap rack-tabs",
+    style: {
+      marginBottom: 12
+    }
+  }, data.racks.map(r => /*#__PURE__*/React.createElement("button", {
+    key: r.id,
+    className: 'chip' + (r.id === rackId ? ' on' : ''),
+    onClick: () => setRackId(r.id)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "rack",
+    size: 13
+  }), r.name)), edit ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "plus",
+    onClick: addRack
+  }, "\u0428\u043A\u0430\u0444") : null) : null, /*#__PURE__*/React.createElement("div", {
     className: "rack"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rack-top"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "title"
-  }, data.settings.title), /*#__PURE__*/React.createElement("div", {
+  }, rack.name, edit ? /*#__PURE__*/React.createElement("button", {
+    className: "icon-link",
+    onClick: () => setRackSettings(rack),
+    title: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0448\u043A\u0430\u0444\u0430"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "settings",
+    size: 15
+  })) : null), /*#__PURE__*/React.createElement("div", {
     className: "meta"
   }, total, "U \xB7 \u0437\u0430\u043D\u044F\u0442\u043E ", occ.filter(Boolean).length, "U \xB7 ", side === 'front' ? 'вид спереди' : 'вид сзади')), /*#__PURE__*/React.createElement(Seg, {
     value: side,
@@ -2397,8 +2437,14 @@ function RackView() {
     compact: true
   })), editing ? /*#__PURE__*/React.createElement(UnitEditor, {
     unit: editing,
+    rack: rack,
     onClose: () => setEditing(null),
     fits: fits
+  }) : null, rackSettings ? /*#__PURE__*/React.createElement(RackSettings, {
+    rack: rackSettings,
+    canDelete: data.racks.length > 1,
+    onClose: () => setRackSettings(null),
+    onSelect: setRackId
   }) : null, info ? /*#__PURE__*/React.createElement(Modal, {
     title: info.name,
     onClose: () => setInfo(null),
@@ -2420,8 +2466,71 @@ function RackView() {
     rel: "noreferrer"
   }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0432\u0435\u0431-\u0438\u043D\u0442\u0435\u0440\u0444\u0435\u0439\u0441") : null) : null);
 }
+function RackSettings({
+  rack,
+  canDelete,
+  onClose,
+  onSelect
+}) {
+  const {
+    data,
+    saveRack,
+    saveRacks
+  } = useApp();
+  const confirm = useConfirm();
+  const toast = useToast();
+  const [name, setName] = useState(rack.name);
+  const used = rack.units.filter(u => u.deviceId).length;
+  const save = () => {
+    saveRack({
+      ...rack,
+      name: name.trim() || 'Шкаф'
+    });
+    onClose();
+  };
+  const del = async () => {
+    if (!(await confirm(`Удалить шкаф «${rack.name}»? Его юниты будут удалены${used ? `, ${used} устройств отвяжутся (сами устройства останутся)` : ''}.`, {
+      danger: true,
+      ok: 'Удалить шкаф'
+    }))) return;
+    const rest = data.racks.filter(r => r.id !== rack.id);
+    onSelect(rest[0].id);
+    saveRacks(rest);
+    onClose();
+  };
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0448\u043A\u0430\u0444\u0430",
+    onClose: onClose,
+    footer: /*#__PURE__*/React.createElement(React.Fragment, null, canDelete ? /*#__PURE__*/React.createElement(Btn, {
+      kind: "danger",
+      icon: "trash",
+      onClick: del
+    }, "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0448\u043A\u0430\u0444") : null, /*#__PURE__*/React.createElement("div", {
+      className: "grow"
+    }), /*#__PURE__*/React.createElement(Btn, {
+      onClick: onClose
+    }, "\u041E\u0442\u043C\u0435\u043D\u0430"), /*#__PURE__*/React.createElement(Btn, {
+      kind: "primary",
+      onClick: save
+    }, "\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C"))
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u0448\u043A\u0430\u0444\u0430",
+    hint: "\u041D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 \xAB\u0421\u0435\u0440\u0432\u0435\u0440\u043D\u0430\u044F\xBB, \xAB\u042D\u0442\u0430\u0436 2\xBB, \xAB\u0414\u0430\u0447\u0430\xBB"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: name,
+    autoFocus: true,
+    onChange: e => setName(e.target.value)
+  })), !canDelete ? /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13
+    }
+  }, "\u042D\u0442\u043E \u0435\u0434\u0438\u043D\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0439 \u0448\u043A\u0430\u0444 \u2014 \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0435\u043B\u044C\u0437\u044F. \u0414\u043E\u0431\u0430\u0432\u044C\u0442\u0435 \u0435\u0449\u0451 \u043E\u0434\u0438\u043D \u043D\u0430 \u0432\u043A\u043B\u0430\u0434\u043A\u0435 \xAB\u0428\u043A\u0430\u0444\xBB.") : null);
+}
 function UnitEditor({
   unit,
+  rack,
   onClose,
   fits
 }) {
@@ -2445,12 +2554,12 @@ function UnitEditor({
       uSize: +f.uSize,
       name: f.name.trim() || (f.deviceId ? (data.devices.find(d => d.id === f.deviceId) || {}).name : KIND_TEXT[f.type])
     };
-    const units = unit.id ? data.rack.units.map(x => x.id === unit.id ? u : x) : [...data.rack.units, {
+    const units = unit.id ? rack.units.map(x => x.id === unit.id ? u : x) : [...rack.units, {
       ...u,
       id: 'u' + Date.now().toString(36)
     }];
     saveRack({
-      ...data.rack,
+      ...rack,
       units
     });
     onClose();
@@ -2461,8 +2570,8 @@ function UnitEditor({
       ok: 'Убрать'
     })) {
       saveRack({
-        ...data.rack,
-        units: data.rack.units.filter(x => x.id !== unit.id)
+        ...rack,
+        units: rack.units.filter(x => x.id !== unit.id)
       });
       onClose();
     }
@@ -2540,7 +2649,7 @@ function UnitEditor({
     value: f.uStart,
     onChange: e => set('uStart', +e.target.value)
   }, Array.from({
-    length: data.rack.totalU
+    length: rack.totalU
   }, (_, i) => /*#__PURE__*/React.createElement("option", {
     key: i,
     value: i + 1
@@ -2623,23 +2732,40 @@ function layoutMap(data, collapsed) {
     (kids[e.source] = kids[e.source] || []).push(e);
   });
 
-  // rack units shown on the map (front + back, linked ones get live data)
-  const units = [...data.rack.units].sort((a, b) => (a.side === 'back') - (b.side === 'back') || a.uStart - b.uStart);
+  // racks stacked vertically on the left; each unit keeps its rack id
+  const racks = data.racks || [];
+  const rackMeta = {};
+  let ry = 0;
+  racks.forEach(r => {
+    rackMeta[r.id] = {
+      id: r.id,
+      name: r.name,
+      total: r.totalU,
+      y: ry,
+      units: r.units
+    };
+    ry += r.totalU * M.RU + 92;
+  });
+  const stackH = Math.max(0, ry - 92);
+  const units = racks.flatMap(r => r.units.map(u => ({
+    ...u,
+    rackId: r.id
+  }))).sort((a, b) => (a.side === 'back') - (b.side === 'back') || a.uStart - b.uStart);
   const rackNode = {};
   units.forEach(u => {
     if (u.deviceId && nodes['d:' + u.deviceId]) rackNode['d:' + u.deviceId] = u;
   });
   const hasRack = Object.keys(rackNode).length > 0;
   const pos = {};
-  const total = data.rack.totalU;
   Object.entries(rackNode).forEach(([id, u]) => {
-    const y = (u.uStart - 1) * M.RU + (u.side === 'back' ? 0 : 0);
+    const base = (rackMeta[u.rackId] || {}).y || 0;
     pos[id] = {
       x: 0,
-      y,
+      y: base + (u.uStart - 1) * M.RU,
       w: M.RW,
       h: u.uSize * M.RU - 4,
-      rack: true
+      rack: true,
+      rackId: u.rackId
     };
   });
 
@@ -2770,7 +2896,7 @@ function layoutMap(data, collapsed) {
       const [w, h] = sizeOf(id);
       pos[id] = {
         x: colX(1) + stray * (w + 20),
-        y: total * M.RU + 80,
+        y: stackH + 80,
         w,
         h
       };
@@ -2792,7 +2918,8 @@ function layoutMap(data, collapsed) {
     groups,
     hasRack,
     units,
-    rackNode
+    rackNode,
+    racks: Object.values(rackMeta)
   };
 }
 function edgePath(e, L) {
@@ -2800,15 +2927,17 @@ function edgePath(e, L) {
     b = L.pos[e.target];
   if (!a || !b) return null;
   if (a.rack && b.rack) {
-    // patch cable inside the rack: loop on the left side
+    // both in a rack: patch cable (same rack) or backbone (between racks)
     const y1 = a.y + a.h / 2,
       y2 = b.y + b.h / 2,
-      d = 26 + Math.min(70, Math.abs(y2 - y1) * .18);
+      cross = a.rackId !== b.rackId;
+    const d = cross ? 80 + Math.min(130, Math.abs(y2 - y1) * .12) : 26 + Math.min(70, Math.abs(y2 - y1) * .18);
     return {
       d: `M0,${y1} C${-d},${y1} ${-d},${y2} 0,${y2}`,
-      lx: -d * .75,
+      lx: -d + 8,
       ly: (y1 + y2) / 2,
-      inside: true
+      inside: true,
+      cross
     };
   }
   if (e.source === 'inet' && b.rack) {
@@ -2980,10 +3109,11 @@ function MapView() {
       w: 100,
       h: 100
     };
+    const rackBottom = Math.max(0, ...(L.racks || []).map(r => r.y + r.total * M.RU)); // include empty racks
     const x1 = Math.min(-110, ...ps.map(p => p.x)) - 20,
       y1 = Math.min(-60, ...ps.map(p => p.y)) - 20;
     const x2 = Math.max(...ps.map(p => p.x + p.w)) + 20,
-      y2 = Math.max(data.rack.totalU * M.RU, ...ps.map(p => p.y + p.h)) + 30;
+      y2 = Math.max(rackBottom, ...ps.map(p => p.y + p.h)) + 30;
     return {
       x: x1,
       y: y1,
@@ -3324,8 +3454,7 @@ function MapView() {
     devById: devById,
     dimSet: pathSet,
     markSet: spofSet,
-    onOpen: d => openDevice(d),
-    total: data.rack.totalU
+    onOpen: d => openDevice(d)
   }) : null, L.edges.map(e => {
     const g = edgePath(e, L);
     if (!g) return null;
@@ -3359,7 +3488,24 @@ function MapView() {
       x: "14",
       y: "12.5",
       textAnchor: "middle"
-    }, e.sourcePort)) : null, e.poeW > 0 && g.mx ? /*#__PURE__*/React.createElement("g", {
+    }, e.sourcePort)) : null, g.cross ? /*#__PURE__*/React.createElement("g", {
+      transform: `translate(${g.lx},${g.ly})`
+    }, /*#__PURE__*/React.createElement("rect", {
+      x: -52,
+      y: -10,
+      width: 104,
+      height: 20,
+      rx: 10,
+      fill: "var(--accent)",
+      opacity: ".92"
+    }), /*#__PURE__*/React.createElement("text", {
+      x: 0,
+      y: 4,
+      textAnchor: "middle",
+      fontSize: "11",
+      fontWeight: "600",
+      fill: "#fff"
+    }, "\u043C\u0435\u0436\u0434\u0443 \u0448\u043A\u0430\u0444\u0430\u043C\u0438", e.sourcePort ? ' · ' + e.sourcePort : '')) : null, e.poeW > 0 && g.mx ? /*#__PURE__*/React.createElement("g", {
       transform: `translate(${g.lx - 14 - 50},${g.ly - 9})`
     }, /*#__PURE__*/React.createElement("rect", {
       width: "44",
@@ -3472,12 +3618,29 @@ function RackBox({
   devById,
   dimSet,
   markSet,
-  onOpen,
-  total
+  onOpen
 }) {
-  const h = total * M.RU;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, L.racks.map(rk => /*#__PURE__*/React.createElement(RackFrame, {
+    key: rk.id,
+    rk: rk,
+    devById: devById,
+    dimSet: dimSet,
+    markSet: markSet,
+    onOpen: onOpen
+  })));
+}
+function RackFrame({
+  rk,
+  devById,
+  dimSet,
+  markSet,
+  onOpen
+}) {
+  const total = rk.total,
+    h = total * M.RU;
   return /*#__PURE__*/React.createElement("g", {
-    className: "rackbox"
+    className: "rackbox",
+    transform: `translate(0,${rk.y})`
   }, /*#__PURE__*/React.createElement("rect", {
     className: "frame",
     x: -14,
@@ -3490,7 +3653,7 @@ function RackBox({
     y: -22,
     fontSize: "14",
     fontWeight: "700"
-  }, data.settings.title), /*#__PURE__*/React.createElement("text", {
+  }, rk.name), /*#__PURE__*/React.createElement("text", {
     x: M.RW,
     y: -22,
     fontSize: "11",
@@ -3505,7 +3668,7 @@ function RackBox({
     fontSize: "8",
     textAnchor: "middle",
     className: "usub"
-  }, i + 1)), L.units.filter(u => (u.side || 'front') === 'front').map(u => {
+  }, i + 1)), rk.units.filter(u => (u.side || 'front') === 'front').map(u => {
     const d = devById[u.deviceId];
     const st = d && d.state;
     const y = (u.uStart - 1) * M.RU;
@@ -4968,21 +5131,24 @@ function App() {
   });
   const admin = !!data.authed;
   const edit = admin && mode === 'edit';
-  const saveRack = async rack => {
+  const saveRacks = async racks => {
     setData(d => ({
       ...d,
-      rack
+      racks
     }));
     try {
-      await api('/api/rack', {
+      await api('/api/racks', {
         method: 'PUT',
-        body: rack
+        body: {
+          racks
+        }
       });
     } catch (e) {
       toast(e.message, true);
       refresh();
     }
   };
+  const saveRack = rack => saveRacks(data.racks.map(r => r.id === rack.id ? rack : r));
   const saveMap = async part => {
     setData(d => ({
       ...d,
@@ -5021,6 +5187,7 @@ function App() {
     edit,
     refresh,
     saveRack,
+    saveRacks,
     saveMap,
     logout,
     applyState,
@@ -5038,7 +5205,7 @@ function App() {
   const tabs = TABS.filter(t => !t.admin || admin);
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
   const subtitle = {
-    rack: `${data.rack.units.length} юнитов · ${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
+    rack: `${data.racks.length > 1 ? data.racks.length + ' шкафа · ' : ''}${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
