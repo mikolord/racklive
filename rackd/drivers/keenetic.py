@@ -1,5 +1,5 @@
 """Keenetic / Netcraze routers via the RCI HTTP API (KeeneticOS 3.x–5.x)."""
-import codecs, hashlib, http.cookiejar, json, re, time, urllib.error, urllib.request
+import codecs, hashlib, http.cookiejar, json, re, ssl, time, urllib.error, urllib.request
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
 from ..util import DriverError, uptime_seconds, guess_kind
@@ -10,14 +10,20 @@ class Keenetic(Driver):
     title = 'Keenetic / Netcraze'
     kind = 'router'
     description = 'Роутер: порты, VLAN, клиенты по сегментам, mesh-точки и их Wi-Fi-клиенты.'
-    fields = [FIELD_HOST, dict(FIELD_USER, default='admin'), FIELD_PASS]
+    fields = [dict(FIELD_HOST, hint='Локально — IP (192.168.1.1). Удалённо через домен — только прямой доступ: '
+                   'https://дом.рф:ПОРТ (проброшенный порт роутера). Облачный KeenDNS не подойдёт.'),
+              dict(FIELD_USER, default='admin'), FIELD_PASS]
     actions = [{'id': 'reboot', 'label': 'Перезагрузить роутер', 'scope': 'device', 'confirm': 'Интернет пропадёт на 2–3 минуты. Перезагрузить?'},
                {'id': 'reboot_child', 'label': 'Перезагрузить точку', 'scope': 'child', 'confirm': 'Wi-Fi этой точки пропадёт на пару минут. Перезагрузить?'}]
 
     def _session(self, cfg, host=None):
         jar = http.cookiejar.CookieJar()
-        op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-        base = 'http://' + (host or cfg['host'])
+        ctx = ssl.create_default_context()                 # remote routers often have a self-signed / KeenDNS cert
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=ctx))
+        h = (host or cfg['host']).strip().rstrip('/')
+        base = h if '://' in h else 'http://' + h          # allow "https://dom.ru:8080" for remote access
 
         def req(path, data=None):
             r = urllib.request.Request(base + path, data=json.dumps(data).encode() if data is not None else None,
@@ -30,7 +36,11 @@ class Keenetic(Driver):
         r = req('/auth')
         realm, ch = r.headers.get('X-NDM-Realm'), r.headers.get('X-NDM-Challenge')
         if not realm:
-            raise DriverError('это не Keenetic или RCI недоступен')
+            if base.startswith('http://'):                 # KeenDNS / proxy usually answers only over HTTPS
+                raise DriverError('RCI не отвечает по http. Если это удалённый роутер через домен — укажите адрес с https:// '
+                                  'и портом проброса, например https://дом.рф:8080')
+            raise DriverError('это не Keenetic, либо доступ к роутеру идёт через облако KeenDNS (оно пускает только браузер). '
+                              'Нужен прямой доступ: проброшенный порт на роутере или KeenDNS в режиме «прямой доступ».')
         user = cfg.get('username') or 'admin'
         md5 = hashlib.md5(f"{user}:{realm}:{cfg.get('password', '')}".encode()).hexdigest()
         a = req('/auth', {'login': user, 'password': hashlib.sha256((ch + md5).encode()).hexdigest()})

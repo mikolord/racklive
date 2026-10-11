@@ -318,3 +318,10 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .rack-tabs .chip { gap: 5px; }
 .icon-link { border: 0; background: none; padding: 2px 4px; margin-left: 6px; color: var(--text3); cursor: pointer; vertical-align: middle; border-radius: 6px; }
 .icon-link:hover { color: var(--accent); background: var(--fill); }
+
+/* rack quick-jump on the map */
+.rack-jump { position: absolute; left: 12px; top: 64px; z-index: 2; flex-direction: column; align-items: stretch; gap: 2px; max-width: 200px; max-height: calc(100% - 150px); overflow: auto; }
+.rack-jump-title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text3); padding: 2px 8px 4px; }
+.rack-jump-btn { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 0; border-radius: 9px; background: none; color: var(--text2); font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rack-jump-btn:hover { background: var(--fill); color: var(--text); }
+@media (max-width: 760px) { .rack-jump { max-width: 150px; } }

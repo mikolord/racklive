@@ -165,6 +165,11 @@ function MapView() {
   };
   useEffect(() => { if (!view) fit(); }, [L]);
   useEffect(() => { if (view) fit(); }, [healthOpen]);
+  const focusRack = rk => {                                 // centre the map on one rack (quick jump when there are many)
+    const el = wrap.current; if (!el) return; const W = el.clientWidth, H = el.clientHeight; const rh = rk.total * M.RU;
+    const k = Math.min(1.15, Math.max(.3, (H - 130) / (rh + 110)));
+    setView({ k, x: W * 0.36 - (M.RW / 2) * k, y: H / 2 - (rk.y + rh / 2) * k }); setSel(null);
+  };
 
   // pan / zoom / pinch. The gesture baseline is re-captured whenever the number of fingers changes,
   // so lifting one finger after a pinch no longer snaps the map back.
@@ -276,6 +281,12 @@ function MapView() {
           <Btn size="sm" icon="refresh" onClick={async () => { if (await confirm('Сбросить ручное расположение узлов?')) { setDragPos({}); saveMap({ positions: {} }); } }} title="Сбросить раскладку" /></> : null}
       </div>
     </div>
+    {(L.racks || []).length > 1 ? <div className="map-panel rack-jump">
+      <span className="rack-jump-title">Шкафы</span>
+      {L.racks.map(rk => <button key={rk.id} className="rack-jump-btn" onClick={() => focusRack(rk)} title={`Показать «${rk.name}»`}>
+        <Icon name="rack" size={13} />{rk.name}</button>)}
+      <button className="rack-jump-btn" onClick={fit}><Icon name="fit" size={13} />Все</button>
+    </div> : null}
     {linking ? <div className="toast" style={{ position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }}>
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
     <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>

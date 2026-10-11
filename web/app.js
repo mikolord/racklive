@@ -2542,6 +2542,7 @@ function UnitEditor({
   const [f, setF] = useState({
     ...unit
   });
+  const [addDev, setAddDev] = useState(false);
   const set = (k, v) => setF(x => ({
     ...x,
     [k]: v
@@ -2594,9 +2595,14 @@ function UnitEditor({
     }, "\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C"))
   }, /*#__PURE__*/React.createElement(Field, {
     label: "\u0421\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E",
-    hint: "\u0416\u0438\u0432\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u044D\u0442\u043E\u0433\u043E \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u0431\u0443\u0434\u0443\u0442 \u043F\u043E\u043A\u0430\u0437\u0430\u043D\u044B \u043D\u0430 \u044E\u043D\u0438\u0442\u0435"
+    hint: "\u0416\u0438\u0432\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u044D\u0442\u043E\u0433\u043E \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u0431\u0443\u0434\u0443\u0442 \u043F\u043E\u043A\u0430\u0437\u0430\u043D\u044B \u043D\u0430 \u044E\u043D\u0438\u0442\u0435. \u041D\u0435\u0442 \u043D\u0443\u0436\u043D\u043E\u0433\u043E? \u0421\u043E\u0437\u0434\u0430\u0439\u0442\u0435 \u043D\u043E\u0432\u043E\u0435 \u043F\u0440\u044F\u043C\u043E \u0437\u0434\u0435\u0441\u044C \u2014 \u043E\u043D\u043E \u0441\u0440\u0430\u0437\u0443 \u043F\u0440\u0438\u0432\u044F\u0436\u0435\u0442\u0441\u044F \u043A \u044E\u043D\u0438\u0442\u0443."
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 8
+    }
   }, /*#__PURE__*/React.createElement("select", {
-    className: "select",
+    className: "select grow",
     value: f.deviceId || '',
     onChange: e => {
       const d = data.devices.find(x => x.id === e.target.value);
@@ -2612,7 +2618,22 @@ function UnitEditor({
   }, "\u2014 \u043D\u0435 \u0441\u0432\u044F\u0437\u0430\u043D (\u043F\u0430\u0441\u0441\u0438\u0432\u043D\u043E\u0435 \u043E\u0431\u043E\u0440\u0443\u0434\u043E\u0432\u0430\u043D\u0438\u0435) \u2014"), data.devices.map(d => /*#__PURE__*/React.createElement("option", {
     key: d.id,
     value: d.id
-  }, d.name)))), /*#__PURE__*/React.createElement(Field, {
+  }, d.name))), /*#__PURE__*/React.createElement(Btn, {
+    icon: "plus",
+    onClick: () => setAddDev(true),
+    title: "\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u043D\u043E\u0432\u043E\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E"
+  }, "\u0423\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E"))), addDev ? /*#__PURE__*/React.createElement(DeviceEditor, {
+    device: null,
+    onClose: () => setAddDev(false),
+    onCreated: d => {
+      setF(x => ({
+        ...x,
+        deviceId: d.id,
+        name: x.name && x.name !== KIND_TEXT[x.type] ? x.name : d.name,
+        type: UNIT_TYPES.includes(d.kind) ? d.kind : x.type
+      }));
+    }
+  }) : null, /*#__PURE__*/React.createElement(Field, {
     label: "\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435"
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
@@ -3141,6 +3162,21 @@ function MapView() {
   useEffect(() => {
     if (view) fit();
   }, [healthOpen]);
+  const focusRack = rk => {
+    // centre the map on one rack (quick jump when there are many)
+    const el = wrap.current;
+    if (!el) return;
+    const W = el.clientWidth,
+      H = el.clientHeight;
+    const rh = rk.total * M.RU;
+    const k = Math.min(1.15, Math.max(.3, (H - 130) / (rh + 110)));
+    setView({
+      k,
+      x: W * 0.36 - M.RW / 2 * k,
+      y: H / 2 - (rk.y + rh / 2) * k
+    });
+    setSel(null);
+  };
 
   // pan / zoom / pinch. The gesture baseline is re-captured whenever the number of fingers changes,
   // so lifting one finger after a pinch no longer snaps the map back.
@@ -3428,7 +3464,25 @@ function MapView() {
       }
     },
     title: "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0440\u0430\u0441\u043A\u043B\u0430\u0434\u043A\u0443"
-  })) : null)), linking ? /*#__PURE__*/React.createElement("div", {
+  })) : null)), (L.racks || []).length > 1 ? /*#__PURE__*/React.createElement("div", {
+    className: "map-panel rack-jump"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rack-jump-title"
+  }, "\u0428\u043A\u0430\u0444\u044B"), L.racks.map(rk => /*#__PURE__*/React.createElement("button", {
+    key: rk.id,
+    className: "rack-jump-btn",
+    onClick: () => focusRack(rk),
+    title: `Показать «${rk.name}»`
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "rack",
+    size: 13
+  }), rk.name)), /*#__PURE__*/React.createElement("button", {
+    className: "rack-jump-btn",
+    onClick: fit
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "fit",
+    size: 13
+  }), "\u0412\u0441\u0435")) : null, linking ? /*#__PURE__*/React.createElement("div", {
     className: "toast",
     style: {
       position: 'absolute',
@@ -4316,7 +4370,8 @@ function DevicesView() {
 }
 function DeviceEditor({
   device,
-  onClose
+  onClose,
+  onCreated
 }) {
   const {
     data,
@@ -4420,6 +4475,7 @@ function DeviceEditor({
         return;
       }
       toast(device ? 'Сохранено' : 'Устройство добавлено');
+      if (!device && onCreated) onCreated(r.device);
       onClose();
     } catch (e) {
       toast(e.message, true);

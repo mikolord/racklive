@@ -43,7 +43,7 @@ function DevicesView() {
   </>;
 }
 
-function DeviceEditor({ device, onClose }) {
+function DeviceEditor({ device, onClose, onCreated }) {
   const { data, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [drvId, setDrvId] = useState(device ? device.driver : null);
   const drv = data.drivers.find(d => d.id === drvId);
@@ -73,7 +73,9 @@ function DeviceEditor({ device, onClose }) {
       const r = device ? await api('/api/devices/' + device.id, { method: 'PUT', body: payload() }) : await api('/api/devices', { method: 'POST', body: payload() });
       refresh();
       if (r.agentToken) { setToken({ token: r.agentToken, id: r.device.id }); return; }
-      toast(device ? 'Сохранено' : 'Устройство добавлено'); onClose();
+      toast(device ? 'Сохранено' : 'Устройство добавлено');
+      if (!device && onCreated) onCreated(r.device);
+      onClose();
     } catch (e) { toast(e.message, true); }
   };
   const del = async () => {

@@ -194,6 +194,7 @@ function UnitEditor({ unit, rack, onClose, fits }) {
   const { data, saveRack } = useApp();
   const confirm = useConfirm();
   const [f, setF] = useState({ ...unit });
+  const [addDev, setAddDev] = useState(false);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
   const ok = fits(f, +f.uStart, unit.id);
   const save = () => {
@@ -205,11 +206,17 @@ function UnitEditor({ unit, rack, onClose, fits }) {
   return <Modal title={unit.id ? 'Юнит' : 'Новый юнит'} onClose={onClose}
     footer={<>{unit.id ? <Btn kind="danger" icon="trash" onClick={del}>Убрать</Btn> : null}<div className="grow" /><Btn onClick={onClose}>Отмена</Btn>
       <Btn kind="primary" onClick={save} disabled={!ok}>Сохранить</Btn></>}>
-    <Field label="Связанное устройство" hint="Живые данные этого устройства будут показаны на юните">
-      <select className="select" value={f.deviceId || ''} onChange={e => { const d = data.devices.find(x => x.id === e.target.value);
-        setF(x => ({ ...x, deviceId: e.target.value || null, name: x.name || (d ? d.name : ''), type: d && UNIT_TYPES.includes(d.kind) ? d.kind : x.type })); }}>
-        <option value="">— не связан (пассивное оборудование) —</option>
-        {data.devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
+    <Field label="Связанное устройство" hint="Живые данные этого устройства будут показаны на юните. Нет нужного? Создайте новое прямо здесь — оно сразу привяжется к юниту.">
+      <div className="row" style={{ gap: 8 }}>
+        <select className="select grow" value={f.deviceId || ''} onChange={e => { const d = data.devices.find(x => x.id === e.target.value);
+          setF(x => ({ ...x, deviceId: e.target.value || null, name: x.name || (d ? d.name : ''), type: d && UNIT_TYPES.includes(d.kind) ? d.kind : x.type })); }}>
+          <option value="">— не связан (пассивное оборудование) —</option>
+          {data.devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
+        <Btn icon="plus" onClick={() => setAddDev(true)} title="Добавить новое устройство">Устройство</Btn>
+      </div></Field>
+    {addDev ? <DeviceEditor device={null} onClose={() => setAddDev(false)} onCreated={d => {
+      setF(x => ({ ...x, deviceId: d.id, name: x.name && x.name !== KIND_TEXT[x.type] ? x.name : d.name,
+        type: UNIT_TYPES.includes(d.kind) ? d.kind : x.type })); }} /> : null}
     <Field label="Название"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} placeholder="Например, Коммутатор ядра" /></Field>
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <Field label="Тип"><select className="select" value={f.type} onChange={e => set('type', e.target.value)}>{UNIT_TYPES.map(t => <option key={t} value={t}>{KIND_TEXT[t]}</option>)}</select></Field>
