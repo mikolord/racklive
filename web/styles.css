@@ -385,3 +385,12 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
   .plan-canvas .zoom-btns { bottom: 14px; }
   .plan-hint { display: none; }
 }
+
+/* plan cursor + finished rooms + erase selection */
+.plan-cursor { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); stroke-width: 1.5; }
+.plan-cursor-x { stroke: var(--accent); stroke-width: 1.5; }
+.plan-canvas.crosshair { cursor: none; }
+.pr-fill { stroke-width: 2.5; }
+.plan-room.sel .pr-fill { stroke-width: 4; }
+.pr-tag { font-size: 11px; font-weight: 700; fill: #fff; }
+.plan-erase-draft { fill: color-mix(in srgb, var(--red) 12%, transparent); stroke: var(--red); stroke-dasharray: 5 5; }

@@ -19,6 +19,27 @@ function floorDevices(f, data, devById) {
 function worst(devs) { const s = devs.map(d => d.state && d.state.status).filter(Boolean);
   return s.includes('offline') ? 'offline' : s.includes('warning') ? 'warning' : s.length ? 'online' : ''; }
 const statusColor = s => s === 'online' ? 'var(--green)' : s === 'warning' ? 'var(--orange)' : s === 'offline' ? 'var(--red)' : 'var(--text3)';
+function segDist(p, s) {                                     // distance from point to a wall segment
+  const dx = s.x2 - s.x1, dy = s.y2 - s.y1, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p.x - s.x1) * dx + (p.y - s.y1) * dy) / l2)) : 0;
+  return Math.hypot(p.x - (s.x1 + t * dx), p.y - (s.y1 + t * dy));
+}
+
+/* snap marker + wall draft, so the pointer is visible on any background */
+function PlanCursor({ wrap, view, tool, wallPt }) {
+  const [c, setC] = useState(null);
+  useEffect(() => { const el = wrap.current; if (!el) return;
+    const h = e => { const r = el.getBoundingClientRect(); setC({ x: snap((e.clientX - r.left - view.x) / view.k), y: snap((e.clientY - r.top - view.y) / view.k) }); };
+    const leave = () => setC(null);
+    el.addEventListener('pointermove', h); el.addEventListener('pointerleave', leave);
+    return () => { el.removeEventListener('pointermove', h); el.removeEventListener('pointerleave', leave); }; }, [view, wrap]);
+  if (!c || tool === 'select') return null;
+  return <g pointerEvents="none">
+    {wallPt && tool === 'wall' ? <line className="plan-wall draft" x1={wallPt.x} y1={wallPt.y} x2={c.x} y2={c.y} /> : null}
+    <circle cx={c.x} cy={c.y} r={6} className="plan-cursor" />
+    <line className="plan-cursor-x" x1={c.x - 13} y1={c.y} x2={c.x + 13} y2={c.y} />
+    <line className="plan-cursor-x" x1={c.x} y1={c.y - 13} x2={c.x} y2={c.y + 13} /></g>;
+}
 
 /* pan + wheel + pinch, with tap / drag-draw callbacks (opts read fresh each render) */
 function usePanZoom(wrapRef, opts, initial) {
@@ -140,10 +161,16 @@ function Territory({ plan, enter }) {
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
         <rect x={0} y={0} width="100%" height="100%" fill="url(#pgridT)" />
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-          {links.map(l => { const a = buildings.find(x => x.id === l.from), b = buildings.find(x => x.id === l.to); if (!a || !b) return null;
-            const c1 = center(a), c2 = center(b); return <g key={l.id}>
-              <line x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y} className="plan-link" onClick={() => edit && confirm('Удалить магистраль?', { danger: true, ok: 'Удалить' }).then(ok => ok && save(null, links.filter(x => x.id !== l.id)))} />
-              {l.label ? <text x={(c1.x + c2.x) / 2} y={(c1.y + c2.y) / 2 - 8} textAnchor="middle" className="plan-link-label">{l.label}</text> : null}</g>; })}
+          {links.map((l, idx) => { const a = buildings.find(x => x.id === l.from), b = buildings.find(x => x.id === l.to); if (!a || !b) return null;
+            const key = [l.from, l.to].sort().join('>');                    // offset parallel links between the same pair
+            const sib = links.filter(x => [x.from, x.to].sort().join('>') === key);
+            const pos2 = sib.indexOf(l), off = (pos2 - (sib.length - 1) / 2) * 22;
+            const c1 = center(a), c2 = center(b); const dx = c2.x - c1.x, dy = c2.y - c1.y, len = Math.hypot(dx, dy) || 1;
+            const nx = -dy / len * off, ny = dx / len * off;
+            const p1 = { x: c1.x + nx, y: c1.y + ny }, p2 = { x: c2.x + nx, y: c2.y + ny };
+            return <g key={l.id}>
+              <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="plan-link" onClick={() => edit && confirm('Удалить эту магистраль?', { danger: true, ok: 'Удалить' }).then(ok => ok && save(null, links.filter(x => x.id !== l.id)))} />
+              {l.label ? <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 8} textAnchor="middle" className="plan-link-label">{l.label}</text> : null}</g>; })}
           {buildings.map(b => { const p = pos(b); const devs = (b.floors || []).flatMap(f => floorDevices(f, data, devById)); const st = worst(devs);
             const hasYard = (b.floors || []).some(f => f.outdoor);
             return <g key={b.id} className={'plan-item plan-building' + (sel === b.id ? ' sel' : '') + (linkFrom === b.id ? ' sel' : '')} transform={`translate(${p.x},${p.y})`}
@@ -189,20 +216,46 @@ function BuildingPlan({ building, plan, back }) {
     if (!(await confirm(`Удалить «${floor.name}»?`, { danger: true, ok: 'Удалить' }))) return;
     const rest = building.floors.filter(f => f.id !== floor.id); setFid(rest[0].id); saveFloors(rest); };
 
+  const eraseAt = w => {                                     // tap-erase: nearest wall, else room, else item
+    const th = 14; let wi = -1, bd = th;
+    (floor.walls || []).forEach((wl, i) => { const d = segDist(w, wl); if (d < bd) { bd = d; wi = i; } });
+    if (wi >= 0) { mutate(f => ({ ...f, walls: f.walls.filter((_, j) => j !== wi) })); return; }
+    const rm = (floor.rooms || []).find(r => w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h);
+    if (rm) { mutate(f => ({ ...f, rooms: f.rooms.filter(x => x.id !== rm.id) })); return; }
+    const it = (floor.items || []).find(i => Math.hypot(i.x - w.x, i.y - w.y) < 24);
+    if (it) mutate(f => ({ ...f, items: f.items.filter(x => x.id !== it.id) }));
+  };
   const onTap = w => {
     if (tool === 'wall') { const p = { x: snap(w.x), y: snap(w.y) }; if (wallPt) mutate(f => ({ ...f, walls: [...(f.walls || []), { x1: wallPt.x, y1: wallPt.y, x2: p.x, y2: p.y }] })); setWallPt(p); return; }
     if (tool === 'place' && pending) { mutate(f => ({ ...f, items: [...f.items, { id: uid('i'), kind: pending.kind, ref: pending.ref, x: snap(w.x), y: snap(w.y) }] })); setPending(null); setTool('select'); return; }
+    if (tool === 'erase') { eraseAt(w); return; }
     if (tool === 'select') setSel(null);
   };
-  const onDraw = (w0, w1, end) => {                          // room rectangle rubber-band
-    if (tool !== 'room') return;
-    const x = snap(Math.min(w0.x, w1.x)), y = snap(Math.min(w0.y, w1.y)), ww = snap(Math.abs(w1.x - w0.x)), hh = snap(Math.abs(w1.y - w0.y));
-    if (!end) { setDraft({ x, y, w: ww, h: hh }); return; }
-    setDraft(null); if (ww < PG || hh < PG) return;
-    const text = prompt('Название комнаты', '') || '';
-    mutate(f => ({ ...f, rooms: [...(f.rooms || []), { id: uid('r'), x, y, w: ww, h: hh, text, color: '#0a84ff' }] }));
+  const rectOf = (w0, w1) => ({ x: snap(Math.min(w0.x, w1.x)), y: snap(Math.min(w0.y, w1.y)), w: snap(Math.abs(w1.x - w0.x)), h: snap(Math.abs(w1.y - w0.y)) });
+  const onDraw = (w0, w1, end) => {
+    const r = rectOf(w0, w1);
+    if (tool === 'room') { if (!end) { setDraft(r); return; } setDraft(null); if (r.w < PG || r.h < PG) return;
+      const text = prompt('Название комнаты', '') || ''; mutate(f => ({ ...f, rooms: [...(f.rooms || []), { id: uid('r'), x: r.x, y: r.y, w: r.w, h: r.h, text, color: '#0a84ff' }] })); return; }
+    if (tool === 'erase') { if (!end) { setDraft(r); return; } setDraft(null); if (r.w < PG && r.h < PG) return;
+      const inside = (x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+      mutate(f => ({ ...f, walls: (f.walls || []).filter(wl => !(inside(wl.x1, wl.y1) && inside(wl.x2, wl.y2))),
+        rooms: (f.rooms || []).filter(rm => !(inside(rm.x, rm.y) && inside(rm.x + rm.w, rm.y + rm.h))),
+        items: (f.items || []).filter(i => !inside(i.x, i.y)) })); setSel(null); }
   };
-  const { view, setView, toWorld, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap, onDraw: tool === 'room' ? onDraw : null });
+  const { view, setView, toWorld, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap, onDraw: (tool === 'room' || tool === 'erase') ? onDraw : null });
+
+  // centre the view on the floor's content whenever the floor changes
+  const fitFloor = () => { const el = wrap.current; if (!el) return;
+    const xs = [], ys = [];
+    (floor.walls || []).forEach(w => { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); });
+    (floor.rooms || []).forEach(r => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
+    (floor.items || []).forEach(i => { xs.push(i.x - 30, i.x + 30); ys.push(i.y - 40, i.y + 40); });
+    const W = el.clientWidth, H = el.clientHeight;
+    if (!xs.length) { setView({ x: W / 2, y: H / 2, k: 1 }); return; }
+    const x1 = Math.min(...xs) - 30, y1 = Math.min(...ys) - 30, x2 = Math.max(...xs) + 30, y2 = Math.max(...ys) + 30;
+    const k = clampK(Math.min(1.3, Math.min(W / (x2 - x1), H / (y2 - y1))));
+    setView({ k, x: (W - (x2 - x1) * k) / 2 - x1 * k, y: (H - (y2 - y1) * k) / 2 - y1 * k }); };
+  useEffect(() => { const t = setTimeout(fitFloor, 30); return () => clearTimeout(t); }, [fid, building.id]);
 
   const dragItem = (it, e) => {
     if (tool === 'erase') { mutate(f => ({ ...f, items: f.items.filter(x => x.id !== it.id) })); return; }
@@ -227,14 +280,14 @@ function BuildingPlan({ building, plan, back }) {
   const placedRefs = new Set(buildings.flatMap(b => b.floors).flatMap(f => f.items).filter(i => i.kind !== 'label').map(i => i.ref));
   const palette = [...data.racks.map(r => ({ kind: 'place', ref: r.id, name: r.name, icon: (PLACE_KINDS[r.kind] || PLACE_KINDS.rack).icon })),
     ...data.devices.map(d => ({ kind: 'device', ref: d.id, name: d.name, icon: d.kind }))].filter(x => !placedRefs.has(x.ref) || (pending && pending.ref === x.ref));
-  const others = ghost ? building.floors.filter(f => f.id !== floor.id && f.outdoor === floor.outdoor) : [];
+  const others = ghost ? building.floors.filter(f => f.id !== floor.id) : [];
 
   return <div className="plan">
     <div className="row wrap" style={{ gap: 8, marginBottom: 10, alignItems: 'center' }}>
       <Btn size="sm" icon="chevron" onClick={back} style={{ transform: 'none' }}><span style={{ transform: 'scaleX(-1)', display: 'inline-block' }}>›</span> Все дома</Btn>
       <b style={{ fontSize: 15 }}>{building.name}</b>
       <div className="grow" />
-      {edit ? <label className="row" style={{ gap: 6, fontSize: 13, cursor: 'pointer' }}><Switch on={ghost} onChange={setGhost} /><span className="dim">соседний этаж</span></label> : null}
+      {edit && building.floors.length > 1 ? <label className="row" style={{ gap: 6, fontSize: 13, cursor: 'pointer' }}><Switch on={ghost} onChange={setGhost} /><span className="dim">соседний этаж</span></label> : null}
     </div>
     <div className="row wrap" style={{ gap: 6, marginBottom: 10 }}>
       {building.floors.map(f => <button key={f.id} className={'chip' + (f.id === floor.id ? ' on' : '')} onClick={() => setFid(f.id)}>
@@ -268,14 +321,16 @@ function BuildingPlan({ building, plan, back }) {
             {others.flatMap(f => (f.walls || []).map((w, i) => <line key={f.id + 'w' + i} x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2} className="plan-wall ghost" />))}
             {others.flatMap(f => (f.items || []).map(it => <circle key={f.id + it.id} cx={it.x} cy={it.y} r={16} className="plan-item-ghost" />))}
           </g>
-          {(floor.rooms || []).map(r => <g key={r.id} className={'plan-room' + (sel === 'room:' + r.id ? ' sel' : '')} onPointerDown={e => dragRoom(r, e)} style={{ cursor: edit && tool === 'select' ? 'move' : tool === 'erase' ? 'pointer' : 'default' }}>
-            <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={6} style={{ fill: `color-mix(in srgb, ${r.color || '#0a84ff'} 9%, transparent)`, stroke: `color-mix(in srgb, ${r.color || '#0a84ff'} 45%, transparent)` }} />
-            {r.text ? <text x={r.x + 8} y={r.y + 17} className="plan-room-label">{r.text}</text> : null}</g>)}
-          {draft ? <rect x={draft.x} y={draft.y} width={draft.w} height={draft.h} rx={6} className="plan-room-draft" /> : null}
+          {(floor.rooms || []).map(r => { const rc = r.color || '#0a84ff';
+            return <g key={r.id} className={'plan-room' + (sel === 'room:' + r.id ? ' sel' : '')} onPointerDown={e => dragRoom(r, e)} style={{ cursor: edit && tool === 'select' ? 'move' : tool === 'erase' ? 'pointer' : 'default' }}>
+            <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={4} className="pr-fill" style={{ fill: `color-mix(in srgb, ${rc} 12%, var(--bg2))`, stroke: rc }} />
+            {r.text ? <rect x={r.x} y={r.y} width={Math.min(r.w, r.text.length * 7.3 + 16)} height={20} rx={4} fill={rc} opacity=".92" /> : null}
+            {r.text ? <text x={r.x + 8} y={r.y + 14} className="pr-tag">{r.text}</text> : null}</g>; })}
           {(floor.walls || []).map((w, i) => <line key={i} className="plan-wall" x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
             onClick={() => tool === 'erase' && eraseWall(i)} style={{ cursor: tool === 'erase' ? 'pointer' : 'default' }} />)}
-          {wallPt ? <PlanWallDraft wallPt={wallPt} wrap={wrap} view={view} /> : null}
+          {draft ? <rect x={draft.x} y={draft.y} width={draft.w} height={draft.h} rx={6} className={tool === 'erase' ? 'plan-erase-draft' : 'plan-room-draft'} /> : null}
           {(floor.items || []).map(it => <PlanItem key={it.id} it={it} devById={devById} racks={data.racks} sel={sel === it.id} edit={edit} onDown={e => dragItem(it, e)} />)}
+          {edit ? <PlanCursor wrap={wrap} view={view} tool={tool} wallPt={wallPt} /> : null}
         </g>
       </svg>
       {edit ? <div className="plan-hint">{tool === 'wall' ? 'Нажимайте, чтобы ставить углы · «Готово» завершает' : tool === 'room' ? 'Обведите прямоугольник комнаты' :
@@ -283,15 +338,6 @@ function BuildingPlan({ building, plan, back }) {
       <ZoomBtns setView={setView} />
     </div>
   </div>;
-}
-
-function PlanWallDraft({ wallPt, wrap, view }) {
-  const [c, setC] = useState(null);
-  useEffect(() => { const el = wrap.current; if (!el) return;
-    const h = e => { const r = el.getBoundingClientRect(); setC({ x: snap((e.clientX - r.left - view.x) / view.k), y: snap((e.clientY - r.top - view.y) / view.k) }); };
-    el.addEventListener('pointermove', h); return () => el.removeEventListener('pointermove', h); }, [view, wrap]);
-  if (!c) return null;
-  return <line className="plan-wall draft" x1={wallPt.x} y1={wallPt.y} x2={c.x} y2={c.y} />;
 }
 
 function PlanItem({ it, devById, racks, sel, edit, onDown }) {

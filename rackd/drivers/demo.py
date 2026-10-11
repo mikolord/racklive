@@ -247,6 +247,9 @@ def seed(store):
              'rooms': [R(x=0, y=0, w=240, h=220, text='Серверная', color='#0a84ff'), R(x=240, y=0, w=240, h=220, text='Кабинет', color='#30d158')],
              'walls': [], 'items': [I(kind='place', ref='rack0', x=120, y=90), I(kind='place', ref='rack1', x=360, y=90),
                                     I(kind='device', ref=r, x=120, y=170), I(kind='device', ref=n, x=200, y=170), I(kind='device', ref=h, x=360, y=170)]},
+            {'id': 'f1b', 'name': '2 этаж',
+             'rooms': [R(x=0, y=0, w=240, h=220, text='Переговорная', color='#bf5af2'), R(x=240, y=0, w=240, h=220, text='Кабинет 2', color='#ff9f0a')],
+             'walls': [], 'items': []},
             {'id': 'yard', 'name': 'Двор', 'outdoor': True,
              'rooms': [R(x=0, y=0, w=300, h=200, text='Парковка', color='#8e8e93')], 'walls': [], 'items': []}]},
         {'id': 'b2', 'name': 'Склад', 'x': 420, 'y': 300, 'floors': [

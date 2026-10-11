@@ -4610,6 +4610,69 @@ function worst(devs) {
   return s.includes('offline') ? 'offline' : s.includes('warning') ? 'warning' : s.length ? 'online' : '';
 }
 const statusColor = s => s === 'online' ? 'var(--green)' : s === 'warning' ? 'var(--orange)' : s === 'offline' ? 'var(--red)' : 'var(--text3)';
+function segDist(p, s) {
+  // distance from point to a wall segment
+  const dx = s.x2 - s.x1,
+    dy = s.y2 - s.y1,
+    l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p.x - s.x1) * dx + (p.y - s.y1) * dy) / l2)) : 0;
+  return Math.hypot(p.x - (s.x1 + t * dx), p.y - (s.y1 + t * dy));
+}
+
+/* snap marker + wall draft, so the pointer is visible on any background */
+function PlanCursor({
+  wrap,
+  view,
+  tool,
+  wallPt
+}) {
+  const [c, setC] = useState(null);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const h = e => {
+      const r = el.getBoundingClientRect();
+      setC({
+        x: snap((e.clientX - r.left - view.x) / view.k),
+        y: snap((e.clientY - r.top - view.y) / view.k)
+      });
+    };
+    const leave = () => setC(null);
+    el.addEventListener('pointermove', h);
+    el.addEventListener('pointerleave', leave);
+    return () => {
+      el.removeEventListener('pointermove', h);
+      el.removeEventListener('pointerleave', leave);
+    };
+  }, [view, wrap]);
+  if (!c || tool === 'select') return null;
+  return /*#__PURE__*/React.createElement("g", {
+    pointerEvents: "none"
+  }, wallPt && tool === 'wall' ? /*#__PURE__*/React.createElement("line", {
+    className: "plan-wall draft",
+    x1: wallPt.x,
+    y1: wallPt.y,
+    x2: c.x,
+    y2: c.y
+  }) : null, /*#__PURE__*/React.createElement("circle", {
+    cx: c.x,
+    cy: c.y,
+    r: 6,
+    className: "plan-cursor"
+  }), /*#__PURE__*/React.createElement("line", {
+    className: "plan-cursor-x",
+    x1: c.x - 13,
+    y1: c.y,
+    x2: c.x + 13,
+    y2: c.y
+  }), /*#__PURE__*/React.createElement("line", {
+    className: "plan-cursor-x",
+    x1: c.x,
+    y1: c.y - 13,
+    x2: c.x,
+    y2: c.y + 13
+  }));
+}
 
 /* pan + wheel + pinch, with tap / drag-draw callbacks (opts read fresh each render) */
 function usePanZoom(wrapRef, opts, initial) {
@@ -5043,27 +5106,44 @@ function Territory({
     fill: "url(#pgridT)"
   }), /*#__PURE__*/React.createElement("g", {
     transform: `translate(${view.x},${view.y}) scale(${view.k})`
-  }, links.map(l => {
+  }, links.map((l, idx) => {
     const a = buildings.find(x => x.id === l.from),
       b = buildings.find(x => x.id === l.to);
     if (!a || !b) return null;
+    const key = [l.from, l.to].sort().join('>'); // offset parallel links between the same pair
+    const sib = links.filter(x => [x.from, x.to].sort().join('>') === key);
+    const pos2 = sib.indexOf(l),
+      off = (pos2 - (sib.length - 1) / 2) * 22;
     const c1 = center(a),
       c2 = center(b);
+    const dx = c2.x - c1.x,
+      dy = c2.y - c1.y,
+      len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len * off,
+      ny = dx / len * off;
+    const p1 = {
+        x: c1.x + nx,
+        y: c1.y + ny
+      },
+      p2 = {
+        x: c2.x + nx,
+        y: c2.y + ny
+      };
     return /*#__PURE__*/React.createElement("g", {
       key: l.id
     }, /*#__PURE__*/React.createElement("line", {
-      x1: c1.x,
-      y1: c1.y,
-      x2: c2.x,
-      y2: c2.y,
+      x1: p1.x,
+      y1: p1.y,
+      x2: p2.x,
+      y2: p2.y,
       className: "plan-link",
-      onClick: () => edit && confirm('Удалить магистраль?', {
+      onClick: () => edit && confirm('Удалить эту магистраль?', {
         danger: true,
         ok: 'Удалить'
       }).then(ok => ok && save(null, links.filter(x => x.id !== l.id)))
     }), l.label ? /*#__PURE__*/React.createElement("text", {
-      x: (c1.x + c2.x) / 2,
-      y: (c1.y + c2.y) / 2 - 8,
+      x: (p1.x + p2.x) / 2,
+      y: (p1.y + p2.y) / 2 - 8,
       textAnchor: "middle",
       className: "plan-link-label"
     }, l.label) : null);
@@ -5190,6 +5270,39 @@ function BuildingPlan({
     setFid(rest[0].id);
     saveFloors(rest);
   };
+  const eraseAt = w => {
+    // tap-erase: nearest wall, else room, else item
+    const th = 14;
+    let wi = -1,
+      bd = th;
+    (floor.walls || []).forEach((wl, i) => {
+      const d = segDist(w, wl);
+      if (d < bd) {
+        bd = d;
+        wi = i;
+      }
+    });
+    if (wi >= 0) {
+      mutate(f => ({
+        ...f,
+        walls: f.walls.filter((_, j) => j !== wi)
+      }));
+      return;
+    }
+    const rm = (floor.rooms || []).find(r => w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h);
+    if (rm) {
+      mutate(f => ({
+        ...f,
+        rooms: f.rooms.filter(x => x.id !== rm.id)
+      }));
+      return;
+    }
+    const it = (floor.items || []).find(i => Math.hypot(i.x - w.x, i.y - w.y) < 24);
+    if (it) mutate(f => ({
+      ...f,
+      items: f.items.filter(x => x.id !== it.id)
+    }));
+  };
   const onTap = w => {
     if (tool === 'wall') {
       const p = {
@@ -5223,39 +5336,58 @@ function BuildingPlan({
       setTool('select');
       return;
     }
-    if (tool === 'select') setSel(null);
-  };
-  const onDraw = (w0, w1, end) => {
-    // room rectangle rubber-band
-    if (tool !== 'room') return;
-    const x = snap(Math.min(w0.x, w1.x)),
-      y = snap(Math.min(w0.y, w1.y)),
-      ww = snap(Math.abs(w1.x - w0.x)),
-      hh = snap(Math.abs(w1.y - w0.y));
-    if (!end) {
-      setDraft({
-        x,
-        y,
-        w: ww,
-        h: hh
-      });
+    if (tool === 'erase') {
+      eraseAt(w);
       return;
     }
-    setDraft(null);
-    if (ww < PG || hh < PG) return;
-    const text = prompt('Название комнаты', '') || '';
-    mutate(f => ({
-      ...f,
-      rooms: [...(f.rooms || []), {
-        id: uid('r'),
-        x,
-        y,
-        w: ww,
-        h: hh,
-        text,
-        color: '#0a84ff'
-      }]
-    }));
+    if (tool === 'select') setSel(null);
+  };
+  const rectOf = (w0, w1) => ({
+    x: snap(Math.min(w0.x, w1.x)),
+    y: snap(Math.min(w0.y, w1.y)),
+    w: snap(Math.abs(w1.x - w0.x)),
+    h: snap(Math.abs(w1.y - w0.y))
+  });
+  const onDraw = (w0, w1, end) => {
+    const r = rectOf(w0, w1);
+    if (tool === 'room') {
+      if (!end) {
+        setDraft(r);
+        return;
+      }
+      setDraft(null);
+      if (r.w < PG || r.h < PG) return;
+      const text = prompt('Название комнаты', '') || '';
+      mutate(f => ({
+        ...f,
+        rooms: [...(f.rooms || []), {
+          id: uid('r'),
+          x: r.x,
+          y: r.y,
+          w: r.w,
+          h: r.h,
+          text,
+          color: '#0a84ff'
+        }]
+      }));
+      return;
+    }
+    if (tool === 'erase') {
+      if (!end) {
+        setDraft(r);
+        return;
+      }
+      setDraft(null);
+      if (r.w < PG && r.h < PG) return;
+      const inside = (x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+      mutate(f => ({
+        ...f,
+        walls: (f.walls || []).filter(wl => !(inside(wl.x1, wl.y1) && inside(wl.x2, wl.y2))),
+        rooms: (f.rooms || []).filter(rm => !(inside(rm.x, rm.y) && inside(rm.x + rm.w, rm.y + rm.h))),
+        items: (f.items || []).filter(i => !inside(i.x, i.y))
+      }));
+      setSel(null);
+    }
   };
   const {
     view,
@@ -5265,8 +5397,52 @@ function BuildingPlan({
   } = usePanZoom(wrap, {
     canPan: () => tool === 'select',
     onTap,
-    onDraw: tool === 'room' ? onDraw : null
+    onDraw: tool === 'room' || tool === 'erase' ? onDraw : null
   });
+
+  // centre the view on the floor's content whenever the floor changes
+  const fitFloor = () => {
+    const el = wrap.current;
+    if (!el) return;
+    const xs = [],
+      ys = [];
+    (floor.walls || []).forEach(w => {
+      xs.push(w.x1, w.x2);
+      ys.push(w.y1, w.y2);
+    });
+    (floor.rooms || []).forEach(r => {
+      xs.push(r.x, r.x + r.w);
+      ys.push(r.y, r.y + r.h);
+    });
+    (floor.items || []).forEach(i => {
+      xs.push(i.x - 30, i.x + 30);
+      ys.push(i.y - 40, i.y + 40);
+    });
+    const W = el.clientWidth,
+      H = el.clientHeight;
+    if (!xs.length) {
+      setView({
+        x: W / 2,
+        y: H / 2,
+        k: 1
+      });
+      return;
+    }
+    const x1 = Math.min(...xs) - 30,
+      y1 = Math.min(...ys) - 30,
+      x2 = Math.max(...xs) + 30,
+      y2 = Math.max(...ys) + 30;
+    const k = clampK(Math.min(1.3, Math.min(W / (x2 - x1), H / (y2 - y1))));
+    setView({
+      k,
+      x: (W - (x2 - x1) * k) / 2 - x1 * k,
+      y: (H - (y2 - y1) * k) / 2 - y1 * k
+    });
+  };
+  useEffect(() => {
+    const t = setTimeout(fitFloor, 30);
+    return () => clearTimeout(t);
+  }, [fid, building.id]);
   const dragItem = (it, e) => {
     if (tool === 'erase') {
       mutate(f => ({
@@ -5373,7 +5549,7 @@ function BuildingPlan({
     name: d.name,
     icon: d.kind
   }))].filter(x => !placedRefs.has(x.ref) || pending && pending.ref === x.ref);
-  const others = ghost ? building.floors.filter(f => f.id !== floor.id && f.outdoor === floor.outdoor) : [];
+  const others = ghost ? building.floors.filter(f => f.id !== floor.id) : [];
   return /*#__PURE__*/React.createElement("div", {
     className: "plan"
   }, /*#__PURE__*/React.createElement("div", {
@@ -5401,7 +5577,7 @@ function BuildingPlan({
     }
   }, building.name), /*#__PURE__*/React.createElement("div", {
     className: "grow"
-  }), edit ? /*#__PURE__*/React.createElement("label", {
+  }), edit && building.floors.length > 1 ? /*#__PURE__*/React.createElement("label", {
     className: "row",
     style: {
       gap: 6,
@@ -5555,35 +5731,40 @@ function BuildingPlan({
     cy: it.y,
     r: 16,
     className: "plan-item-ghost"
-  })))), (floor.rooms || []).map(r => /*#__PURE__*/React.createElement("g", {
-    key: r.id,
-    className: 'plan-room' + (sel === 'room:' + r.id ? ' sel' : ''),
-    onPointerDown: e => dragRoom(r, e),
-    style: {
-      cursor: edit && tool === 'select' ? 'move' : tool === 'erase' ? 'pointer' : 'default'
-    }
-  }, /*#__PURE__*/React.createElement("rect", {
-    x: r.x,
-    y: r.y,
-    width: r.w,
-    height: r.h,
-    rx: 6,
-    style: {
-      fill: `color-mix(in srgb, ${r.color || '#0a84ff'} 9%, transparent)`,
-      stroke: `color-mix(in srgb, ${r.color || '#0a84ff'} 45%, transparent)`
-    }
-  }), r.text ? /*#__PURE__*/React.createElement("text", {
-    x: r.x + 8,
-    y: r.y + 17,
-    className: "plan-room-label"
-  }, r.text) : null)), draft ? /*#__PURE__*/React.createElement("rect", {
-    x: draft.x,
-    y: draft.y,
-    width: draft.w,
-    height: draft.h,
-    rx: 6,
-    className: "plan-room-draft"
-  }) : null, (floor.walls || []).map((w, i) => /*#__PURE__*/React.createElement("line", {
+  })))), (floor.rooms || []).map(r => {
+    const rc = r.color || '#0a84ff';
+    return /*#__PURE__*/React.createElement("g", {
+      key: r.id,
+      className: 'plan-room' + (sel === 'room:' + r.id ? ' sel' : ''),
+      onPointerDown: e => dragRoom(r, e),
+      style: {
+        cursor: edit && tool === 'select' ? 'move' : tool === 'erase' ? 'pointer' : 'default'
+      }
+    }, /*#__PURE__*/React.createElement("rect", {
+      x: r.x,
+      y: r.y,
+      width: r.w,
+      height: r.h,
+      rx: 4,
+      className: "pr-fill",
+      style: {
+        fill: `color-mix(in srgb, ${rc} 12%, var(--bg2))`,
+        stroke: rc
+      }
+    }), r.text ? /*#__PURE__*/React.createElement("rect", {
+      x: r.x,
+      y: r.y,
+      width: Math.min(r.w, r.text.length * 7.3 + 16),
+      height: 20,
+      rx: 4,
+      fill: rc,
+      opacity: ".92"
+    }) : null, r.text ? /*#__PURE__*/React.createElement("text", {
+      x: r.x + 8,
+      y: r.y + 14,
+      className: "pr-tag"
+    }, r.text) : null);
+  }), (floor.walls || []).map((w, i) => /*#__PURE__*/React.createElement("line", {
     key: i,
     className: "plan-wall",
     x1: w.x1,
@@ -5594,10 +5775,13 @@ function BuildingPlan({
     style: {
       cursor: tool === 'erase' ? 'pointer' : 'default'
     }
-  })), wallPt ? /*#__PURE__*/React.createElement(PlanWallDraft, {
-    wallPt: wallPt,
-    wrap: wrap,
-    view: view
+  })), draft ? /*#__PURE__*/React.createElement("rect", {
+    x: draft.x,
+    y: draft.y,
+    width: draft.w,
+    height: draft.h,
+    rx: 6,
+    className: tool === 'erase' ? 'plan-erase-draft' : 'plan-room-draft'
   }) : null, (floor.items || []).map(it => /*#__PURE__*/React.createElement(PlanItem, {
     key: it.id,
     it: it,
@@ -5606,39 +5790,16 @@ function BuildingPlan({
     sel: sel === it.id,
     edit: edit,
     onDown: e => dragItem(it, e)
-  })))), edit ? /*#__PURE__*/React.createElement("div", {
+  })), edit ? /*#__PURE__*/React.createElement(PlanCursor, {
+    wrap: wrap,
+    view: view,
+    tool: tool,
+    wallPt: wallPt
+  }) : null)), edit ? /*#__PURE__*/React.createElement("div", {
     className: "plan-hint"
   }, tool === 'wall' ? 'Нажимайте, чтобы ставить углы · «Готово» завершает' : tool === 'room' ? 'Обведите прямоугольник комнаты' : tool === 'place' ? 'Выберите в палитре и нажмите на план' : tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Тащите устройства · два пальца / колесо — зум') : null, /*#__PURE__*/React.createElement(ZoomBtns, {
     setView: setView
   })));
-}
-function PlanWallDraft({
-  wallPt,
-  wrap,
-  view
-}) {
-  const [c, setC] = useState(null);
-  useEffect(() => {
-    const el = wrap.current;
-    if (!el) return;
-    const h = e => {
-      const r = el.getBoundingClientRect();
-      setC({
-        x: snap((e.clientX - r.left - view.x) / view.k),
-        y: snap((e.clientY - r.top - view.y) / view.k)
-      });
-    };
-    el.addEventListener('pointermove', h);
-    return () => el.removeEventListener('pointermove', h);
-  }, [view, wrap]);
-  if (!c) return null;
-  return /*#__PURE__*/React.createElement("line", {
-    className: "plan-wall draft",
-    x1: wallPt.x,
-    y1: wallPt.y,
-    x2: c.x,
-    y2: c.y
-  });
 }
 function PlanItem({
   it,
