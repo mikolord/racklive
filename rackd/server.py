@@ -358,12 +358,14 @@ class Handler(BaseHTTPRequestHandler):
                 out = []
                 for r in racks:
                     units = r.get('units') if isinstance(r.get('units'), list) else []
-                    need = max([int(u.get('uStart') or 1) + int(u.get('uSize') or 1) - 1 for u in units] + [1])
+                    kind = r.get('kind') if r.get('kind') in ('rack', 'box', 'place') else 'rack'
                     total = max(1, min(60, int(r.get('totalU') or 18)))
-                    if total < need:
-                        return self.err(f"«{r.get('name') or 'Шкаф'}»: шкаф меньше занятого места — оборудование стоит до U{need}")
-                    out.append({'id': r.get('id') or 'rack' + secrets.token_hex(3), 'name': (r.get('name') or 'Шкаф').strip()[:40],
-                                'totalU': total, 'units': units})
+                    if kind == 'rack':                          # only a real rack has a fixed U height to respect
+                        need = max([int(u.get('uStart') or 1) + int(u.get('uSize') or 1) - 1 for u in units] + [1])
+                        if total < need:
+                            return self.err(f"«{r.get('name') or 'Шкаф'}»: шкаф меньше занятого места — оборудование стоит до U{need}")
+                    out.append({'id': r.get('id') or 'rack' + secrets.token_hex(3), 'name': (r.get('name') or 'Место').strip()[:40],
+                                'kind': kind, 'totalU': total, 'units': units})
                 st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})

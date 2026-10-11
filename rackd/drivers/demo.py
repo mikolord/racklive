@@ -231,12 +231,11 @@ def seed(store):
         U(name='Хранилище', type='nas', uSize=2, uStart=6, color='#64d2ff', deviceId=n),
         U(name='Полка', type='shelf', uSize=1, uStart=8, color='#8e8e93'),
         U(name='ИБП 1500 ВА', type='ups', uSize=2, uStart=13, color='#ff9f0a')]},
-        {'id': 'rack1', 'name': 'Этаж 2 · ИТ-комната', 'totalU': 9, 'units': [
-            U(name='Патч-панель 24', type='patch', uSize=1, uStart=1, color='#8e8e93'),
-            U(name='Органайзер', type='organizer', uSize=1, uStart=2, color='#8e8e93'),
-            U(name='Home Assistant', type='server', uSize=1, uStart=3, color='#5e5ce6', deviceId=h),
-            U(name='Полка', type='shelf', uSize=1, uStart=5, color='#8e8e93'),
-            U(name='ИБП 1000 ВА', type='ups', uSize=2, uStart=8, color='#ff9f0a')]}]
+        {'id': 'rack1', 'name': 'Этаж 2 · щиток', 'kind': 'box', 'totalU': 1, 'units': [
+            U(name='Home Assistant', type='server', uStart=1, color='#5e5ce6', deviceId=h),
+            U(name='Патч-панель 12', type='patch', uStart=2, color='#8e8e93'),
+            U(name='PoE-инжектор', type='other', uStart=3, color='#ffd60a'),
+            U(name='ИБП 650 ВА', type='ups', uStart=4, color='#ff9f0a')]}]
     store.cfg['settings'].update(title='Офис · серверная', publicView=True, vlans=[
         {'vid': 1, 'name': 'Основная', 'color': '#0A84FF'}, {'vid': 10, 'name': 'Камеры', 'color': '#FF453A'},
         {'vid': 20, 'name': 'IoT', 'color': '#30D158'}, {'vid': 30, 'name': 'Гости', 'color': '#BF5AF2'}])

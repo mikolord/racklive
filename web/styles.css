@@ -325,3 +325,17 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .rack-jump-btn { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 0; border-radius: 9px; background: none; color: var(--text2); font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rack-jump-btn:hover { background: var(--fill); color: var(--text); }
 @media (max-width: 760px) { .rack-jump { max-width: 150px; } }
+
+/* places: box / room tile view + type picker */
+.tilebox { background: var(--card); border: .5px solid var(--line); border-radius: 18px; padding: 16px; backdrop-filter: blur(20px); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; margin-top: 14px; }
+.tile { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 8px; min-height: 64px; padding: 12px 14px 12px 18px; border-radius: 13px; background: var(--bg2); border: .5px solid var(--line); cursor: pointer; overflow: hidden; transition: transform .14s, box-shadow .2s; }
+.tile:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.tile .strip { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; }
+.tile.passive { opacity: .82; }
+.tile.add { align-items: center; justify-content: center; flex-direction: row; gap: 8px; color: var(--accent); border-style: dashed; background: none; font-weight: 600; font-size: 14px; }
+.tile.add:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); transform: none; }
+.place-pick { display: flex; flex-direction: column; gap: 8px; }
+.place-opt { display: flex; align-items: center; gap: 12px; text-align: left; padding: 12px 14px; border-radius: 13px; border: 1.5px solid var(--line); background: var(--bg2); cursor: pointer; color: var(--text); }
+.place-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.place-opt b { display: block; font-size: 14.5px; } .place-opt small { color: var(--text2); font-size: 12.5px; }

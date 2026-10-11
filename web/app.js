@@ -196,6 +196,8 @@ const ICON_PATHS = {
   check: 'M5 12l5 5 9-11',
   wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0',
   globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
+  box: 'M4 7h16v13H4zM4 7l2-4h12l2 4M9 11h6',
+  home: 'M4 11l8-7 8 7M6 10v10h12V10M10 20v-6h4v6',
   shield: 'M12 2l8 3v6c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V5z',
   globe2: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   pulse: 'M2 12h4l3-8 4 16 3-8h6',
@@ -2001,6 +2003,24 @@ function EventsList({
 /* ── 30_rack.jsx ── */
 /* Rack view */
 const U_PX = 46;
+const PLACE_KINDS = {
+  rack: {
+    label: 'Стойка 19″',
+    icon: 'rack',
+    hint: 'Серверный шкаф с юнитами по U'
+  },
+  box: {
+    label: 'Щиток / бокс',
+    icon: 'box',
+    hint: 'Настенный бокс, GPON-щиток — устройства плиткой'
+  },
+  place: {
+    label: 'Комната',
+    icon: 'home',
+    hint: 'Оборудование разбросано — просто карточки устройств'
+  }
+};
+const placeKind = r => PLACE_KINDS[r.kind] || PLACE_KINDS.rack;
 const UNIT_COLORS = ['#0a84ff', '#30d158', '#bf5af2', '#ff9f0a', '#ff453a', '#64d2ff', '#5e5ce6', '#ffd60a', '#8e8e93'];
 function deviceLine(dev) {
   if (!dev) return '';
@@ -2101,7 +2121,10 @@ function RackView() {
     saveRacks,
     openDevice
   } = useApp();
-  const [rackId, setRackId] = useState(data.racks[0].id);
+  const [rackId, setRackId] = useState(() => {
+    const p = new URLSearchParams(location.search).get('place');
+    return (data.racks.find(r => r.id === p) || data.racks[0]).id;
+  });
   const [side, setSide] = useState('front');
   const [editing, setEditing] = useState(null); // unit being edited / created
   const [info, setInfo] = useState(null);
@@ -2116,15 +2139,18 @@ function RackView() {
   const rack = data.racks.find(r => r.id === rackId) || data.racks[0];
   const total = rack.totalU;
   const minU = Math.max(1, ...rack.units.map(u => u.uStart + u.uSize - 1));
-  const addRack = () => {
+  const [newPlace, setNewPlace] = useState(false);
+  const addPlace = (kind, name) => {
     const id = 'rack' + Date.now().toString(36);
     saveRacks([...data.racks, {
       id,
-      name: `Шкаф ${data.racks.length + 1}`,
-      totalU: 12,
+      name: name || PLACE_KINDS[kind].label,
+      kind,
+      totalU: kind === 'rack' ? 12 : 1,
       units: []
     }]);
     setRackId(id);
+    setNewPlace(false);
   };
   const units = rack.units.filter(u => (u.side || 'front') === side);
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
@@ -2195,13 +2221,21 @@ function RackView() {
     className: 'chip' + (r.id === rackId ? ' on' : ''),
     onClick: () => setRackId(r.id)
   }, /*#__PURE__*/React.createElement(Icon, {
-    name: "rack",
+    name: placeKind(r).icon,
     size: 13
   }), r.name)), edit ? /*#__PURE__*/React.createElement(Btn, {
     size: "sm",
     icon: "plus",
-    onClick: addRack
-  }, "\u0428\u043A\u0430\u0444") : null) : null, /*#__PURE__*/React.createElement("div", {
+    onClick: () => setNewPlace(true)
+  }, "\u041C\u0435\u0441\u0442\u043E") : null) : null, rack.kind && rack.kind !== 'rack' ? /*#__PURE__*/React.createElement(TileView, {
+    rack: rack,
+    edit: edit,
+    devById: devById,
+    openDevice: openDevice,
+    onEdit: setEditing,
+    onInfo: setInfo,
+    onSettings: () => setRackSettings(rack)
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rack"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rack-top"
@@ -2336,7 +2370,7 @@ function RackView() {
       marginTop: 10,
       textAlign: 'center'
     }
-  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E, \u0447\u0442\u043E\u0431\u044B \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438")), /*#__PURE__*/React.createElement("div", {
+  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E, \u0447\u0442\u043E\u0431\u044B \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438"))), /*#__PURE__*/React.createElement("div", {
     className: "side-stack"
   }, /*#__PURE__*/React.createElement("div", {
     className: "stats"
@@ -2388,10 +2422,10 @@ function RackView() {
   }), /*#__PURE__*/React.createElement("b", null, "\u0412\u0441\u0451 \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), /*#__PURE__*/React.createElement("span", {
     className: "dim"
   }, "\u2014 \u0432\u0441\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u043D\u0430 \u0441\u0432\u044F\u0437\u0438"))), /*#__PURE__*/React.createElement(HealthCard, null), /*#__PURE__*/React.createElement(Card, {
-    title: "\u0423\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u0432 \u0448\u043A\u0430\u0444\u0443"
+    title: `Устройства · ${rack.name}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "list"
-  }, rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => a.uStart - b.uStart).map(u => {
+  }, rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => (a.uStart || 0) - (b.uStart || 0)).map(u => {
     const d = devById[u.deviceId];
     return /*#__PURE__*/React.createElement("div", {
       className: "li",
@@ -2417,12 +2451,12 @@ function RackView() {
       style: {
         fontWeight: 600
       }
-    }, d.name), /*#__PURE__*/React.createElement("span", {
+    }, d.name), rack.kind === 'rack' || !rack.kind ? /*#__PURE__*/React.createElement("span", {
       className: "dim3 mono",
       style: {
         fontSize: 11
       }
-    }, "U", u.uStart)), /*#__PURE__*/React.createElement("div", {
+    }, "U", u.uStart) : null), /*#__PURE__*/React.createElement("div", {
       className: "dim ellipsis",
       style: {
         fontSize: 12.5
@@ -2432,7 +2466,12 @@ function RackView() {
       size: 16,
       color: "var(--text3)"
     }));
-  }))), /*#__PURE__*/React.createElement(EventsList, {
+  }), !rack.units.filter(u => u.deviceId && devById[u.deviceId]).length ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      fontSize: 13
+    }
+  }, "\u041F\u043E\u043A\u0430 \u043D\u0435\u0442 \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u044B\u0445 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432") : null)), /*#__PURE__*/React.createElement(EventsList, {
     events: data.events.slice(0, 6),
     compact: true
   })), editing ? /*#__PURE__*/React.createElement(UnitEditor, {
@@ -2445,6 +2484,9 @@ function RackView() {
     canDelete: data.racks.length > 1,
     onClose: () => setRackSettings(null),
     onSelect: setRackId
+  }) : null, newPlace ? /*#__PURE__*/React.createElement(NewPlace, {
+    onClose: () => setNewPlace(false),
+    onCreate: addPlace
   }) : null, info ? /*#__PURE__*/React.createElement(Modal, {
     title: info.name,
     onClose: () => setInfo(null),
@@ -2466,6 +2508,160 @@ function RackView() {
     rel: "noreferrer"
   }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0432\u0435\u0431-\u0438\u043D\u0442\u0435\u0440\u0444\u0435\u0439\u0441") : null) : null);
 }
+
+/* Box / room: devices shown as free tiles instead of U-slots */
+function TileView({
+  rack,
+  edit,
+  devById,
+  openDevice,
+  onEdit,
+  onInfo,
+  onSettings
+}) {
+  const kinfo = placeKind(rack);
+  const linked = rack.units.filter(u => u.deviceId).length;
+  const newTile = () => onEdit({
+    id: null,
+    name: '',
+    type: 'router',
+    uSize: 1,
+    uStart: rack.units.length + 1,
+    side: 'front',
+    color: '#0a84ff',
+    deviceId: null,
+    notes: ''
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "tilebox"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rack-top"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "title row",
+    style: {
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: kinfo.icon,
+    size: 17
+  }), rack.name, edit ? /*#__PURE__*/React.createElement("button", {
+    className: "icon-link",
+    onClick: onSettings,
+    title: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043C\u0435\u0441\u0442\u0430"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "settings",
+    size: 15
+  })) : null), /*#__PURE__*/React.createElement("div", {
+    className: "meta"
+  }, kinfo.label, " \xB7 ", linked, " ", linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств'))), /*#__PURE__*/React.createElement("div", {
+    className: "tiles"
+  }, rack.units.map(u => {
+    const d = devById[u.deviceId];
+    const st = d && d.state;
+    const kind = PASSIVE.includes(u.type) ? u.type : d && d.kind || u.type;
+    return /*#__PURE__*/React.createElement("div", {
+      key: u.id,
+      className: 'tile' + (PASSIVE.includes(u.type) ? ' passive' : ''),
+      onClick: () => {
+        if (edit) {
+          onEdit(u);
+          return;
+        }
+        d ? openDevice(d) : onInfo(u);
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "strip",
+      style: {
+        background: u.color || '#0a84ff'
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "row",
+      style: {
+        gap: 9,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement(KindIcon, {
+      kind: kind,
+      size: 32,
+      round: 9
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "grow",
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "row",
+      style: {
+        gap: 6
+      }
+    }, st ? /*#__PURE__*/React.createElement("span", {
+      className: 'dot ' + st.status
+    }) : null, /*#__PURE__*/React.createElement("span", {
+      className: "ellipsis",
+      style: {
+        fontWeight: 650,
+        fontSize: 14
+      }
+    }, u.name)), /*#__PURE__*/React.createElement("div", {
+      className: "dim ellipsis",
+      style: {
+        fontSize: 12
+      }
+    }, d ? deviceLine(d) : KIND_TEXT[u.type]))), /*#__PURE__*/React.createElement(Leds, {
+      ports: st && st.ports
+    }));
+  }), edit ? /*#__PURE__*/React.createElement("button", {
+    className: "tile add",
+    onClick: newTile
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "plus",
+    size: 20
+  }), /*#__PURE__*/React.createElement("span", null, "\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C")) : null, !rack.units.length && !edit ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      gridColumn: '1 / -1',
+      padding: 36
+    }
+  }, "\u041F\u0443\u0441\u0442\u043E. \u0412\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \xAB\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435\xBB, \u0447\u0442\u043E\u0431\u044B \u0434\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0441\u044E\u0434\u0430 \u043E\u0431\u043E\u0440\u0443\u0434\u043E\u0432\u0430\u043D\u0438\u0435.") : null));
+}
+function NewPlace({
+  onClose,
+  onCreate
+}) {
+  const [kind, setKind] = useState('rack');
+  const [name, setName] = useState('');
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "\u041D\u043E\u0432\u043E\u0435 \u043C\u0435\u0441\u0442\u043E",
+    onClose: onClose,
+    footer: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "grow"
+    }), /*#__PURE__*/React.createElement(Btn, {
+      onClick: onClose
+    }, "\u041E\u0442\u043C\u0435\u043D\u0430"), /*#__PURE__*/React.createElement(Btn, {
+      kind: "primary",
+      onClick: () => onCreate(kind, name.trim())
+    }, "\u0421\u043E\u0437\u0434\u0430\u0442\u044C"))
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "place-pick"
+  }, Object.entries(PLACE_KINDS).map(([k, v]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: 'place-opt' + (kind === k ? ' on' : ''),
+    onClick: () => setKind(k)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: v.icon,
+    size: 24,
+    color: kind === k ? 'var(--accent)' : 'var(--text2)'
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, v.label), /*#__PURE__*/React.createElement("small", null, v.hint))))), /*#__PURE__*/React.createElement(Field, {
+    label: "\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435",
+    hint: "\u041D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 \xAB\u0421\u0435\u0440\u0432\u0435\u0440\u043D\u0430\u044F\xBB, \xAB\u0429\u0438\u0442\u043E\u043A \u0443 \u0432\u0445\u043E\u0434\u0430\xBB, \xAB\u041A\u0432\u0430\u0440\u0442\u0438\u0440\u0430\xBB"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: name,
+    autoFocus: true,
+    placeholder: PLACE_KINDS[kind].label,
+    onChange: e => setName(e.target.value)
+  })));
+}
 function RackSettings({
   rack,
   canDelete,
@@ -2480,12 +2676,26 @@ function RackSettings({
   const confirm = useConfirm();
   const toast = useToast();
   const [name, setName] = useState(rack.name);
+  const [kind, setKind] = useState(rack.kind || 'rack');
   const used = rack.units.filter(u => u.deviceId).length;
   const save = () => {
-    saveRack({
+    const r = {
       ...rack,
-      name: name.trim() || 'Шкаф'
-    });
+      name: name.trim() || 'Место',
+      kind
+    };
+    if (kind === 'rack' && rack.kind && rack.kind !== 'rack') {
+      // give devices real U positions
+      let u = 1;
+      r.units = rack.units.map(x => ({
+        ...x,
+        uStart: u++,
+        uSize: x.uSize || 1,
+        side: x.side || 'front'
+      }));
+      r.totalU = Math.max(12, r.units.length);
+    }
+    saveRack(r);
     onClose();
   };
   const del = async () => {
@@ -2514,19 +2724,36 @@ function RackSettings({
       onClick: save
     }, "\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C"))
   }, /*#__PURE__*/React.createElement(Field, {
-    label: "\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u0448\u043A\u0430\u0444\u0430",
-    hint: "\u041D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 \xAB\u0421\u0435\u0440\u0432\u0435\u0440\u043D\u0430\u044F\xBB, \xAB\u042D\u0442\u0430\u0436 2\xBB, \xAB\u0414\u0430\u0447\u0430\xBB"
+    label: "\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435",
+    hint: "\u041D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 \xAB\u0421\u0435\u0440\u0432\u0435\u0440\u043D\u0430\u044F\xBB, \xAB\u0429\u0438\u0442\u043E\u043A \u0443 \u0432\u0445\u043E\u0434\u0430\xBB, \xAB\u041A\u0432\u0430\u0440\u0442\u0438\u0440\u0430\xBB"
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: name,
     autoFocus: true,
     onChange: e => setName(e.target.value)
-  })), !canDelete ? /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "\u0422\u0438\u043F \u043C\u0435\u0441\u0442\u0430"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "place-pick"
+  }, Object.entries(PLACE_KINDS).map(([k, v]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: 'place-opt' + (kind === k ? ' on' : ''),
+    onClick: () => setKind(k)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: v.icon,
+    size: 22,
+    color: kind === k ? 'var(--accent)' : 'var(--text2)'
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, v.label), /*#__PURE__*/React.createElement("small", null, v.hint)))))), kind === 'rack' && rack.kind && rack.kind !== 'rack' && used ? /*#__PURE__*/React.createElement("div", {
     className: "dim",
     style: {
       fontSize: 13
     }
-  }, "\u042D\u0442\u043E \u0435\u0434\u0438\u043D\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0439 \u0448\u043A\u0430\u0444 \u2014 \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0435\u043B\u044C\u0437\u044F. \u0414\u043E\u0431\u0430\u0432\u044C\u0442\u0435 \u0435\u0449\u0451 \u043E\u0434\u0438\u043D \u043D\u0430 \u0432\u043A\u043B\u0430\u0434\u043A\u0435 \xAB\u0428\u043A\u0430\u0444\xBB.") : null);
+  }, "\u041F\u0440\u0438 \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0435 \u0432 \u0441\u0442\u043E\u0439\u043A\u0443 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u0432\u0441\u0442\u0430\u043D\u0443\u0442 \u0432 \u044E\u043D\u0438\u0442\u044B \u043F\u043E \u043F\u043E\u0440\u044F\u0434\u043A\u0443 \u2014 \u043F\u043E\u0442\u043E\u043C \u043F\u043E\u043F\u0440\u0430\u0432\u044C\u0442\u0435 \u043F\u043E\u0437\u0438\u0446\u0438\u0438.") : null, !canDelete ? /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13
+    }
+  }, "\u042D\u0442\u043E \u0435\u0434\u0438\u043D\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0435 \u043C\u0435\u0441\u0442\u043E \u2014 \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0435\u043B\u044C\u0437\u044F. \u0414\u043E\u0431\u0430\u0432\u044C\u0442\u0435 \u0435\u0449\u0451 \u043E\u0434\u043D\u043E \u043D\u0430 \u0432\u043A\u043B\u0430\u0434\u043A\u0435 \xAB\u0428\u043A\u0430\u0444\xBB.") : null);
 }
 function UnitEditor({
   unit,
@@ -2547,7 +2774,8 @@ function UnitEditor({
     ...x,
     [k]: v
   }));
-  const ok = fits(f, +f.uStart, unit.id);
+  const isRack = rack.kind === 'rack' || !rack.kind; // box / place don't use U positions
+  const ok = !isRack || fits(f, +f.uStart, unit.id);
   const save = () => {
     const u = {
       ...f,
@@ -2566,7 +2794,7 @@ function UnitEditor({
     onClose();
   };
   const del = async () => {
-    if (await confirm(`Убрать «${unit.name}» из шкафа?`, {
+    if (await confirm(`Убрать «${unit.name}»?`, {
       danger: true,
       ok: 'Убрать'
     })) {
@@ -2578,7 +2806,7 @@ function UnitEditor({
     }
   };
   return /*#__PURE__*/React.createElement(Modal, {
-    title: unit.id ? 'Юнит' : 'Новый юнит',
+    title: unit.id ? isRack ? 'Юнит' : 'Оборудование' : isRack ? 'Новый юнит' : 'Новое оборудование',
     onClose: onClose,
     footer: /*#__PURE__*/React.createElement(React.Fragment, null, unit.id ? /*#__PURE__*/React.createElement(Btn, {
       kind: "danger",
@@ -2654,7 +2882,7 @@ function UnitEditor({
   }, UNIT_TYPES.map(t => /*#__PURE__*/React.createElement("option", {
     key: t,
     value: t
-  }, KIND_TEXT[t])))), /*#__PURE__*/React.createElement(Field, {
+  }, KIND_TEXT[t])))), isRack ? /*#__PURE__*/React.createElement(Field, {
     label: "\u0412\u044B\u0441\u043E\u0442\u0430"
   }, /*#__PURE__*/React.createElement("select", {
     className: "select",
@@ -2663,7 +2891,7 @@ function UnitEditor({
   }, [1, 2, 3, 4, 5, 6, 8, 10].map(n => /*#__PURE__*/React.createElement("option", {
     key: n,
     value: n
-  }, n, "U")))), /*#__PURE__*/React.createElement(Field, {
+  }, n, "U")))) : null, isRack ? /*#__PURE__*/React.createElement(Field, {
     label: "\u041F\u043E\u0437\u0438\u0446\u0438\u044F"
   }, /*#__PURE__*/React.createElement("select", {
     className: "select",
@@ -2674,12 +2902,12 @@ function UnitEditor({
   }, (_, i) => /*#__PURE__*/React.createElement("option", {
     key: i,
     value: i + 1
-  }, "U", i + 1))))), !ok ? /*#__PURE__*/React.createElement("div", {
+  }, "U", i + 1)))) : null), !ok ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: 'var(--red)',
       fontSize: 13
     }
-  }, "\u041D\u0430 \u044D\u0442\u043E\u043C \u043C\u0435\u0441\u0442\u0435 \u043D\u0435 \u0445\u0432\u0430\u0442\u0430\u0435\u0442 \u0441\u0432\u043E\u0431\u043E\u0434\u043D\u044B\u0445 \u044E\u043D\u0438\u0442\u043E\u0432") : null, /*#__PURE__*/React.createElement(Field, {
+  }, "\u041D\u0430 \u044D\u0442\u043E\u043C \u043C\u0435\u0441\u0442\u0435 \u043D\u0435 \u0445\u0432\u0430\u0442\u0430\u0435\u0442 \u0441\u0432\u043E\u0431\u043E\u0434\u043D\u044B\u0445 \u044E\u043D\u0438\u0442\u043E\u0432") : null, isRack ? /*#__PURE__*/React.createElement(Field, {
     label: "\u0421\u0442\u043E\u0440\u043E\u043D\u0430"
   }, /*#__PURE__*/React.createElement(Seg, {
     value: f.side || 'front',
@@ -2691,7 +2919,7 @@ function UnitEditor({
       value: 'back',
       label: 'Тыл'
     }]
-  })), /*#__PURE__*/React.createElement(Field, {
+  })) : null, /*#__PURE__*/React.createElement(Field, {
     label: "\u0426\u0432\u0435\u0442"
   }, /*#__PURE__*/React.createElement("div", {
     className: "row"
@@ -2753,42 +2981,58 @@ function layoutMap(data, collapsed) {
     (kids[e.source] = kids[e.source] || []).push(e);
   });
 
-  // racks stacked vertically on the left; each unit keeps its rack id
+  // racks / boxes / rooms stacked vertically on the left; each keeps its id
   const racks = data.racks || [];
   const rackMeta = {};
   let ry = 0;
   racks.forEach(r => {
+    const isRack = r.kind === 'rack' || !r.kind;
+    const devN = r.units.filter(u => u.deviceId && nodes['d:' + u.deviceId]).length;
+    const rows = isRack ? r.totalU : Math.max(1, devN); // box/room: one row per device
     rackMeta[r.id] = {
       id: r.id,
       name: r.name,
+      kind: r.kind || 'rack',
+      isRack,
       total: r.totalU,
+      rows,
       y: ry,
       units: r.units
     };
-    ry += r.totalU * M.RU + 92;
+    ry += rows * M.RU + 92;
   });
   const stackH = Math.max(0, ry - 92);
-  const units = racks.flatMap(r => r.units.map(u => ({
-    ...u,
-    rackId: r.id
-  }))).sort((a, b) => (a.side === 'back') - (b.side === 'back') || a.uStart - b.uStart);
+  const pos = {};
   const rackNode = {};
-  units.forEach(u => {
-    if (u.deviceId && nodes['d:' + u.deviceId]) rackNode['d:' + u.deviceId] = u;
+  racks.forEach(r => {
+    const m = rackMeta[r.id];
+    let i = 0;
+    r.units.forEach(u => {
+      const nid = 'd:' + u.deviceId;
+      if (!u.deviceId || !nodes[nid]) return;
+      if (m.isRack && (u.side || 'front') === 'back') return; // back-side units aren't drawn on the map
+      rackNode[nid] = {
+        ...u,
+        rackId: r.id
+      };
+      pos[nid] = m.isRack ? {
+        x: 0,
+        y: m.y + (u.uStart - 1) * M.RU,
+        w: M.RW,
+        h: u.uSize * M.RU - 4,
+        rack: true,
+        rackId: r.id
+      } : {
+        x: 0,
+        y: m.y + i++ * M.RU,
+        w: M.RW,
+        h: M.RU - 4,
+        rack: true,
+        rackId: r.id
+      };
+    });
   });
   const hasRack = Object.keys(rackNode).length > 0;
-  const pos = {};
-  Object.entries(rackNode).forEach(([id, u]) => {
-    const base = (rackMeta[u.rackId] || {}).y || 0;
-    pos[id] = {
-      x: 0,
-      y: base + (u.uStart - 1) * M.RU,
-      w: M.RW,
-      h: u.uSize * M.RU - 4,
-      rack: true,
-      rackId: u.rackId
-    };
-  });
 
   // collapse big groups of Wi-Fi leaf clients
   const groups = {};
@@ -2938,7 +3182,6 @@ function layoutMap(data, collapsed) {
     edges,
     groups,
     hasRack,
-    units,
     rackNode,
     racks: Object.values(rackMeta)
   };
@@ -3168,7 +3411,7 @@ function MapView() {
     if (!el) return;
     const W = el.clientWidth,
       H = el.clientHeight;
-    const rh = rk.total * M.RU;
+    const rh = rk.rows * M.RU;
     const k = Math.min(1.15, Math.max(.3, (H - 130) / (rh + 110)));
     setView({
       k,
@@ -3690,8 +3933,17 @@ function RackFrame({
   markSet,
   onOpen
 }) {
-  const total = rk.total,
-    h = total * M.RU;
+  const h = rk.rows * M.RU;
+  // rack: units at their U positions; box/room: linked devices stacked by order
+  const rows = rk.isRack ? rk.units.filter(u => (u.side || 'front') === 'front').map(u => ({
+    u,
+    y: (u.uStart - 1) * M.RU,
+    hh: u.uSize * M.RU - 4
+  })) : rk.units.filter(u => u.deviceId && devById[u.deviceId]).map((u, i) => ({
+    u,
+    y: i * M.RU,
+    hh: M.RU - 4
+  }));
   return /*#__PURE__*/React.createElement("g", {
     className: "rackbox",
     transform: `translate(0,${rk.y})`
@@ -3713,8 +3965,8 @@ function RackFrame({
     fontSize: "11",
     textAnchor: "end",
     className: "usub"
-  }, total, "U"), Array.from({
-    length: total
+  }, rk.isRack ? rk.total + 'U' : PLACE_KINDS[rk.kind].label), rk.isRack ? Array.from({
+    length: rk.total
   }, (_, i) => /*#__PURE__*/React.createElement("text", {
     key: i,
     x: -7,
@@ -3722,11 +3974,13 @@ function RackFrame({
     fontSize: "8",
     textAnchor: "middle",
     className: "usub"
-  }, i + 1)), rk.units.filter(u => (u.side || 'front') === 'front').map(u => {
+  }, i + 1)) : null, rows.map(({
+    u,
+    y,
+    hh
+  }) => {
     const d = devById[u.deviceId];
     const st = d && d.state;
-    const y = (u.uStart - 1) * M.RU;
-    const hh = u.uSize * M.RU - 4;
     const dim = dimSet && !(d && dimSet.has('d:' + d.id));
     const kind = PASSIVE.includes(u.type) ? u.type : d && d.kind || u.type;
     return /*#__PURE__*/React.createElement("g", {

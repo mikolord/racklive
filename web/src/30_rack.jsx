@@ -1,5 +1,9 @@
 /* Rack view */
 const U_PX = 46;
+const PLACE_KINDS = { rack: { label: 'Стойка 19″', icon: 'rack', hint: 'Серверный шкаф с юнитами по U' },
+  box: { label: 'Щиток / бокс', icon: 'box', hint: 'Настенный бокс, GPON-щиток — устройства плиткой' },
+  place: { label: 'Комната', icon: 'home', hint: 'Оборудование разбросано — просто карточки устройств' } };
+const placeKind = r => PLACE_KINDS[r.kind] || PLACE_KINDS.rack;
 const UNIT_COLORS = ['#0a84ff', '#30d158', '#bf5af2', '#ff9f0a', '#ff453a', '#64d2ff', '#5e5ce6', '#ffd60a', '#8e8e93'];
 
 function deviceLine(dev) {
@@ -48,7 +52,7 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, top }) {
 
 function RackView() {
   const { data, edit, saveRack, saveRacks, openDevice } = useApp();
-  const [rackId, setRackId] = useState(data.racks[0].id);
+  const [rackId, setRackId] = useState(() => { const p = new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
   const [side, setSide] = useState('front');
   const [editing, setEditing] = useState(null);       // unit being edited / created
   const [info, setInfo] = useState(null);
@@ -59,8 +63,9 @@ function RackView() {
   useEffect(() => { if (!data.racks.find(r => r.id === rackId)) setRackId(data.racks[0].id); }, [data.racks]);
   const rack = data.racks.find(r => r.id === rackId) || data.racks[0]; const total = rack.totalU;
   const minU = Math.max(1, ...rack.units.map(u => u.uStart + u.uSize - 1));
-  const addRack = () => { const id = 'rack' + Date.now().toString(36);
-    saveRacks([...data.racks, { id, name: `Шкаф ${data.racks.length + 1}`, totalU: 12, units: [] }]); setRackId(id); };
+  const [newPlace, setNewPlace] = useState(false);
+  const addPlace = (kind, name) => { const id = 'rack' + Date.now().toString(36);
+    saveRacks([...data.racks, { id, name: name || PLACE_KINDS[kind].label, kind, totalU: kind === 'rack' ? 12 : 1, units: [] }]); setRackId(id); setNewPlace(false); };
   const units = rack.units.filter(u => (u.side || 'front') === side);
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
 
@@ -104,10 +109,12 @@ function RackView() {
     <div>
       {data.racks.length > 1 || edit ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
         {data.racks.map(r => <button key={r.id} className={'chip' + (r.id === rackId ? ' on' : '')} onClick={() => setRackId(r.id)}>
-          <Icon name="rack" size={13} />{r.name}</button>)}
-        {edit ? <Btn size="sm" icon="plus" onClick={addRack}>Шкаф</Btn> : null}
+          <Icon name={placeKind(r).icon} size={13} />{r.name}</button>)}
+        {edit ? <Btn size="sm" icon="plus" onClick={() => setNewPlace(true)}>Место</Btn> : null}
       </div> : null}
-      <div className="rack">
+      {rack.kind && rack.kind !== 'rack'
+        ? <TileView rack={rack} edit={edit} devById={devById} openDevice={openDevice} onEdit={setEditing} onInfo={setInfo} onSettings={() => setRackSettings(rack)} />
+        : <><div className="rack">
         <div className="rack-top"><div><div className="title">{rack.name}
           {edit ? <button className="icon-link" onClick={() => setRackSettings(rack)} title="Настройки шкафа"><Icon name="settings" size={15} /></button> : null}</div>
           <div className="meta">{total}U · занято {occ.filter(Boolean).length}U · {side === 'front' ? 'вид спереди' : 'вид сзади'}</div></div>
@@ -141,6 +148,7 @@ function RackView() {
           {[...new Set([6, 9, 12, 15, 18, 20, 22, 24, 27, 32, 36, 42, 45, 47, total])].sort((a, b) => a - b).map(n =>
             <option key={n} value={n} disabled={n < minU}>{n}U{n < minU ? ' — мало' : ''}</option>)}</select>
       </div> : <div className="dim" style={{ fontSize: 12.5, marginTop: 10, textAlign: 'center' }}>Нажмите на устройство, чтобы открыть подробности</div>}
+      </>}
     </div>
 
     <div className="side-stack">
@@ -155,17 +163,19 @@ function RackView() {
           <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{d.state.error || (d.state.metrics || []).filter(m => m.level).map(m => `${m.label}: ${m.value}`).join(', ') || STATUS_TEXT[d.state.status]}</div></div>
         <StatusBadge status={d.state.status} /></div>)}</div></Card> : <Card><div className="row"><span className="dot online" /><b>Всё работает</b><span className="dim">— все устройства на связи</span></div></Card>}
       <HealthCard />
-      <Card title="Устройства в шкафу"><div className="list">{rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => a.uStart - b.uStart).map(u => {
+      <Card title={`Устройства · ${rack.name}`}><div className="list">{rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => (a.uStart || 0) - (b.uStart || 0)).map(u => {
         const d = devById[u.deviceId]; return <div className="li" key={u.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
-          <KindIcon kind={d.kind} size={34} /><div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{d.name}</span><span className="dim3 mono" style={{ fontSize: 11 }}>U{u.uStart}</span></div>
+          <KindIcon kind={d.kind} size={34} /><div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{d.name}</span>{rack.kind === 'rack' || !rack.kind ? <span className="dim3 mono" style={{ fontSize: 11 }}>U{u.uStart}</span> : null}</div>
             <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{deviceLine(d)}</div></div><Icon name="chevron" size={16} color="var(--text3)" /></div>;
-      })}</div></Card>
+      })}
+        {!rack.units.filter(u => u.deviceId && devById[u.deviceId]).length ? <div className="empty" style={{ fontSize: 13 }}>Пока нет связанных устройств</div> : null}</div></Card>
       <EventsList events={data.events.slice(0, 6)} compact />
     </div>
 
     {editing ? <UnitEditor unit={editing} rack={rack} onClose={() => setEditing(null)} fits={fits} /> : null}
     {rackSettings ? <RackSettings rack={rackSettings} canDelete={data.racks.length > 1} onClose={() => setRackSettings(null)}
       onSelect={setRackId} /> : null}
+    {newPlace ? <NewPlace onClose={() => setNewPlace(false)} onCreate={addPlace} /> : null}
     {info ? <Modal title={info.name} onClose={() => setInfo(null)} icon={<KindIcon kind={info.type} />}>
       <KV rows={[['Тип', KIND_TEXT[info.type]], ['Позиция', `U${info.uStart}${info.uSize > 1 ? '–' + (info.uStart + info.uSize - 1) : ''}`], ['Сторона', info.side === 'back' ? 'Тыл' : 'Фронт']]} />
       {info.notes ? <div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }} className="card pad">{info.notes}</div> : null}
@@ -174,19 +184,64 @@ function RackView() {
   </div>;
 }
 
+/* Box / room: devices shown as free tiles instead of U-slots */
+function TileView({ rack, edit, devById, openDevice, onEdit, onInfo, onSettings }) {
+  const kinfo = placeKind(rack);
+  const linked = rack.units.filter(u => u.deviceId).length;
+  const newTile = () => onEdit({ id: null, name: '', type: 'router', uSize: 1, uStart: rack.units.length + 1, side: 'front', color: '#0a84ff', deviceId: null, notes: '' });
+  return <div className="tilebox">
+    <div className="rack-top"><div><div className="title row" style={{ gap: 8 }}><Icon name={kinfo.icon} size={17} />{rack.name}
+      {edit ? <button className="icon-link" onClick={onSettings} title="Настройки места"><Icon name="settings" size={15} /></button> : null}</div>
+      <div className="meta">{kinfo.label} · {linked} {linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств'}</div></div></div>
+    <div className="tiles">
+      {rack.units.map(u => { const d = devById[u.deviceId]; const st = d && d.state; const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
+        return <div key={u.id} className={'tile' + (PASSIVE.includes(u.type) ? ' passive' : '')} onClick={() => { if (edit) { onEdit(u); return; } d ? openDevice(d) : onInfo(u); }}>
+          <div className="strip" style={{ background: u.color || '#0a84ff' }} />
+          <div className="row" style={{ gap: 9, minWidth: 0 }}><KindIcon kind={kind} size={32} round={9} />
+            <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{st ? <span className={'dot ' + st.status} /> : null}<span className="ellipsis" style={{ fontWeight: 650, fontSize: 14 }}>{u.name}</span></div>
+              <div className="dim ellipsis" style={{ fontSize: 12 }}>{d ? deviceLine(d) : KIND_TEXT[u.type]}</div></div></div>
+          <Leds ports={st && st.ports} />
+        </div>; })}
+      {edit ? <button className="tile add" onClick={newTile}><Icon name="plus" size={20} /><span>Добавить</span></button> : null}
+      {!rack.units.length && !edit ? <div className="empty" style={{ gridColumn: '1 / -1', padding: 36 }}>Пусто. Включите «Редактирование», чтобы добавить сюда оборудование.</div> : null}
+    </div>
+  </div>;
+}
+
+function NewPlace({ onClose, onCreate }) {
+  const [kind, setKind] = useState('rack'); const [name, setName] = useState('');
+  return <Modal title="Новое место" onClose={onClose}
+    footer={<><div className="grow" /><Btn onClick={onClose}>Отмена</Btn><Btn kind="primary" onClick={() => onCreate(kind, name.trim())}>Создать</Btn></>}>
+    <div className="place-pick">{Object.entries(PLACE_KINDS).map(([k, v]) => <button key={k} className={'place-opt' + (kind === k ? ' on' : '')} onClick={() => setKind(k)}>
+      <Icon name={v.icon} size={24} color={kind === k ? 'var(--accent)' : 'var(--text2)'} /><div><b>{v.label}</b><small>{v.hint}</small></div></button>)}</div>
+    <Field label="Название" hint="Например «Серверная», «Щиток у входа», «Квартира»"><input className="input" value={name} autoFocus placeholder={PLACE_KINDS[kind].label} onChange={e => setName(e.target.value)} /></Field>
+  </Modal>;
+}
+
 function RackSettings({ rack, canDelete, onClose, onSelect }) {
   const { data, saveRack, saveRacks } = useApp(); const confirm = useConfirm(); const toast = useToast();
   const [name, setName] = useState(rack.name);
+  const [kind, setKind] = useState(rack.kind || 'rack');
   const used = rack.units.filter(u => u.deviceId).length;
-  const save = () => { saveRack({ ...rack, name: name.trim() || 'Шкаф' }); onClose(); };
+  const save = () => {
+    const r = { ...rack, name: name.trim() || 'Место', kind };
+    if (kind === 'rack' && rack.kind && rack.kind !== 'rack') {   // give devices real U positions
+      let u = 1; r.units = rack.units.map(x => ({ ...x, uStart: u++, uSize: x.uSize || 1, side: x.side || 'front' }));
+      r.totalU = Math.max(12, r.units.length);
+    }
+    saveRack(r); onClose();
+  };
   const del = async () => {
     if (!(await confirm(`Удалить шкаф «${rack.name}»? Его юниты будут удалены${used ? `, ${used} устройств отвяжутся (сами устройства останутся)` : ''}.`, { danger: true, ok: 'Удалить шкаф' }))) return;
     const rest = data.racks.filter(r => r.id !== rack.id); onSelect(rest[0].id); saveRacks(rest); onClose();
   };
   return <Modal title="Настройки шкафа" onClose={onClose}
     footer={<>{canDelete ? <Btn kind="danger" icon="trash" onClick={del}>Удалить шкаф</Btn> : null}<div className="grow" /><Btn onClick={onClose}>Отмена</Btn><Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
-    <Field label="Название шкафа" hint="Например «Серверная», «Этаж 2», «Дача»"><input className="input" value={name} autoFocus onChange={e => setName(e.target.value)} /></Field>
-    {!canDelete ? <div className="dim" style={{ fontSize: 13 }}>Это единственный шкаф — удалить нельзя. Добавьте ещё один на вкладке «Шкаф».</div> : null}
+    <Field label="Название" hint="Например «Серверная», «Щиток у входа», «Квартира»"><input className="input" value={name} autoFocus onChange={e => setName(e.target.value)} /></Field>
+    <Field label="Тип места"><div className="place-pick">{Object.entries(PLACE_KINDS).map(([k, v]) => <button key={k} className={'place-opt' + (kind === k ? ' on' : '')} onClick={() => setKind(k)}>
+      <Icon name={v.icon} size={22} color={kind === k ? 'var(--accent)' : 'var(--text2)'} /><div><b>{v.label}</b><small>{v.hint}</small></div></button>)}</div></Field>
+    {kind === 'rack' && rack.kind && rack.kind !== 'rack' && used ? <div className="dim" style={{ fontSize: 13 }}>При переходе в стойку устройства встанут в юниты по порядку — потом поправьте позиции.</div> : null}
+    {!canDelete ? <div className="dim" style={{ fontSize: 13 }}>Это единственное место — удалить нельзя. Добавьте ещё одно на вкладке «Шкаф».</div> : null}
   </Modal>;
 }
 
@@ -196,14 +251,15 @@ function UnitEditor({ unit, rack, onClose, fits }) {
   const [f, setF] = useState({ ...unit });
   const [addDev, setAddDev] = useState(false);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
-  const ok = fits(f, +f.uStart, unit.id);
+  const isRack = rack.kind === 'rack' || !rack.kind;         // box / place don't use U positions
+  const ok = !isRack || fits(f, +f.uStart, unit.id);
   const save = () => {
     const u = { ...f, uStart: +f.uStart, uSize: +f.uSize, name: f.name.trim() || (f.deviceId ? (data.devices.find(d => d.id === f.deviceId) || {}).name : KIND_TEXT[f.type]) };
     const units = unit.id ? rack.units.map(x => x.id === unit.id ? u : x) : [...rack.units, { ...u, id: 'u' + Date.now().toString(36) }];
     saveRack({ ...rack, units }); onClose();
   };
-  const del = async () => { if (await confirm(`Убрать «${unit.name}» из шкафа?`, { danger: true, ok: 'Убрать' })) { saveRack({ ...rack, units: rack.units.filter(x => x.id !== unit.id) }); onClose(); } };
-  return <Modal title={unit.id ? 'Юнит' : 'Новый юнит'} onClose={onClose}
+  const del = async () => { if (await confirm(`Убрать «${unit.name}»?`, { danger: true, ok: 'Убрать' })) { saveRack({ ...rack, units: rack.units.filter(x => x.id !== unit.id) }); onClose(); } };
+  return <Modal title={unit.id ? (isRack ? 'Юнит' : 'Оборудование') : (isRack ? 'Новый юнит' : 'Новое оборудование')} onClose={onClose}
     footer={<>{unit.id ? <Btn kind="danger" icon="trash" onClick={del}>Убрать</Btn> : null}<div className="grow" /><Btn onClick={onClose}>Отмена</Btn>
       <Btn kind="primary" onClick={save} disabled={!ok}>Сохранить</Btn></>}>
     <Field label="Связанное устройство" hint="Живые данные этого устройства будут показаны на юните. Нет нужного? Создайте новое прямо здесь — оно сразу привяжется к юниту.">
@@ -220,11 +276,11 @@ function UnitEditor({ unit, rack, onClose, fits }) {
     <Field label="Название"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} placeholder="Например, Коммутатор ядра" /></Field>
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <Field label="Тип"><select className="select" value={f.type} onChange={e => set('type', e.target.value)}>{UNIT_TYPES.map(t => <option key={t} value={t}>{KIND_TEXT[t]}</option>)}</select></Field>
-      <Field label="Высота"><select className="select" value={f.uSize} onChange={e => set('uSize', +e.target.value)}>{[1, 2, 3, 4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n}U</option>)}</select></Field>
-      <Field label="Позиция"><select className="select" value={f.uStart} onChange={e => set('uStart', +e.target.value)}>{Array.from({ length: rack.totalU }, (_, i) => <option key={i} value={i + 1}>U{i + 1}</option>)}</select></Field>
+      {isRack ? <Field label="Высота"><select className="select" value={f.uSize} onChange={e => set('uSize', +e.target.value)}>{[1, 2, 3, 4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n}U</option>)}</select></Field> : null}
+      {isRack ? <Field label="Позиция"><select className="select" value={f.uStart} onChange={e => set('uStart', +e.target.value)}>{Array.from({ length: rack.totalU }, (_, i) => <option key={i} value={i + 1}>U{i + 1}</option>)}</select></Field> : null}
     </div>
     {!ok ? <div style={{ color: 'var(--red)', fontSize: 13 }}>На этом месте не хватает свободных юнитов</div> : null}
-    <Field label="Сторона"><Seg value={f.side || 'front'} onChange={v => set('side', v)} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></Field>
+    {isRack ? <Field label="Сторона"><Seg value={f.side || 'front'} onChange={v => set('side', v)} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></Field> : null}
     <Field label="Цвет"><div className="row">{UNIT_COLORS.map(c => <button key={c} onClick={() => set('color', c)} style={{ width: 28, height: 28, borderRadius: 8, border: f.color === c ? '3px solid var(--text)' : '0', background: c, cursor: 'pointer' }} />)}</div></Field>
     <Field label="Ссылка на веб-интерфейс"><input className="input" value={f.webUrl || ''} onChange={e => set('webUrl', e.target.value)} placeholder="http://192.168.1.1" /></Field>
     <Field label="Заметки"><textarea className="textarea" value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>

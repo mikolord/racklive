@@ -8,19 +8,31 @@ function layoutMap(data, collapsed) {
   const parentEdge = {}; const kids = {};
   tree.forEach(e => { parentEdge[e.target] = e; (kids[e.source] = kids[e.source] || []).push(e); });
 
-  // racks stacked vertically on the left; each unit keeps its rack id
+  // racks / boxes / rooms stacked vertically on the left; each keeps its id
   const racks = data.racks || [];
   const rackMeta = {}; let ry = 0;
-  racks.forEach(r => { rackMeta[r.id] = { id: r.id, name: r.name, total: r.totalU, y: ry, units: r.units }; ry += r.totalU * M.RU + 92; });
-  const stackH = Math.max(0, ry - 92);
-  const units = racks.flatMap(r => r.units.map(u => ({ ...u, rackId: r.id }))).sort((a, b) => (a.side === 'back') - (b.side === 'back') || a.uStart - b.uStart);
-  const rackNode = {}; units.forEach(u => { if (u.deviceId && nodes['d:' + u.deviceId]) rackNode['d:' + u.deviceId] = u; });
-  const hasRack = Object.keys(rackNode).length > 0;
-  const pos = {};
-  Object.entries(rackNode).forEach(([id, u]) => {
-    const base = (rackMeta[u.rackId] || {}).y || 0;
-    pos[id] = { x: 0, y: base + (u.uStart - 1) * M.RU, w: M.RW, h: u.uSize * M.RU - 4, rack: true, rackId: u.rackId };
+  racks.forEach(r => {
+    const isRack = r.kind === 'rack' || !r.kind;
+    const devN = r.units.filter(u => u.deviceId && nodes['d:' + u.deviceId]).length;
+    const rows = isRack ? r.totalU : Math.max(1, devN);        // box/room: one row per device
+    rackMeta[r.id] = { id: r.id, name: r.name, kind: r.kind || 'rack', isRack, total: r.totalU, rows, y: ry, units: r.units };
+    ry += rows * M.RU + 92;
   });
+  const stackH = Math.max(0, ry - 92);
+  const pos = {}; const rackNode = {};
+  racks.forEach(r => {
+    const m = rackMeta[r.id]; let i = 0;
+    r.units.forEach(u => {
+      const nid = 'd:' + u.deviceId;
+      if (!u.deviceId || !nodes[nid]) return;
+      if (m.isRack && (u.side || 'front') === 'back') return;   // back-side units aren't drawn on the map
+      rackNode[nid] = { ...u, rackId: r.id };
+      pos[nid] = m.isRack
+        ? { x: 0, y: m.y + (u.uStart - 1) * M.RU, w: M.RW, h: u.uSize * M.RU - 4, rack: true, rackId: r.id }
+        : { x: 0, y: m.y + (i++) * M.RU, w: M.RW, h: M.RU - 4, rack: true, rackId: r.id };
+    });
+  });
+  const hasRack = Object.keys(rackNode).length > 0;
 
   // collapse big groups of Wi-Fi leaf clients
   const groups = {}; const hiddenIds = new Set();
@@ -77,7 +89,7 @@ function layoutMap(data, collapsed) {
   // user overrides (edit mode drag)
   Object.entries(data.map.positions || {}).forEach(([id, [x, y]]) => { if (pos[id] && !pos[id].rack) Object.assign(pos[id], { x, y }); });
   const edges = [...Object.values(kids).flat().filter(e => !e.hidden), ...topo.edges.filter(e => (e.extra || e.manual) && pos[e.source] && pos[e.target])];
-  return { nodes, pos, edges, groups, hasRack, units, rackNode, racks: Object.values(rackMeta) };
+  return { nodes, pos, edges, groups, hasRack, rackNode, racks: Object.values(rackMeta) };
 }
 
 function edgePath(e, L) {
@@ -166,7 +178,7 @@ function MapView() {
   useEffect(() => { if (!view) fit(); }, [L]);
   useEffect(() => { if (view) fit(); }, [healthOpen]);
   const focusRack = rk => {                                 // centre the map on one rack (quick jump when there are many)
-    const el = wrap.current; if (!el) return; const W = el.clientWidth, H = el.clientHeight; const rh = rk.total * M.RU;
+    const el = wrap.current; if (!el) return; const W = el.clientWidth, H = el.clientHeight; const rh = rk.rows * M.RU;
     const k = Math.min(1.15, Math.max(.3, (H - 130) / (rh + 110)));
     setView({ k, x: W * 0.36 - (M.RW / 2) * k, y: H / 2 - (rk.y + rh / 2) * k }); setSel(null);
   };
@@ -328,14 +340,18 @@ function RackBox({ L, data, devById, dimSet, markSet, onOpen }) {
 }
 
 function RackFrame({ rk, devById, dimSet, markSet, onOpen }) {
-  const total = rk.total, h = total * M.RU;
+  const h = rk.rows * M.RU;
+  // rack: units at their U positions; box/room: linked devices stacked by order
+  const rows = rk.isRack
+    ? rk.units.filter(u => (u.side || 'front') === 'front').map(u => ({ u, y: (u.uStart - 1) * M.RU, hh: u.uSize * M.RU - 4 }))
+    : rk.units.filter(u => u.deviceId && devById[u.deviceId]).map((u, i) => ({ u, y: i * M.RU, hh: M.RU - 4 }));
   return <g className="rackbox" transform={`translate(0,${rk.y})`}>
     <rect className="frame" x={-14} y={-46} width={M.RW + 28} height={h + 60} rx={16} />
     <text x={0} y={-22} fontSize="14" fontWeight="700">{rk.name}</text>
-    <text x={M.RW} y={-22} fontSize="11" textAnchor="end" className="usub">{total}U</text>
-    {Array.from({ length: total }, (_, i) => <text key={i} x={-7} y={i * M.RU + M.RU / 2 + 3} fontSize="8" textAnchor="middle" className="usub">{i + 1}</text>)}
-    {rk.units.filter(u => (u.side || 'front') === 'front').map(u => {
-      const d = devById[u.deviceId]; const st = d && d.state; const y = (u.uStart - 1) * M.RU; const hh = u.uSize * M.RU - 4;
+    <text x={M.RW} y={-22} fontSize="11" textAnchor="end" className="usub">{rk.isRack ? rk.total + 'U' : PLACE_KINDS[rk.kind].label}</text>
+    {rk.isRack ? Array.from({ length: rk.total }, (_, i) => <text key={i} x={-7} y={i * M.RU + M.RU / 2 + 3} fontSize="8" textAnchor="middle" className="usub">{i + 1}</text>) : null}
+    {rows.map(({ u, y, hh }) => {
+      const d = devById[u.deviceId]; const st = d && d.state;
       const dim = dimSet && !(d && dimSet.has('d:' + d.id));
       const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
       return <g key={u.id} className={'u' + (dim ? ' dim-out' : '')} style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && onOpen(d)}>
