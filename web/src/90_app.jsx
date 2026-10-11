@@ -72,9 +72,9 @@ function App() {
     setData(d => ({ ...d, map: { ...d.map, ...part } }));
     try { await api('/api/map', { method: 'PUT', body: part }); refresh(); } catch (e) { toast(e.message, true); }
   };
-  const savePlan = async buildings => {
-    setData(d => ({ ...d, plan: { buildings } }));
-    try { await api('/api/plan', { method: 'PUT', body: { buildings } }); } catch (e) { toast(e.message, true); refresh(); }
+  const savePlan = async plan => {                         // plan = { buildings, links }
+    setData(d => ({ ...d, plan }));
+    try { await api('/api/plan', { method: 'PUT', body: plan }); } catch (e) { toast(e.message, true); refresh(); }
   };
   const logout = async () => { await api('/api/logout', { method: 'POST' }); setMode('view'); refresh(); };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));

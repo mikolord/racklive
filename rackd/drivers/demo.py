@@ -240,17 +240,17 @@ def seed(store):
         {'vid': 1, 'name': 'Основная', 'color': '#0A84FF'}, {'vid': 10, 'name': 'Камеры', 'color': '#FF453A'},
         {'vid': 20, 'name': 'IoT', 'color': '#30D158'}, {'vid': 30, 'name': 'Гости', 'color': '#BF5AF2'}])
     I = lambda **k: dict({'id': 'i' + secrets.token_hex(3)}, **k)
-    store.cfg['plan'] = {'buildings': [{'id': 'b1', 'name': 'Офис', 'floors': [
-        {'id': 'f1', 'name': '1 этаж', 'walls': [
-            {'x1': 0, 'y1': 0, 'x2': 460, 'y2': 0}, {'x1': 460, 'y1': 0, 'x2': 460, 'y2': 320}, {'x1': 460, 'y1': 320, 'x2': 0, 'y2': 320},
-            {'x1': 0, 'y1': 320, 'x2': 0, 'y2': 0}, {'x1': 240, 'y1': 0, 'x2': 240, 'y2': 200}],
-         'items': [I(kind='label', text='Серверная', x=120, y=36), I(kind='label', text='Кабинет', x=350, y=36),
-                   I(kind='place', ref='rack0', x=120, y=110), I(kind='place', ref='rack1', x=350, y=110),
-                   I(kind='device', ref=r, x=120, y=240), I(kind='device', ref=n, x=240, y=240), I(kind='device', ref=h, x=360, y=240)]},
-        {'id': 'yard', 'name': 'Двор', 'outdoor': True,
-         'walls': [{'x1': 0, 'y1': 0, 'x2': 520, 'y2': 0}, {'x1': 520, 'y1': 0, 'x2': 520, 'y2': 360},
-                   {'x1': 520, 'y1': 360, 'x2': 0, 'y2': 360}, {'x1': 0, 'y1': 360, 'x2': 0, 'y2': 0}],
-         'items': [I(kind='label', text='Въезд · парковка', x=180, y=60)]}]}]}
+    R = lambda **k: dict({'id': 'r' + secrets.token_hex(3), 'color': '#0a84ff'}, **k)
+    store.cfg['plan'] = {'links': [{'id': 'l1', 'from': 'b1', 'to': 'b2', 'label': 'Оптика 1 Гбит'}], 'buildings': [
+        {'id': 'b1', 'name': 'Главный офис', 'x': 40, 'y': 40, 'floors': [
+            {'id': 'f1', 'name': '1 этаж',
+             'rooms': [R(x=0, y=0, w=240, h=220, text='Серверная', color='#0a84ff'), R(x=240, y=0, w=240, h=220, text='Кабинет', color='#30d158')],
+             'walls': [], 'items': [I(kind='place', ref='rack0', x=120, y=90), I(kind='place', ref='rack1', x=360, y=90),
+                                    I(kind='device', ref=r, x=120, y=170), I(kind='device', ref=n, x=200, y=170), I(kind='device', ref=h, x=360, y=170)]},
+            {'id': 'yard', 'name': 'Двор', 'outdoor': True,
+             'rooms': [R(x=0, y=0, w=300, h=200, text='Парковка', color='#8e8e93')], 'walls': [], 'items': []}]},
+        {'id': 'b2', 'name': 'Склад', 'x': 420, 'y': 300, 'floors': [
+            {'id': 'f2', 'name': '1 этаж', 'rooms': [R(x=0, y=0, w=200, h=160, text='Приёмка', color='#ff9f0a')], 'walls': [], 'items': []}]}]}
     now = int(time.time())
     for i in range(288):
         tt = now - (287 - i) * 300
