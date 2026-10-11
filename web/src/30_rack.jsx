@@ -143,6 +143,7 @@ function RackView() {
         <KindIcon kind={d.kind} size={34} /><div className="grow"><div style={{ fontWeight: 600 }}>{d.name}</div>
           <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{d.state.error || (d.state.metrics || []).filter(m => m.level).map(m => `${m.label}: ${m.value}`).join(', ') || STATUS_TEXT[d.state.status]}</div></div>
         <StatusBadge status={d.state.status} /></div>)}</div></Card> : <Card><div className="row"><span className="dot online" /><b>Всё работает</b><span className="dim">— все устройства на связи</span></div></Card>}
+      <HealthCard />
       <Card title="Устройства в шкафу"><div className="list">{rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => a.uStart - b.uStart).map(u => {
         const d = devById[u.deviceId]; return <div className="li" key={u.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
           <KindIcon kind={d.kind} size={34} /><div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{d.name}</span><span className="dim3 mono" style={{ fontSize: 11 }}>U{u.uStart}</span></div>

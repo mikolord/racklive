@@ -290,3 +290,26 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .cp-ruler { font-size: 10.5px; color: var(--text3); margin-top: -4px; }
 .cable-details { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; }
 @media (max-width: 560px) { .cable-pair { grid-template-columns: 44px 1fr 108px; gap: 8px; } .cp-name span { display: none; } }
+
+/* network health */
+.health { display: flex; flex-direction: column; gap: 16px; }
+.score-ring { position: relative; flex-shrink: 0; }
+.score-ring > div { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+.score-ring b { font-weight: 800; letter-spacing: -.5px; } .score-ring small { font-size: 9.5px; color: var(--text3); margin-top: 2px; }
+.check-item { align-items: flex-start; } .check-item.click { cursor: pointer; } .check-item.click:hover { background: var(--fill); }
+.check-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0; }
+.spof { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.spof-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border-radius: 12px; background: var(--fill); }
+.spof-row.click { cursor: pointer; } .spof-row.click:hover { background: color-mix(in srgb, var(--accent) 10%, var(--fill)); }
+.spof-bar { height: 5px; border-radius: 3px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.spof-bar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--orange), var(--red)); }
+.link-btn { border: 0; background: none; color: var(--accent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; }
+.link-btn svg { transition: transform .2s; }
+.topo-types { display: grid; gap: 8px; margin-top: 8px; }
+.topo-type { display: flex; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 12px; border: 1px solid transparent; }
+.topo-type.on { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.topo-type svg { flex-shrink: 0; } .topo-type b { font-size: 14px; }
+.health-panel { position: absolute; left: 12px; top: 64px; width: 400px; max-height: calc(100% - 80px); overflow: auto; z-index: 3; }
+@media (max-width: 760px) { .health-panel { left: 10px; right: 10px; width: auto; top: 60px; max-height: calc(100% - 140px); } .spof { grid-template-columns: 1fr; } }
+.spof-mark { fill: none; stroke: var(--orange); stroke-width: 2; stroke-dasharray: 6 4; animation: spofdash 1.2s linear infinite; }
+@keyframes spofdash { to { stroke-dashoffset: -20; } }

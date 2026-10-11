@@ -60,6 +60,12 @@ function phone(n, x, y, w) {
   add(`<div class="phone" style="left:${x}px;top:${y}px;width:${w}px"><div class="scr" style="width:${w - 24}px;height:${H + SB}px;background-color:#000;
     background-image:url(${RAW}mobile3_dark.png);background-size:${1190 * k}px ${844 * k}px;background-position:${-400 * n * k}px ${SB}px">${status}<div class="island"></div></div></div>`);
 }
+// card: a cropped region of a raw shot (coordinates in raw image pixels) floating on the stage
+function card(img, x, y, w, sx, sy, sw, sh, rawW) {
+  const k = w / sw;
+  add(`<div class="win" style="left:${x}px;top:${y}px;width:${w}px;height:${sh * k}px;border-radius:22px;background:#1c1c1e url(${RAW + img}) no-repeat;
+    background-size:${rawW * k}px auto;background-position:${-sx * k}px ${-sy * k}px"></div>`);
+}
 function title(x, y, size) {
   add(`<div class="title" style="left:${x}px;top:${y}px"><div class="logo">${LOGO}</div><div><h1 style="font-size:${size || 60}px">Rack Live</h1>
     <div class="sub">Серверный шкаф и карта сети с живыми данными</div></div></div>`);
@@ -87,6 +93,10 @@ if (v === 'hero') {
   cap(90, 60, 'Светлая тема', 'Карточки устройств, графики CPU, памяти и температуры');
   win('devices_light.png', 90, 190, 900, true);
   win('nas_light.png', 610, 330, 900, true);
+} else if (v === 'health') {
+  cap(90, 60, 'Анализ сети и проверка кабеля', 'Тип топологии, точки отказа, что исправить — и длина кабеля с обрывом пары до метра');
+  win('health_dark.png', 90, 180, 1100);
+  card('cable_dark.png', 940, 560, 580, 40, 1700, 1100, 690, 1200);
 } else if (v === 'mobile') {
   cap(90, 60, 'На телефоне — как приложение', 'PWA: добавьте на экран «Домой». Тёмная и светлая тема, жесты, плавающий док');
   [[0, 'Шкаф'], [1, 'Карта сети'], [2, 'Порт коммутатора']].forEach(([n, t], i) => { phone(n, 230 + i * 400, 190, 340); add(`<div class="pcap" style="left:${230 + i * 400}px;top:948px;width:340px">${t}</div>`); });

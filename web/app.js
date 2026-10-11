@@ -196,6 +196,7 @@ const ICON_PATHS = {
   check: 'M5 12l5 5 9-11',
   wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0',
   globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
+  pulse: 'M2 12h4l3-8 4 16 3-8h6',
   cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2',
   alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
@@ -2179,7 +2180,7 @@ function RackView() {
     className: "dot online"
   }), /*#__PURE__*/React.createElement("b", null, "\u0412\u0441\u0451 \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), /*#__PURE__*/React.createElement("span", {
     className: "dim"
-  }, "\u2014 \u0432\u0441\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u043D\u0430 \u0441\u0432\u044F\u0437\u0438"))), /*#__PURE__*/React.createElement(Card, {
+  }, "\u2014 \u0432\u0441\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u043D\u0430 \u0441\u0432\u044F\u0437\u0438"))), /*#__PURE__*/React.createElement(HealthCard, null), /*#__PURE__*/React.createElement(Card, {
     title: "\u0423\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u0432 \u0448\u043A\u0430\u0444\u0443"
   }, /*#__PURE__*/React.createElement("div", {
     className: "list"
@@ -2710,6 +2711,7 @@ function MapNode({
   p,
   sel,
   dim,
+  mark,
   onDown,
   onClick
 }) {
@@ -2722,7 +2724,14 @@ function MapNode({
     transform: `translate(${p.x},${p.y})`,
     onPointerDown: onDown,
     onClick: onClick
-  }, /*#__PURE__*/React.createElement("rect", {
+  }, mark ? /*#__PURE__*/React.createElement("rect", {
+    className: "spof-mark",
+    x: -5,
+    y: -5,
+    width: p.w + 10,
+    height: p.h + 10,
+    rx: small ? 16 : 19
+  }) : null, /*#__PURE__*/React.createElement("rect", {
     className: "box",
     width: p.w,
     height: p.h,
@@ -2779,6 +2788,12 @@ function MapView() {
   const [linking, setLinking] = useState(null); // null | 'pick' | nodeId
   const [q, setQ] = useState('');
   const [dragPos, setDragPos] = useState({});
+  const [healthOpen, setHealthOpen] = useState(() => lsGet('rl_health', '') === '1' || new URLSearchParams(location.search).has('analysis'));
+  useEffect(() => {
+    lsSet('rl_health', healthOpen ? '1' : '');
+  }, [healthOpen]);
+  const spofSet = healthOpen && data.health ? new Set(data.health.spof.filter(s => s.affected >= 3).map(s => s.id)) : null;
+  const openCheck = useCheckOpener();
   const wrap = useRef(null);
   const L = useMemo(() => {
     const l = layoutMap(data, collapsed);
@@ -2813,18 +2828,22 @@ function MapView() {
     const el = wrap.current;
     if (!el) return;
     const b = bbox();
-    const W = el.clientWidth,
+    const off = healthOpen && el.clientWidth > 760 ? 424 : 0; // keep the map clear of the analysis panel
+    const W = el.clientWidth - off,
       H = el.clientHeight;
     const k = Math.min(1.2, Math.max(.2, Math.min(W / (b.w + 60), H / (b.h + 60))));
     setView({
       k,
-      x: (W - b.w * k) / 2 - b.x * k,
+      x: off + (W - b.w * k) / 2 - b.x * k,
       y: (H - b.h * k) / 2 - b.y * k
     });
   };
   useEffect(() => {
     if (!view) fit();
   }, [L]);
+  useEffect(() => {
+    if (view) fit();
+  }, [healthOpen]);
 
   // pan / zoom / pinch. The gesture baseline is re-captured whenever the number of fingers changes,
   // so lifting one finger after a pinch no longer snaps the map back.
@@ -3074,7 +3093,13 @@ function MapView() {
     className: "grow"
   }), /*#__PURE__*/React.createElement("div", {
     className: "map-panel"
-  }, /*#__PURE__*/React.createElement(Btn, {
+  }, data.health ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "pulse",
+    kind: healthOpen ? 'primary' : '',
+    onClick: () => setHealthOpen(!healthOpen),
+    title: "\u0410\u043D\u0430\u043B\u0438\u0437 \u0441\u0435\u0442\u0438"
+  }, "\u0410\u043D\u0430\u043B\u0438\u0437") : null, /*#__PURE__*/React.createElement(Btn, {
     size: "sm",
     icon: "fit",
     onClick: fit,
@@ -3131,6 +3156,7 @@ function MapView() {
     data: data,
     devById: devById,
     dimSet: pathSet,
+    markSet: spofSet,
     onOpen: d => openDevice(d),
     total: data.rack.totalU
   }) : null, L.edges.map(e => {
@@ -3196,6 +3222,7 @@ function MapView() {
       p: p,
       sel: sel === n.id || searchHit.includes(n.id) || linking === n.id,
       dim: pathSet && !pathSet.has(n.id),
+      mark: spofSet && spofSet.has(n.id),
       onDown: e => nodeDown(n.id, e),
       onClick: () => nodeClick(n.id)
     });
@@ -3233,7 +3260,37 @@ function MapView() {
   }, "+"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => zoomAt(1 / 1.35)
-  }, "\u2212")), selNode ? /*#__PURE__*/React.createElement(NodeInfo, {
+  }, "\u2212")), healthOpen && data.health ? /*#__PURE__*/React.createElement("div", {
+    className: "card pad fade-in health-panel"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    className: "grow",
+    style: {
+      fontSize: 16
+    }
+  }, "\u0410\u043D\u0430\u043B\u0438\u0437 \u0441\u0435\u0442\u0438"), /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "x",
+    onClick: () => setHealthOpen(false)
+  })), /*#__PURE__*/React.createElement(HealthBody, {
+    h: data.health,
+    onCheck: c => {
+      if (c.nodeId && L.nodes[c.nodeId] && !c.port) {
+        setSel(c.nodeId);
+        if (innerWidth < 760) setHealthOpen(false);
+      } else openCheck(c);
+    },
+    onNode: id => {
+      if (L.nodes[id]) {
+        setSel(id);
+        if (innerWidth < 760) setHealthOpen(false);
+      }
+    }
+  })) : null, selNode ? /*#__PURE__*/React.createElement(NodeInfo, {
     n: selNode,
     L: L,
     data: data,
@@ -3247,6 +3304,7 @@ function RackBox({
   data,
   devById,
   dimSet,
+  markSet,
   onOpen,
   total
 }) {
@@ -3300,7 +3358,14 @@ function RackBox({
       width: M.RW,
       height: hh,
       rx: 6
-    }), /*#__PURE__*/React.createElement("rect", {
+    }), d && markSet && markSet.has('d:' + d.id) ? /*#__PURE__*/React.createElement("rect", {
+      className: "spof-mark",
+      x: -3,
+      y: y - 3,
+      width: M.RW + 6,
+      height: hh + 6,
+      rx: 8
+    }) : null, /*#__PURE__*/React.createElement("rect", {
       x: 0,
       y: y,
       width: 4,
@@ -3405,6 +3470,379 @@ function NodeInfo({
     },
     onClick: () => onOpen(devById[parent.deviceId], 'ports', pe.sourcePort)
   }, "\u041F\u043E\u0440\u0442 ", pe.sourcePort, " \u043D\u0430 ", parent.label) : null);
+}
+
+/* ── 45_health.jsx ── */
+/* Network health: topology type, single points of failure, findings */
+const ruPlural = (n, one, few, many) => {
+  const a = n % 10,
+    b = n % 100;
+  return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many;
+};
+const TOPO_PICS = {
+  single: {
+    n: [[30, 22], [10, 8], [50, 8], [10, 36], [50, 36]],
+    e: [[0, 1], [0, 2], [0, 3], [0, 4]]
+  },
+  star: {
+    n: [[30, 22], [30, 4], [48, 12], [48, 32], [30, 40], [12, 32], [12, 12]],
+    e: [[0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6]]
+  },
+  tree: {
+    n: [[30, 5], [16, 21], [44, 21], [7, 38], [23, 38], [37, 38], [53, 38]],
+    e: [[0, 1], [0, 2], [1, 3], [1, 4], [2, 5], [2, 6]]
+  },
+  chain: {
+    n: [[6, 16], [22, 16], [38, 16], [54, 16], [6, 36], [22, 36], [38, 36], [54, 36]],
+    e: [[0, 1], [1, 2], [2, 3], [0, 4], [1, 5], [2, 6], [3, 7]]
+  },
+  ring: {
+    n: [[30, 4], [49, 17], [42, 39], [18, 39], [11, 17]],
+    e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]]
+  },
+  mesh: {
+    n: [[30, 4], [49, 17], [42, 39], [18, 39], [11, 17]],
+    e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0], [0, 2], [0, 3], [1, 3], [1, 4], [2, 4]]
+  }
+};
+function TopoPic({
+  id,
+  on
+}) {
+  const p = TOPO_PICS[id];
+  const c = on ? 'var(--accent)' : 'var(--text3)';
+  return /*#__PURE__*/React.createElement("svg", {
+    width: "60",
+    height: "44",
+    viewBox: "0 0 60 44"
+  }, p.e.map(([a, b], i) => /*#__PURE__*/React.createElement("line", {
+    key: i,
+    x1: p.n[a][0],
+    y1: p.n[a][1],
+    x2: p.n[b][0],
+    y2: p.n[b][1],
+    stroke: c,
+    strokeWidth: "1.4",
+    opacity: ".7"
+  })), p.n.map(([x, y], i) => /*#__PURE__*/React.createElement("circle", {
+    key: i,
+    cx: x,
+    cy: y,
+    r: i === 0 && id !== 'ring' && id !== 'mesh' && id !== 'chain' ? 4.5 : 3.2,
+    fill: c
+  })));
+}
+function ScoreRing({
+  score,
+  size = 76
+}) {
+  const r = size / 2 - 6,
+    L = 2 * Math.PI * r;
+  const col = score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--orange)' : 'var(--red)';
+  return /*#__PURE__*/React.createElement("div", {
+    className: "score-ring",
+    style: {
+      width: size,
+      height: size
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: size,
+    height: size
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: size / 2,
+    cy: size / 2,
+    r: r,
+    stroke: "var(--line)",
+    strokeWidth: "7",
+    fill: "none"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: size / 2,
+    cy: size / 2,
+    r: r,
+    stroke: col,
+    strokeWidth: "7",
+    fill: "none",
+    strokeLinecap: "round",
+    strokeDasharray: `${L * score / 100} ${L}`,
+    transform: `rotate(-90 ${size / 2} ${size / 2})`,
+    style: {
+      transition: 'stroke-dasharray .8s'
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
+    style: {
+      fontSize: size * .3
+    }
+  }, score), /*#__PURE__*/React.createElement("small", null, "\u0438\u0437 100")));
+}
+const CHECK_LOOK = {
+  bad: ['var(--red)', 'alert'],
+  warn: ['var(--orange)', 'alert'],
+  info: ['var(--accent)', 'other'],
+  ok: ['var(--green)', 'check']
+};
+function CheckItem({
+  c,
+  onClick
+}) {
+  const [col, icon] = CHECK_LOOK[c.level] || CHECK_LOOK.info;
+  const clickable = onClick && (c.deviceId || c.nodeId);
+  return /*#__PURE__*/React.createElement("div", {
+    className: 'li check-item' + (clickable ? ' click' : ''),
+    onClick: () => clickable && onClick(c)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "check-ic",
+    style: {
+      color: col,
+      background: `color-mix(in srgb, ${col} 14%, transparent)`
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: icon,
+    size: 16
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "grow",
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 650,
+      fontSize: 14
+    }
+  }, c.title), c.text ? /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 12.8,
+      lineHeight: 1.4,
+      marginTop: 2
+    }
+  }, c.text) : null), clickable ? /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 15,
+    color: "var(--text3)"
+  }) : null);
+}
+function HealthBody({
+  h,
+  onCheck,
+  onNode
+}) {
+  const [types, setTypes] = useState(false);
+  const t = h.type;
+  const st = h.stats;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "health"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 16,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement(ScoreRing, {
+    score: h.score
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "grow",
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dim3",
+    style: {
+      fontSize: 11.5,
+      fontWeight: 600,
+      textTransform: 'uppercase',
+      letterSpacing: '.4px'
+    }
+  }, "\u0422\u043E\u043F\u043E\u043B\u043E\u0433\u0438\u044F"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 750,
+      letterSpacing: '-.3px',
+      lineHeight: 1.2
+    }
+  }, t.name), /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13,
+      marginTop: 3
+    }
+  }, t.what)), /*#__PURE__*/React.createElement(TopoPic, {
+    id: t.id,
+    on: true
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "row wrap",
+    style: {
+      gap: 6
+    }
+  }, [`${st.devices} ${ruPlural(st.devices, 'устройство', 'устройства', 'устройств')}`, `${st.levels} ${ruPlural(st.levels, 'уровень', 'уровня', 'уровней')}`, ...(st.switches ? [`коммутаторов: ${st.switches}`] : []), ...t.traits].map((x, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "chip",
+    style: {
+      cursor: 'default'
+    }
+  }, x))), /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13,
+      lineHeight: 1.45
+    }
+  }, t.note), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      marginBottom: 6
+    }
+  }, "\u0417\u0430\u043C\u0435\u0447\u0430\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("div", {
+    className: "list"
+  }, h.checks.map((c, i) => /*#__PURE__*/React.createElement(CheckItem, {
+    key: i,
+    c: c,
+    onClick: onCheck
+  })))), h.spof.length ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      marginBottom: 8
+    }
+  }, "\u0427\u0442\u043E \u0431\u0443\u0434\u0435\u0442, \u0435\u0441\u043B\u0438 \u0443\u0437\u0435\u043B \u043E\u0442\u043A\u0430\u0436\u0435\u0442"), /*#__PURE__*/React.createElement("div", {
+    className: "spof"
+  }, h.spof.map(s => /*#__PURE__*/React.createElement("div", {
+    key: s.id,
+    className: 'spof-row' + (onNode ? ' click' : ''),
+    onClick: () => onNode && onNode(s.id)
+  }, /*#__PURE__*/React.createElement(KindIcon, {
+    kind: s.kind,
+    size: 28,
+    round: 8
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "grow",
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row between",
+    style: {
+      fontSize: 13.5
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    className: "ellipsis"
+  }, s.label), /*#__PURE__*/React.createElement("span", {
+    className: "mono dim"
+  }, "\u2212", s.affected)), /*#__PURE__*/React.createElement("div", {
+    className: "spof-bar"
+  }, /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: Math.max(3, s.affected / Math.max(1, st.devices) * 100) + '%'
+    }
+  })), s.what ? /*#__PURE__*/React.createElement("div", {
+    className: "dim3 ellipsis",
+    style: {
+      fontSize: 11.5,
+      marginTop: 3
+    }
+  }, s.what) : null))))) : null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    className: "link-btn",
+    onClick: () => setTypes(!types)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 13,
+    style: {
+      transform: types ? 'rotate(90deg)' : ''
+    }
+  }), "\u041A\u0430\u043A\u0438\u0435 \u0431\u044B\u0432\u0430\u044E\u0442 \u0442\u043E\u043F\u043E\u043B\u043E\u0433\u0438\u0438"), types ? /*#__PURE__*/React.createElement("div", {
+    className: "topo-types"
+  }, t.all.map(x => /*#__PURE__*/React.createElement("div", {
+    key: x.id,
+    className: 'topo-type' + (x.id === t.id ? ' on' : '')
+  }, /*#__PURE__*/React.createElement(TopoPic, {
+    id: x.id,
+    on: x.id === t.id
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, x.name, x.id === t.id ? ' · у вас' : ''), /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 12.3,
+      lineHeight: 1.4
+    }
+  }, x.what, " ", x.note)))), /*#__PURE__*/React.createElement("div", {
+    className: "dim3",
+    style: {
+      fontSize: 12
+    }
+  }, "\u0428\u0438\u043D\u0430 (\u0432\u0441\u0435 \u043D\u0430 \u043E\u0434\u043D\u043E\u043C \u043A\u0430\u0431\u0435\u043B\u0435) \u2014 \u0443\u0441\u0442\u0430\u0440\u0435\u0432\u0448\u0430\u044F \u0441\u0445\u0435\u043C\u0430 \u0438\u0437 \u0432\u0440\u0435\u043C\u0451\u043D \u043A\u043E\u0430\u043A\u0441\u0438\u0430\u043B\u0430, \u0432 Ethernet \u0443\u0436\u0435 \u043D\u0435 \u0432\u0441\u0442\u0440\u0435\u0447\u0430\u0435\u0442\u0441\u044F. \u0412 \u0436\u0438\u0437\u043D\u0438 \u0441\u0435\u0442\u0438 \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0435\u0433\u0434\u0430 \u0433\u0438\u0431\u0440\u0438\u0434\u043D\u044B\u0435: \u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u0434\u0435\u0440\u0435\u0432\u043E \u0438\u0437 \u043A\u0430\u0431\u0435\u043B\u0435\u0439 + \u0431\u0435\u0441\u043F\u0440\u043E\u0432\u043E\u0434\u043D\u043E\u0439 mesh.")) : null));
+}
+function useCheckOpener() {
+  const {
+    data,
+    openDevice
+  } = useApp();
+  return c => {
+    const d = c.deviceId && data.devices.find(x => x.id === c.deviceId);
+    if (d) openDevice(d, c.port ? 'ports' : undefined, c.port);
+  };
+}
+function HealthCard() {
+  const {
+    data
+  } = useApp();
+  const [open, setOpen] = useState(false);
+  const openCheck = useCheckOpener();
+  const h = data.health;
+  if (!h) return null;
+  const top = h.checks.filter(c => c.level !== 'ok').slice(0, 2);
+  const nWarn = h.checks.filter(c => c.level === 'bad' || c.level === 'warn').length;
+  const n10 = nWarn % 10,
+    n100 = nWarn % 100;
+  const warnText = !nWarn ? 'Серьёзных замечаний нет' : `${nWarn} ${n10 === 1 && n100 !== 11 ? 'замечание требует' : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? 'замечания требуют' : 'замечаний требуют'} внимания`;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Card, {
+    title: "\u0417\u0434\u043E\u0440\u043E\u0432\u044C\u0435 \u0441\u0435\u0442\u0438",
+    right: /*#__PURE__*/React.createElement(Btn, {
+      size: "sm",
+      onClick: () => setOpen(true)
+    }, "\u041F\u043E\u0434\u0440\u043E\u0431\u043D\u0435\u0435")
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 14,
+      cursor: 'pointer'
+    },
+    onClick: () => setOpen(true)
+  }, /*#__PURE__*/React.createElement(ScoreRing, {
+    score: h.score,
+    size: 58
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "grow",
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700
+    }
+  }, h.type.name), /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 12.5
+    }
+  }, warnText))), top.length ? /*#__PURE__*/React.createElement("div", {
+    className: "list",
+    style: {
+      marginTop: 8
+    }
+  }, top.map((c, i) => /*#__PURE__*/React.createElement(CheckItem, {
+    key: i,
+    c: {
+      ...c,
+      text: ''
+    },
+    onClick: openCheck
+  }))) : null), open ? /*#__PURE__*/React.createElement(Modal, {
+    title: "\u0417\u0434\u043E\u0440\u043E\u0432\u044C\u0435 \u0441\u0435\u0442\u0438",
+    wide: true,
+    onClose: () => setOpen(false)
+  }, /*#__PURE__*/React.createElement(HealthBody, {
+    h: h,
+    onCheck: c => {
+      setOpen(false);
+      openCheck(c);
+    }
+  })) : null);
 }
 
 /* ── 50_devices.jsx ── */

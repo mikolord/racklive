@@ -3,7 +3,7 @@ import concurrent.futures, json, mimetypes, os, re, signal, threading, time, tra
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, topology
+from . import analysis, auth, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -153,7 +153,15 @@ class App:
             devices.append(pd)
         topo = topology.build(cfg['devices'], self.states, cfg['rack']['units'], cfg['map'].get('links'),
                               cfg['settings'].get('showClients', True), REGISTRY)
-        return {'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
+        try:
+            # analysis always sees the clients, even when the map hides them
+            full = topo if cfg['settings'].get('showClients', True) else topology.build(
+                cfg['devices'], self.states, cfg['rack']['units'], cfg['map'].get('links'), True, REGISTRY)
+            health = analysis.analyze(full, cfg['devices'], self.states, self.store.cable)
+        except Exception:
+            traceback.print_exc()
+            health = None
+        return {'health': health,'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'rack': cfg['rack'], 'map': cfg['map'], 'topology': topo,
                 'events': self.store.events[-60:][::-1], 'now': time.time()}

@@ -93,7 +93,7 @@ const ICON_PATHS = {
   lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4', logout: 'M15 4h4v16h-4M10 17l5-5-5-5M15 12H3', sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
   moon: 'M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z', chevron: 'M9 6l6 6-6 6', download: 'M12 3v12M7 10l5 5 5-5M4 21h16', upload: 'M12 21V9M7 14l5-5 5 5M4 3h16',
   check: 'M5 12l5 5 9-11', wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0', globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
-  cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2', alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
+  pulse: 'M2 12h4l3-8 4 16 3-8h6', cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2', alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1', toggle: 'M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7M7 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
 };
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {

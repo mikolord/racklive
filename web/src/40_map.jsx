@@ -106,13 +106,14 @@ function edgePath(e, L) {
   return { d: `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`, lx: tx - 22, ly: ty, mx: (sx + tx) / 2, my: (sy + ty) / 2 };
 }
 
-function MapNode({ n, p, sel, dim, onDown, onClick }) {
+function MapNode({ n, p, sel, dim, mark, onDown, onClick }) {
   const small = n.kind === 'group' || n.client;
   const iconKind = n.kind === 'group' ? 'wifi' : n.kind;
   const c = KIND_COLOR[iconKind] || KIND_COLOR.other;
   const is = small ? 28 : 34;
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}
     transform={`translate(${p.x},${p.y})`} onPointerDown={onDown} onClick={onClick}>
+    {mark ? <rect className="spof-mark" x={-5} y={-5} width={p.w + 10} height={p.h + 10} rx={small ? 16 : 19} /> : null}
     <rect className="box" width={p.w} height={p.h} rx={small ? 12 : 15} />
     <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
     <g transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2})`}><Icon name={iconKind} size={is * .6} color={c} /></g>
@@ -133,6 +134,10 @@ function MapView() {
   const [linking, setLinking] = useState(null);           // null | 'pick' | nodeId
   const [q, setQ] = useState('');
   const [dragPos, setDragPos] = useState({});
+  const [healthOpen, setHealthOpen] = useState(() => lsGet('rl_health', '') === '1' || new URLSearchParams(location.search).has('analysis'));
+  useEffect(() => { lsSet('rl_health', healthOpen ? '1' : ''); }, [healthOpen]);
+  const spofSet = healthOpen && data.health ? new Set(data.health.spof.filter(s => s.affected >= 3).map(s => s.id)) : null;
+  const openCheck = useCheckOpener();
   const wrap = useRef(null);
   const L = useMemo(() => {
     const l = layoutMap(data, collapsed);
@@ -147,11 +152,14 @@ function MapView() {
     return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
   };
   const fit = () => {
-    const el = wrap.current; if (!el) return; const b = bbox(); const W = el.clientWidth, H = el.clientHeight;
+    const el = wrap.current; if (!el) return; const b = bbox();
+    const off = healthOpen && el.clientWidth > 760 ? 424 : 0;      // keep the map clear of the analysis panel
+    const W = el.clientWidth - off, H = el.clientHeight;
     const k = Math.min(1.2, Math.max(.2, Math.min(W / (b.w + 60), H / (b.h + 60))));
-    setView({ k, x: (W - b.w * k) / 2 - b.x * k, y: (H - b.h * k) / 2 - b.y * k });
+    setView({ k, x: off + (W - b.w * k) / 2 - b.x * k, y: (H - b.h * k) / 2 - b.y * k });
   };
   useEffect(() => { if (!view) fit(); }, [L]);
+  useEffect(() => { if (view) fit(); }, [healthOpen]);
 
   // pan / zoom / pinch. The gesture baseline is re-captured whenever the number of fingers changes,
   // so lifting one finger after a pinch no longer snaps the map back.
@@ -255,6 +263,7 @@ function MapView() {
       <div className="map-panel" style={{ width: 230 }}><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" /></div>
       <div className="grow" />
       <div className="map-panel">
+        {data.health ? <Btn size="sm" icon="pulse" kind={healthOpen ? 'primary' : ''} onClick={() => setHealthOpen(!healthOpen)} title="Анализ сети">Анализ</Btn> : null}
         <Btn size="sm" icon="fit" onClick={fit} title="Показать всё" />
         <Btn size="sm" icon="wifi" onClick={() => { const nc = {}; if (!anyCollapsedOpen) Object.keys(L.groups).forEach(g => nc[g.slice(2)] = false); setCollapsed(nc); setView(null); }}
           title={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'} />
@@ -266,7 +275,7 @@ function MapView() {
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
     <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>
       <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} onOpen={d => openDevice(d)} total={data.rack.totalU} /> : null}
+        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} total={data.rack.totalU} /> : null}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
           return <g key={e.id} className={dim}>
@@ -278,7 +287,7 @@ function MapView() {
             {(e.label && (e.manual || e.kind === 'wan')) ? <text x={g.lx} y={g.ly - 14} fontSize="11" fill="var(--text2)" textAnchor="middle">{e.label}</text> : null}
           </g>; })}
         {Object.values(L.nodes).map(n => { const p = L.pos[n.id]; if (!p || p.rack) return null;
-          return <MapNode key={n.id} n={n} p={p} sel={sel === n.id || searchHit.includes(n.id) || linking === n.id} dim={pathSet && !pathSet.has(n.id)}
+          return <MapNode key={n.id} n={n} p={p} sel={sel === n.id || searchHit.includes(n.id) || linking === n.id} dim={pathSet && !pathSet.has(n.id)} mark={spofSet && spofSet.has(n.id)}
             onDown={e => nodeDown(n.id, e)} onClick={() => nodeClick(n.id)} />; })}
       </g>
     </svg>
@@ -287,11 +296,16 @@ function MapView() {
       <span><i style={{ background: 'var(--accent)' }} />Wi-Fi</span><span><i style={{ background: 'var(--teal)' }} />Mesh</span><span><i style={{ background: 'var(--purple)' }} />Интернет</span>
       <span><b style={{ color: '#ffd60a' }}>⚡</b>PoE</span></div>
     <div className="zoom-btns"><button className="btn" onClick={() => zoomAt(1.35)}>+</button><button className="btn" onClick={() => zoomAt(1 / 1.35)}>−</button></div>
+    {healthOpen && data.health ? <div className="card pad fade-in health-panel">
+      <div className="row" style={{ marginBottom: 4 }}><b className="grow" style={{ fontSize: 16 }}>Анализ сети</b><Btn size="sm" icon="x" onClick={() => setHealthOpen(false)} /></div>
+      <HealthBody h={data.health} onCheck={c => { if (c.nodeId && L.nodes[c.nodeId] && !c.port) { setSel(c.nodeId); if (innerWidth < 760) setHealthOpen(false); } else openCheck(c); }}
+        onNode={id => { if (L.nodes[id]) { setSel(id); if (innerWidth < 760) setHealthOpen(false); } }} />
+    </div> : null}
     {selNode ? <NodeInfo n={selNode} L={L} data={data} devById={devById} onOpen={openDevice} onClose={() => setSel(null)} /> : null}
   </div>;
 }
 
-function RackBox({ L, data, devById, dimSet, onOpen, total }) {
+function RackBox({ L, data, devById, dimSet, markSet, onOpen, total }) {
   const h = total * M.RU;
   return <g className="rackbox">
     <rect className="frame" x={-14} y={-46} width={M.RW + 28} height={h + 60} rx={16} />
@@ -304,6 +318,7 @@ function RackBox({ L, data, devById, dimSet, onOpen, total }) {
       const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
       return <g key={u.id} className={'u' + (dim ? ' dim-out' : '')} style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && onOpen(d)}>
         <rect x={0} y={y} width={M.RW} height={hh} rx={6} />
+        {d && markSet && markSet.has('d:' + d.id) ? <rect className="spof-mark" x={-3} y={y - 3} width={M.RW + 6} height={hh + 6} rx={8} /> : null}
         <rect x={0} y={y} width={4} height={hh} rx={2} fill={u.color || '#0a84ff'} stroke="none" />
         <g transform={`translate(12,${y + hh / 2 - 9})`}><Icon name={kind} size={18} color="#f5f5f7" /></g>
         <text x={38} y={y + (hh > 30 ? hh / 2 - 2 : hh / 2 + 4)} fontSize="12.5" fontWeight="600">{trunc(u.name, 30)}</text>
