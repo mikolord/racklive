@@ -346,3 +346,19 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .tiles-canvas.editing .tile.free { cursor: grab; }
 .tile.free { position: absolute; margin: 0; touch-action: none; user-select: none; transition: box-shadow .15s; }
 .tile.free.grabbing { cursor: grabbing; box-shadow: var(--shadow-lg); z-index: 5; opacity: .95; transition: none; }
+
+/* floor plan */
+.plan-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.plan-palette { margin-bottom: 10px; }
+.plan-canvas { position: relative; height: calc(100vh - 290px); min-height: 440px; border-radius: 16px; overflow: hidden; border: .5px solid var(--line); background: var(--bg2); touch-action: none; }
+.plan-canvas.crosshair { cursor: crosshair; }
+.plan-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.plan-wall { stroke: var(--text2); stroke-width: 6; stroke-linecap: round; }
+.plan-wall.draft { stroke: var(--accent); stroke-dasharray: 6 6; opacity: .8; }
+.plan-item .pi-bg { stroke-width: 1.5; }
+.plan-item.sel .pi-bg { stroke-width: 3; }
+.plan-item .pi-label { font-size: 11px; font-weight: 600; fill: var(--text); paint-order: stroke; stroke: var(--bg2); stroke-width: 3px; }
+.plan-label text { font-size: 13px; font-weight: 700; fill: var(--text2); paint-order: stroke; stroke: var(--bg2); stroke-width: 4px; }
+.plan-label text.sel { fill: var(--accent); }
+.plan-hint { position: absolute; left: 12px; bottom: 12px; font-size: 12px; color: var(--text2); background: var(--elev); padding: 6px 11px; border-radius: 20px; border: .5px solid var(--line); backdrop-filter: blur(10px); }
+.plan-empty { text-align: center; display: flex; flex-direction: column; align-items: center; padding: 50px 24px; }

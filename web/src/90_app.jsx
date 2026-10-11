@@ -2,6 +2,7 @@
 const TABS = [
   { id: 'rack', label: 'Шкаф', icon: 'rack' },
   { id: 'map', label: 'Карта сети', icon: 'map' },
+  { id: 'plan', label: 'План', icon: 'home' },
   { id: 'devices', label: 'Устройства', icon: 'list' },
   { id: 'events', label: 'События', icon: 'bell' },
   { id: 'settings', label: 'Настройки', icon: 'settings', admin: true },
@@ -71,9 +72,13 @@ function App() {
     setData(d => ({ ...d, map: { ...d.map, ...part } }));
     try { await api('/api/map', { method: 'PUT', body: part }); refresh(); } catch (e) { toast(e.message, true); }
   };
+  const savePlan = async buildings => {
+    setData(d => ({ ...d, plan: { buildings } }));
+    try { await api('/api/plan', { method: 'PUT', body: { buildings } }); } catch (e) { toast(e.message, true); refresh(); }
+  };
   const logout = async () => { await api('/api/logout', { method: 'POST' }); setMode('view'); refresh(); };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, logout, applyState,
+  const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d) };
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
@@ -84,6 +89,7 @@ function App() {
   const subtitle = {
     rack: `${data.racks.length > 1 ? data.racks.length + ' шкафа · ' : ''}${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
+    plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
     settings: 'Название, доступ, VLAN и резервные копии',
@@ -110,6 +116,7 @@ function App() {
       </div>
       {cur === 'rack' ? <RackView /> : null}
       {cur === 'map' ? <MapView /> : null}
+      {cur === 'plan' ? <PlanView /> : null}
       {cur === 'devices' ? <DevicesView /> : null}
       {cur === 'events' ? <EventsView /> : null}
       {cur === 'settings' && admin ? <SettingsView /> : null}

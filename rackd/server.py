@@ -164,7 +164,7 @@ class App:
             health = None
         return {'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
-                'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'topology': topo,
+                'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'plan': cfg.get('plan', {'buildings': []}), 'topology': topo,
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
 
 
@@ -373,6 +373,13 @@ class Handler(BaseHTTPRequestHandler):
                 for k in ('positions', 'links', 'collapsed'):
                     if k in body:
                         st.cfg['map'][k] = body[k]
+                st.save()
+                return self.send({'ok': True})
+            if path == '/api/plan' and method == 'PUT':
+                b = body.get('buildings')
+                if not isinstance(b, list):
+                    return self.err('неверные данные')
+                st.cfg['plan'] = {'buildings': b}
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/import' and method == 'POST':

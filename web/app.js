@@ -198,6 +198,11 @@ const ICON_PATHS = {
   globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   box: 'M4 7h16v13H4zM4 7l2-4h12l2 4M9 11h6',
   home: 'M4 11l8-7 8 7M6 10v10h12V10M10 20v-6h4v6',
+  wall: 'M3 5h18v14H3zM3 9.5h18M3 14.5h18M8 5v4.5M14 5v4.5M11 9.5V14.5M5 14.5V19M17 14.5V19',
+  eraser: 'M4 15l7-7 6 6-5 5H8zM20 20H9',
+  cursor: 'M5 3l6 16 2-7 7-2z',
+  tag: 'M4 4h8l8 8-8 8-8-8zM8 8h.01',
+  tree: 'M12 2a6 6 0 0 1 4 10l-1 1v3h-6v-3l-1-1A6 6 0 0 1 12 2M12 15v7',
   shield: 'M12 2l8 3v6c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V5z',
   globe2: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   pulse: 'M2 12h4l3-8 4 16 3-8h6',
@@ -4578,6 +4583,559 @@ function HealthCard() {
   })) : null);
 }
 
+/* ── 47_plan.jsx ── */
+/* Floor plan: buildings → floors (and a yard) with walls and placed equipment */
+const PG = 20; // snap grid, world units
+const uid = p => p + Math.random().toString(36).slice(2, 7);
+const snap = v => Math.round(v / PG) * PG;
+function placeStatus(rack, devById) {
+  const sts = (rack.units || []).map(u => devById[u.deviceId] && devById[u.deviceId].state && devById[u.deviceId].state.status).filter(Boolean);
+  return sts.includes('offline') ? 'offline' : sts.includes('warning') ? 'warning' : sts.length ? 'online' : '';
+}
+function PlanView() {
+  const {
+    data,
+    edit,
+    savePlan,
+    openDevice,
+    setTab
+  } = useApp();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const buildings = data.plan && data.plan.buildings || [];
+  const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
+  const [bid, setBid] = useState(buildings[0] && buildings[0].id);
+  const b = buildings.find(x => x.id === bid) || buildings[0];
+  const [fid, setFid] = useState(b && b.floors[0] && b.floors[0].id);
+  const floor = b && (b.floors.find(f => f.id === fid) || b.floors[0]);
+  const [tool, setTool] = useState('select');
+  const [pending, setPending] = useState(null); // ref waiting to be dropped on the plan
+  const [wallPt, setWallPt] = useState(null); // last point of the wall being drawn
+  const [cursor, setCursor] = useState(null);
+  const [view, setView] = useState({
+    x: 60,
+    y: 60,
+    k: 1
+  });
+  const [sel, setSel] = useState(null);
+  const wrap = useRef(null);
+  useEffect(() => {
+    if (!buildings.find(x => x.id === bid)) setBid(buildings[0] && buildings[0].id);
+  }, [buildings.length]);
+  useEffect(() => {
+    if (b && !b.floors.find(f => f.id === fid)) setFid(b.floors[0] && b.floors[0].id);
+  }, [bid, b && b.floors.length]);
+  useEffect(() => {
+    if (!edit) {
+      setTool('select');
+      setPending(null);
+      setWallPt(null);
+    }
+  }, [edit]);
+  const mutate = fn => savePlan(buildings.map(x => x.id !== bid ? x : {
+    ...x,
+    floors: x.floors.map(f => f.id !== floor.id ? f : fn(f))
+  }));
+  const addBuilding = () => {
+    const id = uid('b');
+    savePlan([...buildings, {
+      id,
+      name: `Дом ${buildings.length + 1}`,
+      floors: [{
+        id: uid('f'),
+        name: '1 этаж',
+        walls: [],
+        items: []
+      }]
+    }]);
+    setBid(id);
+  };
+  const addFloor = outdoor => {
+    const id = uid('f');
+    savePlan(buildings.map(x => x.id !== bid ? x : {
+      ...x,
+      floors: [...x.floors, {
+        id,
+        name: outdoor ? 'Двор' : `${x.floors.filter(f => !f.outdoor).length + 1} этаж`,
+        outdoor,
+        walls: [],
+        items: []
+      }]
+    }));
+    setFid(id);
+  };
+  const toWorld = e => {
+    const r = wrap.current.getBoundingClientRect();
+    return {
+      x: (e.clientX - r.left - view.x) / view.k,
+      y: (e.clientY - r.top - view.y) / view.k
+    };
+  };
+  const onWheel = e => {
+    e.preventDefault();
+    const r = wrap.current.getBoundingClientRect();
+    const mx = e.clientX - r.left,
+      my = e.clientY - r.top;
+    const k = Math.min(3, Math.max(.3, view.k * Math.exp(-e.deltaY * .0015)));
+    setView(v => ({
+      k,
+      x: mx - (mx - v.x) * k / v.k,
+      y: my - (my - v.y) * k / v.k
+    }));
+  };
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    el.addEventListener('wheel', onWheel, {
+      passive: false
+    });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [view]);
+
+  // background interactions: pan (select), draw wall, drop item, add label
+  const panRef = useRef(null);
+  const onDown = e => {
+    if (e.target.closest('.plan-item')) return;
+    const w = toWorld(e);
+    if (tool === 'select') {
+      panRef.current = {
+        sx: e.clientX,
+        sy: e.clientY,
+        vx: view.x,
+        vy: view.y
+      };
+      setSel(null);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      return;
+    }
+    if (tool === 'wall') {
+      const p = {
+        x: snap(w.x),
+        y: snap(w.y)
+      };
+      if (wallPt) mutate(f => ({
+        ...f,
+        walls: [...f.walls, {
+          x1: wallPt.x,
+          y1: wallPt.y,
+          x2: p.x,
+          y2: p.y
+        }]
+      }));
+      setWallPt(p);
+      return;
+    }
+    if (tool === 'place' && pending) {
+      mutate(f => ({
+        ...f,
+        items: [...f.items, {
+          id: uid('i'),
+          kind: pending.kind,
+          ref: pending.ref,
+          x: snap(w.x),
+          y: snap(w.y)
+        }]
+      }));
+      setPending(null);
+      setTool('select');
+      return;
+    }
+    if (tool === 'label') {
+      const text = prompt('Название комнаты / подпись');
+      if (text) mutate(f => ({
+        ...f,
+        items: [...f.items, {
+          id: uid('i'),
+          kind: 'label',
+          text,
+          x: snap(w.x),
+          y: snap(w.y)
+        }]
+      }));
+      return;
+    }
+  };
+  const onMove = e => {
+    setCursor(toWorld(e));
+    if (panRef.current) {
+      const p = panRef.current;
+      setView(v => ({
+        ...v,
+        x: p.vx + e.clientX - p.sx,
+        y: p.vy + e.clientY - p.sy
+      }));
+    }
+  };
+  const onUp = e => {
+    panRef.current = null;
+  };
+  const finishWall = () => setWallPt(null);
+
+  // drag a placed item
+  const dragItem = (it, e) => {
+    if (!edit || tool === 'erase') {
+      if (tool === 'erase') mutate(f => ({
+        ...f,
+        items: f.items.filter(x => x.id !== it.id)
+      }));else itemClick(it);
+      return;
+    }
+    if (tool !== 'select') return;
+    e.stopPropagation();
+    const start = toWorld(e);
+    const o = {
+      x: it.x,
+      y: it.y
+    };
+    let moved = false;
+    const move = ev => {
+      const w = toWorld(ev);
+      moved = true;
+      mutateLocal(it.id, {
+        x: snap(o.x + w.x - start.x),
+        y: snap(o.y + w.y - start.y)
+      });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (!moved) itemClick(it);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const mutateLocal = (id, patch) => mutate(f => ({
+    ...f,
+    items: f.items.map(x => x.id === id ? {
+      ...x,
+      ...patch
+    } : x)
+  }));
+  const itemClick = it => {
+    if (edit) {
+      setSel(it.id);
+      return;
+    }
+    if (it.kind === 'device') {
+      const d = devById[it.ref];
+      if (d) openDevice(d);
+    } else if (it.kind === 'place') setTab('rack');
+  };
+  const delItem = id => mutate(f => ({
+    ...f,
+    items: f.items.filter(x => x.id !== id)
+  }));
+  const eraseWall = i => mutate(f => ({
+    ...f,
+    walls: f.walls.filter((_, j) => j !== i)
+  }));
+  if (!buildings.length) return /*#__PURE__*/React.createElement("div", {
+    className: "plan-empty card pad"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 42
+    }
+  }, "\uD83C\uDFE0"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 17,
+      fontWeight: 700,
+      margin: '8px 0 4px'
+    }
+  }, "\u041F\u043B\u0430\u043D\u0430 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442"), /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      marginBottom: 16,
+      maxWidth: 420
+    }
+  }, "\u041D\u0430\u0440\u0438\u0441\u0443\u0439\u0442\u0435 \u0434\u043E\u043C, \u044D\u0442\u0430\u0436\u0438 \u0438 \u0434\u0432\u043E\u0440, \u043D\u0430\u0447\u0435\u0440\u0442\u0438\u0442\u0435 \u0441\u0442\u0435\u043D\u044B \u0438 \u0440\u0430\u0441\u0441\u0442\u0430\u0432\u044C\u0442\u0435 \u0448\u043A\u0430\u0444\u044B, \u0449\u0438\u0442\u043A\u0438 \u0438 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 \u043F\u043E \u043A\u043E\u043C\u043D\u0430\u0442\u0430\u043C."), edit ? /*#__PURE__*/React.createElement(Btn, {
+    kind: "primary",
+    icon: "home",
+    onClick: addBuilding
+  }, "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0434\u043E\u043C") : /*#__PURE__*/React.createElement("div", {
+    className: "dim"
+  }, "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \xAB\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435\xBB, \u0447\u0442\u043E\u0431\u044B \u043D\u0430\u0447\u0430\u0442\u044C."));
+  const placed = new Set(buildings.flatMap(x => x.floors).flatMap(f => f.items).map(i => i.ref));
+  const palette = [...data.racks.map(r => ({
+    kind: 'place',
+    ref: r.id,
+    name: r.name,
+    icon: (PLACE_KINDS[r.kind] || PLACE_KINDS.rack).icon
+  })), ...data.devices.map(d => ({
+    kind: 'device',
+    ref: d.id,
+    name: d.name,
+    icon: d.kind
+  }))].filter(x => !placed.has(x.ref) || pending && pending.ref === x.ref);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "plan"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row wrap",
+    style: {
+      gap: 8,
+      marginBottom: 10
+    }
+  }, (buildings.length > 1 || edit) && buildings.map(x => /*#__PURE__*/React.createElement("button", {
+    key: x.id,
+    className: 'chip' + (x.id === bid ? ' on' : ''),
+    onClick: () => setBid(x.id)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "home",
+    size: 13
+  }), x.name)), edit ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "plus",
+    onClick: addBuilding
+  }, "\u0414\u043E\u043C") : null, /*#__PURE__*/React.createElement("div", {
+    className: "grow"
+  }), edit ? /*#__PURE__*/React.createElement("button", {
+    className: "icon-link",
+    title: "\u041F\u0435\u0440\u0435\u0438\u043C\u0435\u043D\u043E\u0432\u0430\u0442\u044C / \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u0434\u043E\u043C",
+    onClick: async () => {
+      const name = prompt('Название дома', b.name);
+      if (name === null) return;
+      if (name.trim()) savePlan(buildings.map(x => x.id === bid ? {
+        ...x,
+        name: name.trim()
+      } : x));
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "settings",
+    size: 16
+  })) : null), /*#__PURE__*/React.createElement("div", {
+    className: "row wrap",
+    style: {
+      gap: 6,
+      marginBottom: 10
+    }
+  }, b.floors.map(f => /*#__PURE__*/React.createElement("button", {
+    key: f.id,
+    className: 'chip' + (f.id === floor.id ? ' on' : ''),
+    onClick: () => setFid(f.id)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: f.outdoor ? 'tree' : 'home',
+    size: 13
+  }), f.name)), edit ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "plus",
+    onClick: () => addFloor(false)
+  }, "\u042D\u0442\u0430\u0436"), !b.floors.some(f => f.outdoor) ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "tree",
+    onClick: () => addFloor(true)
+  }, "\u0414\u0432\u043E\u0440") : null) : null), edit ? /*#__PURE__*/React.createElement("div", {
+    className: "plan-tools"
+  }, /*#__PURE__*/React.createElement(Seg, {
+    value: tool,
+    onChange: v => {
+      setTool(v);
+      setWallPt(null);
+      setPending(null);
+    },
+    options: [{
+      value: 'select',
+      label: 'Двигать',
+      icon: 'cursor'
+    }, {
+      value: 'wall',
+      label: 'Стена',
+      icon: 'wall'
+    }, {
+      value: 'place',
+      label: 'Оборудование',
+      icon: 'plus'
+    }, {
+      value: 'label',
+      label: 'Комната',
+      icon: 'tag'
+    }, {
+      value: 'erase',
+      label: 'Удалить',
+      icon: 'eraser'
+    }]
+  }), tool === 'wall' && wallPt ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    onClick: finishWall
+  }, "\u0413\u043E\u0442\u043E\u0432\u043E") : null, sel ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    kind: "danger",
+    icon: "trash",
+    onClick: () => {
+      delItem(sel);
+      setSel(null);
+    }
+  }, "\u0423\u0431\u0440\u0430\u0442\u044C") : null) : null, tool === 'place' && edit ? /*#__PURE__*/React.createElement("div", {
+    className: "plan-palette card pad"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dim",
+    style: {
+      fontSize: 13,
+      marginBottom: 8
+    }
+  }, pending ? 'Теперь нажмите на план, куда поставить' : 'Выберите, что разместить, затем нажмите на план:'), /*#__PURE__*/React.createElement("div", {
+    className: "row wrap",
+    style: {
+      gap: 6
+    }
+  }, palette.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.ref,
+    className: 'chip' + (pending && pending.ref === p.ref ? ' on' : ''),
+    onClick: () => setPending(p)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: p.icon,
+    size: 13
+  }), p.name)), !palette.length ? /*#__PURE__*/React.createElement("span", {
+    className: "dim",
+    style: {
+      fontSize: 13
+    }
+  }, "\u0412\u0441\u0451 \u0443\u0436\u0435 \u0440\u0430\u0437\u043C\u0435\u0449\u0435\u043D\u043E") : null)) : null, /*#__PURE__*/React.createElement("div", {
+    className: 'plan-canvas' + (tool !== 'select' ? ' crosshair' : ''),
+    ref: wrap,
+    onPointerDown: onDown,
+    onPointerMove: onMove,
+    onPointerUp: onUp,
+    onPointerLeave: () => setCursor(null)
+  }, /*#__PURE__*/React.createElement("svg", null, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("pattern", {
+    id: "pgrid",
+    width: PG,
+    height: PG,
+    patternUnits: "userSpaceOnUse",
+    patternTransform: `translate(${view.x},${view.y}) scale(${view.k})`
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: 1,
+    cy: 1,
+    r: .8,
+    fill: "var(--line)"
+  }))), /*#__PURE__*/React.createElement("rect", {
+    x: 0,
+    y: 0,
+    width: "100%",
+    height: "100%",
+    fill: "url(#pgrid)"
+  }), /*#__PURE__*/React.createElement("g", {
+    transform: `translate(${view.x},${view.y}) scale(${view.k})`
+  }, floor.outdoor ? /*#__PURE__*/React.createElement("rect", {
+    x: -40,
+    y: -40,
+    width: 1400,
+    height: 1000,
+    rx: 16,
+    fill: "color-mix(in srgb, var(--green) 10%, transparent)"
+  }) : null, floor.walls.map((w, i) => /*#__PURE__*/React.createElement("line", {
+    key: i,
+    className: "plan-wall",
+    x1: w.x1,
+    y1: w.y1,
+    x2: w.x2,
+    y2: w.y2,
+    onClick: () => tool === 'erase' && eraseWall(i),
+    style: {
+      cursor: tool === 'erase' ? 'pointer' : 'default'
+    }
+  })), wallPt && cursor ? /*#__PURE__*/React.createElement("line", {
+    className: "plan-wall draft",
+    x1: wallPt.x,
+    y1: wallPt.y,
+    x2: snap(cursor.x),
+    y2: snap(cursor.y)
+  }) : null, floor.items.map(it => /*#__PURE__*/React.createElement(PlanItem, {
+    key: it.id,
+    it: it,
+    devById: devById,
+    racks: data.racks,
+    sel: sel === it.id,
+    edit: edit,
+    onDown: e => dragItem(it, e)
+  })))), edit ? /*#__PURE__*/React.createElement("div", {
+    className: "plan-hint"
+  }, tool === 'wall' ? 'Нажимайте, чтобы ставить углы стен · «Готово» завершает' : tool === 'place' ? 'Выберите в палитре и нажмите на план' : tool === 'label' ? 'Нажмите, где подписать комнату' : tool === 'erase' ? 'Нажмите на стену или устройство, чтобы убрать' : 'Тащите устройства · колесо — зум') : null, /*#__PURE__*/React.createElement("div", {
+    className: "zoom-btns"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setView(v => ({
+      ...v,
+      k: Math.min(3, v.k * 1.3)
+    }))
+  }, "+"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setView(v => ({
+      ...v,
+      k: Math.max(.3, v.k / 1.3)
+    }))
+  }, "\u2212"))));
+}
+function PlanItem({
+  it,
+  devById,
+  racks,
+  sel,
+  edit,
+  onDown
+}) {
+  if (it.kind === 'label') return /*#__PURE__*/React.createElement("g", {
+    className: "plan-item plan-label",
+    transform: `translate(${it.x},${it.y})`,
+    onPointerDown: onDown
+  }, /*#__PURE__*/React.createElement("text", {
+    textAnchor: "middle",
+    className: sel ? 'sel' : ''
+  }, it.text));
+  const isPlace = it.kind === 'place';
+  const ref = isPlace ? racks.find(r => r.id === it.ref) : devById[it.ref];
+  const name = ref ? ref.name : '—';
+  const kind = isPlace ? ref ? (PLACE_KINDS[ref.kind] || PLACE_KINDS.rack).icon : 'rack' : ref ? ref.kind : 'other';
+  const status = isPlace ? ref ? placeStatus(ref, devById) : '' : ref && ref.state ? ref.state.status : '';
+  const col = KIND_COLOR[kind] || KIND_COLOR.other;
+  return /*#__PURE__*/React.createElement("g", {
+    className: 'plan-item' + (sel ? ' sel' : ''),
+    transform: `translate(${it.x},${it.y})`,
+    onPointerDown: onDown,
+    style: {
+      cursor: edit ? 'move' : 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("circle", {
+    r: 21,
+    className: "pi-bg",
+    style: {
+      fill: `color-mix(in srgb, ${col} 22%, var(--card-solid))`,
+      stroke: col
+    }
+  }), /*#__PURE__*/React.createElement("g", {
+    transform: "translate(-11,-11)"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: kind,
+    size: 22,
+    color: col
+  })), status ? /*#__PURE__*/React.createElement("circle", {
+    cx: 15,
+    cy: -15,
+    r: 5,
+    fill: status === 'online' ? 'var(--green)' : status === 'warning' ? 'var(--orange)' : 'var(--red)',
+    stroke: "var(--card-solid)",
+    strokeWidth: 2
+  }) : null, isPlace ? /*#__PURE__*/React.createElement("rect", {
+    x: -14,
+    y: 14,
+    width: 28,
+    height: 10,
+    rx: 3,
+    fill: col,
+    opacity: ".9"
+  }) : null, isPlace ? /*#__PURE__*/React.createElement("text", {
+    y: 22,
+    textAnchor: "middle",
+    fontSize: "7.5",
+    fontWeight: "700",
+    fill: "#fff"
+  }, (PLACE_KINDS[ref && ref.kind] || PLACE_KINDS.rack).label.split(' ')[0].toUpperCase()) : null, /*#__PURE__*/React.createElement("text", {
+    className: "pi-label",
+    y: 38,
+    textAnchor: "middle"
+  }, name.length > 16 ? name.slice(0, 15) + '…' : name));
+}
+
 /* ── 50_devices.jsx ── */
 /* Devices list and the add / edit wizard */
 function DevicesView() {
@@ -5411,6 +5969,10 @@ const TABS = [{
   label: 'Карта сети',
   icon: 'map'
 }, {
+  id: 'plan',
+  label: 'План',
+  icon: 'home'
+}, {
   id: 'devices',
   label: 'Устройства',
   icon: 'list'
@@ -5572,6 +6134,25 @@ function App() {
       toast(e.message, true);
     }
   };
+  const savePlan = async buildings => {
+    setData(d => ({
+      ...d,
+      plan: {
+        buildings
+      }
+    }));
+    try {
+      await api('/api/plan', {
+        method: 'PUT',
+        body: {
+          buildings
+        }
+      });
+    } catch (e) {
+      toast(e.message, true);
+      refresh();
+    }
+  };
   const logout = async () => {
     await api('/api/logout', {
       method: 'POST'
@@ -5594,8 +6175,10 @@ function App() {
     saveRack,
     saveRacks,
     saveMap,
+    savePlan,
     logout,
     applyState,
+    setTab,
     openDevice: (d, t, port) => d && setSheet({
       id: d.id,
       tab: t,
@@ -5612,6 +6195,7 @@ function App() {
   const subtitle = {
     rack: `${data.racks.length > 1 ? data.racks.length + ' шкафа · ' : ''}${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
+    plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
     settings: 'Название, доступ, VLAN и резервные копии'
@@ -5700,7 +6284,7 @@ function App() {
   }, /*#__PURE__*/React.createElement(Icon, {
     name: "edit",
     size: 12
-  }), "\u0420\u0435\u0436\u0438\u043C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F") : null), cur === 'rack' ? /*#__PURE__*/React.createElement(RackView, null) : null, cur === 'map' ? /*#__PURE__*/React.createElement(MapView, null) : null, cur === 'devices' ? /*#__PURE__*/React.createElement(DevicesView, null) : null, cur === 'events' ? /*#__PURE__*/React.createElement(EventsView, null) : null, cur === 'settings' && admin ? /*#__PURE__*/React.createElement(SettingsView, null) : null), /*#__PURE__*/React.createElement("nav", {
+  }), "\u0420\u0435\u0436\u0438\u043C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F") : null), cur === 'rack' ? /*#__PURE__*/React.createElement(RackView, null) : null, cur === 'map' ? /*#__PURE__*/React.createElement(MapView, null) : null, cur === 'plan' ? /*#__PURE__*/React.createElement(PlanView, null) : null, cur === 'devices' ? /*#__PURE__*/React.createElement(DevicesView, null) : null, cur === 'events' ? /*#__PURE__*/React.createElement(EventsView, null) : null, cur === 'settings' && admin ? /*#__PURE__*/React.createElement(SettingsView, null) : null), /*#__PURE__*/React.createElement("nav", {
     className: "bottombar"
   }, tabs.map(t => /*#__PURE__*/React.createElement("button", {
     key: t.id,

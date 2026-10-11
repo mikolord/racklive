@@ -12,6 +12,8 @@ DEFAULT = {
     'devices': [],
     'racks': [{'id': 'rack0', 'name': 'Серверный шкаф', 'totalU': 18, 'units': []}],
     'map': {'positions': {}, 'links': [], 'collapsed': {}},
+    # floor plan: buildings → floors (incl. outdoor "yard") with wall segments and placed items
+    'plan': {'buildings': []},
 }
 
 SECRET_KEYS = ('password', 'token', 'agentToken')
