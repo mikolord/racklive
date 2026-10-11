@@ -11,7 +11,7 @@ const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e)
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
 
 function useTheme() {
-  const [pref, setPref] = useState(lsGet('rl_theme', 'auto'));
+  const [pref, setPref] = useState(lsGet('rl_theme', (TG && TG.scheme) || 'auto'));     // inside Telegram: follow its theme
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
@@ -38,6 +38,14 @@ function App() {
   const [login, setLogin] = useState(false);
   const [theme, setTheme] = useTheme();
   const toast = useToast();
+  // opened from the Telegram bot: log in with the signed launch data, no password
+  const [tg, setTg] = useState(TG ? 'pending' : null);       // 'pending' | 'ok' | error text
+  useEffect(() => {
+    if (!TG || !data || data.authed || data.setupNeeded || tg !== 'pending') return;
+    api('/api/tglogin', { method: 'POST', body: { initData: TG.initData } })
+      .then(r => { ssSet('rl_tok', r.token); setTg('ok'); refresh(); })
+      .catch(e => { setTg(e.message); toast('Вход через Telegram: ' + e.message, true); });
+  }, [data && data.authed, data && data.setupNeeded]);
 
   const refresh = useCallback(async () => {
     try { const d = await api('/api/state'); setData(d); setErr(null); }
@@ -59,7 +67,9 @@ function App() {
   if (!data) return <div className="auth"><div className="app-bg" />{err ? <div className="card pad">Сервер недоступен: {err}<br /><Btn style={{ marginTop: 12 }} onClick={refresh}>Повторить</Btn></div>
     : <div className="dim">Загрузка…</div>}</div>;
   if (data.setupNeeded) return <AuthScreen setup title={data.settings && data.settings.title} onDone={refresh} />;
-  if ((data.needLogin && !data.devices) || login) return <AuthScreen title={data.settings && data.settings.title} onDone={() => { setLogin(false); refresh(); }} />;
+  if (tg === 'pending' && !data.authed) return <div className="auth"><div className="app-bg" /><div className="dim">Вход через Telegram…</div></div>;
+  if ((data.needLogin && !data.devices) || login) return <AuthScreen title={data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''}
+    onDone={() => { setLogin(false); refresh(); }} />;
 
   const admin = !!data.authed;
   const edit = admin && mode === 'edit';
@@ -76,7 +86,7 @@ function App() {
     setData(d => ({ ...d, plan }));
     try { await api('/api/plan', { method: 'PUT', body: plan }); } catch (e) { toast(e.message, true); refresh(); }
   };
-  const logout = async () => { await api('/api/logout', { method: 'POST' }); setMode('view'); refresh(); };
+  const logout = async () => { await api('/api/logout', { method: 'POST' }); ssSet('rl_tok', null); setMode('view'); refresh(); };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
   const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d) };

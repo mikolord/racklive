@@ -424,3 +424,15 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .unit.swap { outline: 2px dashed var(--accent); outline-offset: -2px; opacity: .75; }
 .unit-hint { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; font-size: 13px; color: var(--text2);
   background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+
+/* notifications */
+.notify-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 22px; align-items: start; }
+.notify-ch { padding: 12px 14px; border-radius: 13px; background: var(--fill); }
+.notify-rule { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: .5px solid var(--line); }
+.notify-rule:last-of-type { border-bottom: 0; }
+
+/* step-by-step guides in settings */
+.guide { background: color-mix(in srgb, var(--accent) 7%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); border-radius: 12px; padding: 8px 12px; font-size: 13px; line-height: 1.5; }
+.guide summary { cursor: pointer; font-weight: 650; color: var(--accent); }
+.guide ol, .guide ul { margin: 8px 0 4px; padding-left: 20px; } .guide li { margin-bottom: 5px; }
+.guide code { font-family: var(--mono); font-size: 12px; background: var(--fill); padding: 1px 5px; border-radius: 5px; }

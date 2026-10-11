@@ -1,4 +1,89 @@
 /* Settings, events, login and first-run setup */
+const RULES = [
+  ['offline', 'Устройство пропало', 'нет связи дольше', [['minutes', 'мин']]],
+  ['ups', 'ИБП', 'перешёл на батарею, разряжается, просит замену батареи', []],
+  ['speed', 'Упала скорость порта', '1 Гбит → 100 Мбит дольше (обычно кабель)', [['minutes', 'мин']]],
+  ['disk', 'Заканчивается место', 'том заполнен на', [['pct', '%']]],
+  ['temp', 'Перегрев', 'устройство, °C · диск, °C', [['c', '°C'], ['disk', '°C']]],
+  ['vpn', 'VPN не работает', 'маршрутный туннель не поднят дольше', [['minutes', 'мин']]],
+  ['cert', 'Сертификат сайта', 'истекает меньше чем через', [['days', 'дн.']]],
+  ['cpu', 'Процессор загружен', 'больше чем на … дольше …', [['pct', '%'], ['minutes', 'мин']]],
+  ['warning', 'Любое «требует внимания»', 'статус «внимание» дольше', [['minutes', 'мин']]],
+];
+function NotifyCard() {
+  const { data, refresh } = useApp(); const toast = useToast();
+  const [n, setN] = useState(() => JSON.parse(JSON.stringify(data.notify)));
+  const [res, setRes] = useState(null);
+  const ch = (c, k, v) => setN(x => ({ ...x, [c]: { ...x[c], [k]: v } }));
+  const rule = (r, k, v) => setN(x => ({ ...x, rules: { ...x.rules, [r]: { ...x.rules[r], [k]: v } } }));
+  const save = async () => { try { const r = await api('/api/notify', { method: 'PUT', body: n });
+    toast(r.menu === 'ok' ? (n.telegram.webapp ? 'Сохранено. У бота появилась кнопка «Rack Live»' : 'Сохранено') : r.menu ? 'Сохранено, но кнопка в боте: ' + r.menu : 'Уведомления сохранены', r.menu && r.menu !== 'ok');
+    refresh(); } catch (e) { toast(e.message, true); } };
+  const test = async () => { setRes(null); try { const r = await api('/api/notify/test', { method: 'POST', body: n }); setRes(r.results); } catch (e) { toast(e.message, true); } };
+  const st = data.notifyStatus || {};
+  // plain render helpers (not components): a component defined here would remount its inputs on every keystroke
+  const chan = (id, title, children) => <div className="notify-ch">
+    <div className="row"><Switch on={!!n[id].enabled} onChange={v => ch(id, 'enabled', v)} /><b className="grow">{title}</b>
+      {st[id] ? <span className={'badge ' + (st[id].result === 'ok' ? 'online' : 'offline')}>{st[id].result === 'ok' ? 'отправлено ' + fmt.ago(st[id].t, data.now) : 'ошибка'}</span> : null}</div>
+    {n[id].enabled ? <div className="col" style={{ gap: 10, marginTop: 10 }}>{children}</div> : null}</div>;
+  const inp = (c, k, label, extra = {}) => <Field label={label} hint={extra.hint}>
+    <input className="input" type={extra.secret ? 'password' : 'text'} value={n[c][k] || ''} placeholder={extra.secret && n[c][k + 'Set'] ? '•••••••• (не менять)' : extra.ph || ''}
+      onChange={e => ch(c, k, e.target.value)} autoComplete="off" /></Field>;
+  return <Card title="Уведомления" style={{ gridColumn: '1 / -1' }}>
+    <div className="notify-grid">
+      <div className="col" style={{ gap: 10 }}>
+        <div className="card-title">Куда отправлять</div>
+        {chan('telegram', 'Telegram', <>
+          <details className="guide"><summary>Как подключить — по шагам</summary><ol>
+            <li>В Telegram откройте <b>@BotFather</b> → <code>/newbot</code> → придумайте имя → он пришлёт <b>токен</b> вида <code>123456:ABC…</code>. Вставьте его ниже.</li>
+            <li>Найдите своего нового бота и нажмите <b>Start</b> (или напишите <code>/start</code>) — без этого бот не сможет вам писать.</li>
+            <li>Узнайте свой ID: напишите <b>@userinfobot</b> — он ответит числом. Вставьте его в «Chat ID».</li>
+            <li>Нажмите <b>«Отправить тест»</b> — в боте должно прийти сообщение. Затем <b>«Сохранить»</b>.</li>
+          </ol></details>
+          {inp('telegram', 'token', 'Токен бота', { secret: true, hint: 'От @BotFather' })}
+          {inp('telegram', 'chat', 'Chat ID', { ph: '123456789', hint: 'Ваш ID от @userinfobot. Несколько — через запятую; можно ID группы (начинается с минуса)' })}
+          <details className="guide"><summary>Открывать Rack Live прямо в Telegram (мини-приложение)</summary>
+            <div>У бота появится кнопка <b>«Rack Live»</b>, а под каждым уведомлением — <b>«Открыть»</b>. Вход — по вашему аккаунту Telegram, без пароля.</div>
+            <div style={{ marginTop: 6 }}><b>Нужно одно:</b> адрес Rack Live в интернете по <b>https://</b> (Telegram по-другому не открывает). Как его получить:</div>
+            <ul>
+              <li><b>Keenetic / Netcraze:</b> веб-интерфейс роутера → «Сетевые правила» → <b>«Доменное имя»</b> (KeenDNS) → «Добавить» веб-приложение → адрес <code>IP-сервера</code> и порт Rack Live (например 8080) → доступ «из интернета». Получите адрес вида <code>https://rack.ваше-имя.keenetic.link</code> — сертификат роутер выдаст сам.</li>
+              <li><b>Synology:</b> Панель управления → Портал входа → Дополнительно → <b>Обратный прокси</b>: <code>https://rack.ваш-домен</code> → <code>http://localhost:8080</code>; сертификат — Безопасность → Сертификат → Let's Encrypt. На роутере пробросьте порт 443 на NAS.</li>
+              <li><b>Без белого IP:</b> Cloudflare Tunnel или любой другой обратный прокси с HTTPS.</li>
+            </ul>
+            <div>Вставьте адрес ниже и нажмите «Сохранить». Панель станет видна из интернета, но войти смогут только разрешённые аккаунты Telegram или по паролю; «Просмотр без пароля» в этом случае лучше выключить.</div></details>
+          {inp('telegram', 'webapp', 'Адрес Rack Live в интернете (для мини-приложения)', { ph: 'https://rack.ваш-домен', hint: 'Необязательно. Только https://' })}
+          {n.telegram.webapp ? inp('telegram', 'allowed', 'Кто может входить из Telegram', { ph: 'пусто = те же ID, что в «Chat ID»', hint: 'ID аккаунтов через запятую' }) : null}
+          {inp('telegram', 'api', 'Адрес API (необязательно)', { ph: 'https://api.telegram.org', hint: 'Если api.telegram.org недоступен — адрес прокси/зеркала' })}
+        </>)}
+        {chan('email', 'Почта', <>
+          <div className="row" style={{ alignItems: 'flex-start' }}>{inp('email', 'host', 'SMTP-сервер', { ph: 'smtp.yandex.ru' })}<div style={{ width: 90 }}>{inp('email', 'port', 'Порт', { ph: '587' })}</div></div>
+          {inp('email', 'user', 'Логин')}{inp('email', 'password', 'Пароль приложения', { secret: true })}
+          {inp('email', 'from', 'От кого', { ph: 'как логин' })}{inp('email', 'to', 'Кому', { ph: 'you@mail.ru, ещё@...' })}
+        </>)}
+        {chan('webhook', 'Webhook (ntfy, Home Assistant, свой сервис)', <>
+          {inp('webhook', 'url', 'Адрес', { ph: 'https://ntfy.sh/моя-тема', hint: 'ntfy — простой текст; остальным уходит JSON {title, text, items}' })}
+        </>)}
+        <Field label="Ссылка на Rack Live в сообщении (необязательно)"><input className="input" value={n.url || ''} placeholder="http://192.168.1.3:9998" onChange={e => setN(x => ({ ...x, url: e.target.value }))} /></Field>
+      </div>
+      <div className="col" style={{ gap: 8 }}>
+        <div className="card-title">О чём сообщать</div>
+        {RULES.map(([id, title, desc, nums]) => { const r = n.rules[id] || {};
+          return <div key={id} className="notify-rule"><Switch on={!!r.on} onChange={v => rule(id, 'on', v)} />
+            <div className="grow" style={{ minWidth: 0 }}><b style={{ fontSize: 14 }}>{title}</b><div className="dim" style={{ fontSize: 12 }}>{desc}</div></div>
+            {nums.map(([k, u]) => <label key={k} className="row" style={{ gap: 4 }}><input className="input" style={{ width: 58, height: 32, padding: '4px 8px' }} value={r[k] ?? ''}
+              onChange={e => rule(id, k, +e.target.value || 0)} disabled={!r.on} /><span className="dim3" style={{ fontSize: 12 }}>{u}</span></label>)}</div>; })}
+        <div className="dim3" style={{ fontSize: 12, lineHeight: 1.45 }}>Когда проблема уходит, придёт «восстановилось» с длительностью. Несколько событий за раз — одним сообщением.
+          Отключить уведомления для отдельного устройства можно в его настройках.</div>
+      </div>
+    </div>
+    <div className="row wrap" style={{ marginTop: 14 }}>
+      <Btn onClick={test} icon="bell">Отправить тест</Btn>
+      {res ? Object.entries(res).map(([k, v]) => <span key={k} className={'badge ' + (v === 'ok' ? 'online' : 'offline')}>{k}: {v === 'ok' ? 'дошло' : v}</span>) : null}
+      <div className="grow" /><Btn kind="primary" onClick={save}>Сохранить</Btn>
+    </div>
+  </Card>;
+}
+
 function SettingsView() {
   const { data, refresh, logout } = useApp(); const toast = useToast();
   const [s, setS] = useState({ ...data.settings });
@@ -40,6 +125,7 @@ function SettingsView() {
         <Btn size="sm" icon="trash" onClick={() => set('vlans', vl.filter((_, j) => j !== i))} /></div>)}</div>
       <Btn style={{ marginTop: 12 }} onClick={save}>Сохранить VLAN</Btn>
     </Card>
+    {data.notify ? <NotifyCard /> : null}
     <Card title="Пароль администратора">
       <div className="col" style={{ gap: 12 }}>
         <input className="input" type="password" placeholder="Текущий пароль" value={pw.old} onChange={e => setPw({ ...pw, old: e.target.value })} />
@@ -70,7 +156,7 @@ function EventsView() {
     <EventsList events={ev} /></>;
 }
 
-function AuthScreen({ setup, title, onDone }) {
+function AuthScreen({ setup, title, onDone, note }) {
   const [pw, setPw] = useState(''); const [pw2, setPw2] = useState(''); const [t, setT] = useState(title || 'Серверный шкаф');
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   const submit = async e => {
@@ -84,6 +170,7 @@ function AuthScreen({ setup, title, onDone }) {
     <div className="brand-logo" style={{ width: 64, height: 64, borderRadius: 18, margin: '0 auto' }}><Icon name="rack" size={34} color="#fff" /></div>
     <h1>{setup ? 'Добро пожаловать' : (title || 'Rack Live')}</h1>
     <div className="dim">{setup ? 'Задайте название и пароль администратора — с ним можно будет добавлять устройства и управлять ими.' : 'Войдите, чтобы продолжить'}</div>
+    {note ? <div className="badge offline" style={{ whiteSpace: 'normal', lineHeight: 1.4, padding: '8px 12px', borderRadius: 12 }}>{note}</div> : null}
     <div className="col">
       {setup ? <Field label="Название"><input className="input" value={t} onChange={e => setT(e.target.value)} /></Field> : null}
       <Field label="Пароль"><input className="input" type="password" autoFocus value={pw} onChange={e => setPw(e.target.value)} placeholder={setup ? 'Не короче 8 символов' : ''} /></Field>

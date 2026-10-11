@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import analysis, auth, topology
+from . import alerts, analysis, auth, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -29,6 +29,7 @@ class App:
         self.last_start = {}
         self.retried = set()
         self._view_cache = {}
+        self.alerter = alerts.Alerter(self.store)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -92,8 +93,14 @@ class App:
                 self.store.add_point(d['id'], point)
 
     def poller(self):
-        last_save = time.time()
+        last_save = last_alert = time.time()
         while True:
+            if time.time() - last_alert >= 10:
+                last_alert = time.time()
+                try:
+                    self.alerter.evaluate(list(self.store.cfg['devices']), self.states)
+                except Exception:
+                    traceback.print_exc()
             try:
                 now = time.time()
                 every = max(15, int(self.store.cfg['settings'].get('poll') or 60))
@@ -178,7 +185,9 @@ class App:
         except Exception:
             traceback.print_exc()
             health = None
-        return {'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
+        return {'notify': alerts.public(cfg.get('notify')) if authed else None,
+                'notifyStatus': self.alerter.status if authed else None,
+                'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
@@ -199,6 +208,9 @@ class Handler(BaseHTTPRequestHandler):
         return (self.headers.get('X-Forwarded-For') or self.client_address[0]).split(',')[0].strip()
 
     def token(self):
+        # cookie for the browser; header for the Telegram mini app (Telegram Web runs it in an iframe, where cookies are often blocked)
+        if self.headers.get('X-RL-Session'):
+            return self.headers['X-RL-Session']
         c = SimpleCookie(self.headers.get('Cookie') or '')
         return c['rl_session'].value if 'rl_session' in c else None
 
@@ -265,7 +277,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-cache' if full.endswith(('.html', '.js', '.css')) else 'max-age=86400')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('X-Frame-Options', 'SAMEORIGIN')
+        # framing: only ourselves and Telegram Web (mini app); X-Frame-Options can't express that, CSP can
+        self.send_header('Content-Security-Policy', "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org")
         self.end_headers()
         self.wfile.write(b)
 
@@ -344,6 +357,21 @@ class Handler(BaseHTTPRequestHandler):
                 st.add_event(None, 'Вход', 'info', f'администратор вошёл с адреса {ip}')
                 tok = APP.sessions.create()
                 return self.send({'ok': True}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+            if path == '/api/tglogin' and method == 'POST':
+                # Telegram mini app: the launch data is signed with the bot token → no password needed for allowed accounts
+                ip = self.client_ip()
+                if APP.sessions.throttled(ip):
+                    return self.err('слишком много попыток, подождите 5 минут', 429)
+                user, why = alerts.verify_webapp(st.cfg.get('notify'), body.get('initData') or '')
+                if not user:
+                    APP.sessions.fail(ip)
+                    st.add_event(None, 'Вход', 'warning', f'вход через Telegram отклонён: {why}')
+                    return self.err(why, 403)
+                APP.sessions.ok(ip)
+                who = ' '.join(x for x in (user.get('first_name'), user.get('last_name')) if x) or str(user.get('id'))
+                st.add_event(None, 'Вход', 'info', f'вход через Telegram: {who} (id {user.get("id")})')
+                tok = APP.sessions.create()
+                return self.send({'ok': True, 'token': tok}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
             if path == '/api/logout' and method == 'POST':
                 APP.sessions.drop(self.token())
                 return self.send({'ok': True}, headers={'Set-Cookie': self.cookie('', 0)})
@@ -403,6 +431,23 @@ class Handler(BaseHTTPRequestHandler):
                         st.cfg['map'][k] = body[k]
                 st.save()
                 return self.send({'ok': True})
+            if path in ('/api/notify', '/api/notify/test') and method in ('PUT', 'POST'):
+                # empty secret fields in the form mean "keep the saved one"
+                cur = alerts.merged(st.cfg.get('notify'))
+                new = alerts.merged(body)
+                for ch, key in alerts.SECRETS:
+                    if not (body.get(ch) or {}).get(key):
+                        new[ch][key] = cur[ch][key]
+                    new[ch].pop(key + 'Set', None)
+                menu = APP.alerter.setup_menu(new)                   # bot menu button → mini app (None if Telegram is off)
+                if path == '/api/notify/test':
+                    res = APP.alerter.send(['✅ Проверка уведомлений Rack Live — если вы это видите, всё настроено.'], cfg=new) or {}
+                    if menu:
+                        res['кнопка в боте'] = menu
+                    return self.send({'ok': True, 'results': res or {'—': 'не включён ни один канал'}})
+                st.cfg['notify'] = new
+                st.save()
+                return self.send({'ok': True, 'menu': menu})
             if path == '/api/plan' and method == 'PUT':
                 b = body.get('buildings')
                 if not isinstance(b, list):

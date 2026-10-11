@@ -1,8 +1,30 @@
 /* Core: API client, formatting helpers, icons. Files in src/ are concatenated in name order. */
 const { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext, Fragment } = React;
 
+/* Telegram mini app: Telegram puts signed launch data into the URL hash — grab it before the app uses the hash for tabs */
+const ssGet = k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
+const ssSet = (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) { } };
+const TG = (() => {
+  const h = new URLSearchParams(location.hash.slice(1));
+  let data = h.get('tgWebAppData'), theme = null;
+  if (data) {
+    try { theme = JSON.parse(h.get('tgWebAppThemeParams') || 'null'); } catch (e) { }
+    ssSet('rl_tg', data); ssSet('rl_tg_theme', JSON.stringify(theme));
+    history.replaceState(null, '', location.pathname + location.search);
+  } else { data = ssGet('rl_tg'); try { theme = JSON.parse(ssGet('rl_tg_theme') || 'null'); } catch (e) { } }
+  if (!data) return null;
+  const bg = (theme && theme.bg_color) || '';
+  const dark = bg ? (parseInt(bg.slice(1, 3), 16) * .3 + parseInt(bg.slice(3, 5), 16) * .59 + parseInt(bg.slice(5, 7), 16) * .11) < 128 : null;
+  const s = document.createElement('script');                  // official helper: full-height, «ready», native back gesture
+  s.src = 'https://telegram.org/js/telegram-web-app.js';
+  s.onload = () => { try { Telegram.WebApp.ready(); Telegram.WebApp.expand(); } catch (e) { } };
+  document.head.appendChild(s);
+  return { initData: data, scheme: dark == null ? null : dark ? 'dark' : 'light' };
+})();
+
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
+  const tok = ssGet('rl_tok'); if (tok) init.headers['X-RL-Session'] = tok;
   if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
   const r = await fetch(path, init);
   let data = null;

@@ -54,7 +54,8 @@ function usePanZoom(wrapRef, opts, initial) {
   const pinchBase = () => { const p = Object.values(ptrs.current); const r = wrapRef.current.getBoundingClientRect();
     return { pinch: true, dist: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, cx: (p[0].x + p[1].x) / 2 - r.left, cy: (p[0].y + p[1].y) / 2 - r.top, v: { ...vr.current } }; };
   const down = e => {
-    if (e.target.closest('.plan-item, .plan-room')) return;
+    // items handle their own drag; buttons/overlays must get their click (pointer capture would steal it)
+    if (e.target.closest('.plan-item, .plan-room, button, .zoom-btns, .plan-hint')) return;
     ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     if (Object.keys(ptrs.current).length >= 2) { mode.current = pinchBase(); return; }
@@ -83,9 +84,19 @@ function usePanZoom(wrapRef, opts, initial) {
   return { view, setView, toWorld, bind: { onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: up } };
 }
 
-function ZoomBtns({ setView }) {
-  return <div className="zoom-btns"><button className="btn" onClick={() => setView(v => ({ ...v, k: clampK(v.k * 1.3) }))}>+</button>
+function ZoomBtns({ setView, onFit }) {
+  return <div className="zoom-btns">
+    {onFit ? <button className="btn" onClick={onFit} title="Показать всё"><Icon name="fit" size={17} /></button> : null}
+    <button className="btn" onClick={() => setView(v => ({ ...v, k: clampK(v.k * 1.3) }))}>+</button>
     <button className="btn" onClick={() => setView(v => ({ ...v, k: clampK(v.k / 1.3) }))}>−</button></div>;
+}
+/* fit a set of world points into the canvas (used on open and by the «показать всё» button) */
+function fitView(el, xs, ys, setView, pad = 40) {
+  if (!el) return; const W = el.clientWidth, H = el.clientHeight;
+  if (!xs.length) { setView({ x: W / 2, y: H / 2, k: 1 }); return; }
+  const x1 = Math.min(...xs) - pad, y1 = Math.min(...ys) - pad, x2 = Math.max(...xs) + pad, y2 = Math.max(...ys) + pad;
+  const k = clampK(Math.min(1.2, Math.min(W / (x2 - x1), H / (y2 - y1))));
+  setView({ k, x: (W - (x2 - x1) * k) / 2 - x1 * k, y: (H - (y2 - y1) * k) / 2 - y1 * k });
 }
 
 function PlanView() {
@@ -130,6 +141,12 @@ function Territory({ plan, enter }) {
     setSel(null);
   };
   const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap });
+  // open centred on all buildings, poles and their yards — not on an empty corner of the grid
+  const fitAll = () => { const xs = [], ys = [];
+    buildings.forEach(b => { const p = pos(b); xs.push(p.x - 18, p.x + BW + 18); ys.push(p.y - 18, p.y + BH + 18); });
+    poles.forEach(p => { xs.push(p.x - 20, p.x + 20); ys.push(p.y - 20, p.y + 34); });
+    fitView(wrap.current, xs, ys, setView); };
+  useEffect(() => { const t = setTimeout(fitAll, 30); return () => clearTimeout(t); }, [buildings.length, poles.length]);
   const delPole = async id => { const p = poles.find(x => x.id === id);
     if (!(await confirm(`Удалить «${p.name}» и его магистрали?`, { danger: true, ok: 'Удалить' }))) return;
     save(null, links.filter(l => l.from !== id && l.to !== id), poles.filter(x => x.id !== id)); setSel(null); };
@@ -223,7 +240,7 @@ function Territory({ plan, enter }) {
             <text y={30} textAnchor="middle" className="pi-label">{p.name.length > 16 ? p.name.slice(0, 15) + '…' : p.name}</text></g>)}
         </g>
       </svg>
-      <ZoomBtns setView={setView} />
+      <ZoomBtns setView={setView} onFit={fitAll} />
     </div>
     {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}
       onSave={saveLink} onDelete={() => save(null, links.filter(x => x.id !== linkEdit.link.id))} onClose={() => setLinkEdit(null)} /> : null}
@@ -316,16 +333,11 @@ function BuildingPlan({ building, plan, back }) {
   const { view, setView, toWorld, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap, onDraw: (tool === 'room' || tool === 'erase') ? onDraw : null });
 
   // centre the view on the floor's content whenever the floor changes
-  const fitFloor = () => { const el = wrap.current; if (!el) return;
-    const xs = [], ys = [];
+  const fitFloor = () => { const xs = [], ys = [];
     (floor.walls || []).forEach(w => { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); });
     (floor.rooms || []).forEach(r => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
     (floor.items || []).forEach(i => { xs.push(i.x - 30, i.x + 30); ys.push(i.y - 40, i.y + 40); });
-    const W = el.clientWidth, H = el.clientHeight;
-    if (!xs.length) { setView({ x: W / 2, y: H / 2, k: 1 }); return; }
-    const x1 = Math.min(...xs) - 30, y1 = Math.min(...ys) - 30, x2 = Math.max(...xs) + 30, y2 = Math.max(...ys) + 30;
-    const k = clampK(Math.min(1.3, Math.min(W / (x2 - x1), H / (y2 - y1))));
-    setView({ k, x: (W - (x2 - x1) * k) / 2 - x1 * k, y: (H - (y2 - y1) * k) / 2 - y1 * k }); };
+    fitView(wrap.current, xs, ys, setView, 30); };
   useEffect(() => { const t = setTimeout(fitFloor, 30); return () => clearTimeout(t); }, [fid, building.id]);
 
   const dragItem = (it, e) => {
@@ -406,7 +418,7 @@ function BuildingPlan({ building, plan, back }) {
       </svg>
       {edit ? <div className="plan-hint">{tool === 'wall' ? 'Нажимайте, чтобы ставить углы · «Готово» завершает' : tool === 'room' ? 'Обведите прямоугольник комнаты' :
         tool === 'place' ? 'Выберите в палитре и нажмите на план' : tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Тащите устройства · два пальца / колесо — зум'}</div> : null}
-      <ZoomBtns setView={setView} />
+      <ZoomBtns setView={setView} onFit={fitFloor} />
     </div>
   </div>;
 }

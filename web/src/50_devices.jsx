@@ -118,7 +118,9 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       <Field label="Площадка / объект" hint="Например «Дача» или «Офис» — устройства группируются по площадкам"><input className="input" value={f.site || ''} onChange={e => set('site', e.target.value)} /></Field>
     </div>
     <Field label="Заметки"><textarea className="textarea" value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
-    <div className="row"><Switch on={f.enabled !== false} onChange={v => set('enabled', v)} /><span>Опрашивать устройство</span></div>
+    <div className="row wrap" style={{ gap: 18 }}>
+      <span className="row"><Switch on={f.enabled !== false} onChange={v => set('enabled', v)} /><span>Опрашивать устройство</span></span>
+      <span className="row"><Switch on={f.notify !== false} onChange={v => set('notify', v)} /><span>Уведомлять о проблемах</span></span></div>
     {device && drvId === 'agent' ? <AgentInstallInline device={device} /> : null}
     {test && !test.busy ? <div className="card pad" style={{ borderColor: test.ok ? 'var(--green)' : 'var(--red)' }}>
       {test.ok ? <><div className="row" style={{ color: 'var(--green)', fontWeight: 700 }}><Icon name="check" />Подключение работает</div>
