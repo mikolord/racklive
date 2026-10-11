@@ -1,0 +1,10 @@
+data
+data-test
+web/node_modules
+web/src
+*.png
+!web/icon-512.png
+local.*
+seed_*.py
+test_*.py
+shot_*

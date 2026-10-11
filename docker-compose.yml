@@ -1,0 +1,12 @@
+services:
+  racklive:
+    build: .
+    image: racklive:2
+    container_name: racklive
+    restart: unless-stopped
+    ports:
+      - "8080:8080"          # open http://<server>:8080
+    volumes:
+      - ./data:/data         # settings, devices, history — back this folder up
+    environment:
+      - TZ=Europe/Moscow

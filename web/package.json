@@ -1,0 +1,10 @@
+{
+  "name": "racklive-web",
+  "private": true,
+  "description": "Build tooling only: JSX -> app.js",
+  "devDependencies": {
+    "@babel/cli": "^7.28.0",
+    "@babel/core": "^7.28.0",
+    "@babel/preset-react": "^7.27.0"
+  }
+}

@@ -1,0 +1,15 @@
+﻿# runtime data (settings, device passwords, history) — never commit
+data/
+data-*/
+# build tooling
+web/node_modules/
+web/.bundle.jsx
+__pycache__/
+*.pyc
+# local helpers / screenshots
+seed_*.py
+test_*.py
+shot_*.png
+local.*
+*.zip
+.DS_Store
