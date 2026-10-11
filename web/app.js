@@ -2509,7 +2509,10 @@ function RackView() {
   }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0432\u0435\u0431-\u0438\u043D\u0442\u0435\u0440\u0444\u0435\u0439\u0441") : null) : null);
 }
 
-/* Box / room: devices shown as free tiles instead of U-slots */
+/* Box / room: devices as free tiles you can drag around (edit mode), snapped to a grid */
+const TW = 214,
+  TH = 64,
+  TGRID = 12;
 function TileView({
   rack,
   edit,
@@ -2519,19 +2522,96 @@ function TileView({
   onInfo,
   onSettings
 }) {
+  const {
+    saveRack
+  } = useApp();
   const kinfo = placeKind(rack);
   const linked = rack.units.filter(u => u.deviceId).length;
-  const newTile = () => onEdit({
-    id: null,
-    name: '',
-    type: 'router',
-    uSize: 1,
-    uStart: rack.units.length + 1,
-    side: 'front',
-    color: '#0a84ff',
-    deviceId: null,
-    notes: ''
+  const ref = useRef(null);
+  const [w, setW] = useState(900);
+  const [drag, setDrag] = useState(null); // {id, x, y}
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !window.ResizeObserver) return;
+    const ro = new ResizeObserver(es => setW(es[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const cols = Math.max(1, Math.floor((w + TGRID) / (TW + TGRID)));
+  // position each tile: its saved x/y, or an auto grid slot for ones never moved
+  let auto = 0;
+  const placed = rack.units.map(u => {
+    if (typeof u.x === 'number' && typeof u.y === 'number') return {
+      u,
+      x: u.x,
+      y: u.y
+    };
+    const c = auto % cols,
+      r = Math.floor(auto / cols);
+    auto++;
+    return {
+      u,
+      x: c * (TW + TGRID),
+      y: r * (TH + TGRID)
+    };
   });
+  const maxX = Math.max(0, w - TW);
+  const height = Math.max(TH + TGRID, ...placed.map(p => p.y + TH)) + TGRID + (edit ? TH + TGRID : 0);
+  const newTile = () => {
+    const n = auto,
+      c = n % cols,
+      r = Math.floor(n / cols);
+    onEdit({
+      id: null,
+      name: '',
+      type: 'router',
+      uSize: 1,
+      uStart: 1,
+      side: 'front',
+      color: '#0a84ff',
+      deviceId: null,
+      notes: '',
+      x: c * (TW + TGRID),
+      y: r * (TH + TGRID)
+    });
+  };
+  const start = (u, p, e) => {
+    if (!edit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const sx = e.clientX,
+      sy = e.clientY;
+    let moved = false;
+    const at = ev => ({
+      x: Math.min(maxX, Math.max(0, Math.round((p.x + ev.clientX - sx) / TGRID) * TGRID)),
+      y: Math.max(0, Math.round((p.y + ev.clientY - sy) / TGRID) * TGRID)
+    });
+    const move = ev => {
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 4) moved = true;
+      if (moved) setDrag({
+        id: u.id,
+        ...at(ev)
+      });
+    };
+    const up = ev => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (moved) {
+        const np = at(ev);
+        saveRack({
+          ...rack,
+          units: rack.units.map(x => x.id === u.id ? {
+            ...x,
+            x: np.x,
+            y: np.y
+          } : x)
+        });
+      } else onEdit(u);
+      setDrag(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   return /*#__PURE__*/React.createElement("div", {
     className: "tilebox"
   }, /*#__PURE__*/React.createElement("div", {
@@ -2553,20 +2633,39 @@ function TileView({
     size: 15
   })) : null), /*#__PURE__*/React.createElement("div", {
     className: "meta"
-  }, kinfo.label, " \xB7 ", linked, " ", linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств'))), /*#__PURE__*/React.createElement("div", {
-    className: "tiles"
-  }, rack.units.map(u => {
+  }, kinfo.label, " \xB7 ", linked, " ", linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств', edit ? ' · перетаскивайте плитки' : '')), edit ? /*#__PURE__*/React.createElement(Btn, {
+    size: "sm",
+    icon: "plus",
+    onClick: newTile
+  }, "\u041E\u0431\u043E\u0440\u0443\u0434\u043E\u0432\u0430\u043D\u0438\u0435") : null), /*#__PURE__*/React.createElement("div", {
+    className: 'tiles-canvas' + (edit ? ' editing' : ''),
+    ref: ref,
+    style: {
+      height
+    }
+  }, placed.map(({
+    u,
+    x,
+    y
+  }) => {
     const d = devById[u.deviceId];
     const st = d && d.state;
     const kind = PASSIVE.includes(u.type) ? u.type : d && d.kind || u.type;
+    const dp = drag && drag.id === u.id ? drag : null;
     return /*#__PURE__*/React.createElement("div", {
       key: u.id,
-      className: 'tile' + (PASSIVE.includes(u.type) ? ' passive' : ''),
+      className: 'tile free' + (PASSIVE.includes(u.type) ? ' passive' : '') + (dp ? ' grabbing' : ''),
+      style: {
+        left: dp ? dp.x : x,
+        top: dp ? dp.y : y,
+        width: TW
+      },
+      onPointerDown: e => start(u, {
+        x,
+        y
+      }, e),
       onClick: () => {
-        if (edit) {
-          onEdit(u);
-          return;
-        }
+        if (edit) return;
         d ? openDevice(d) : onInfo(u);
       }
     }, /*#__PURE__*/React.createElement("div", {
@@ -2610,19 +2709,15 @@ function TileView({
     }, d ? deviceLine(d) : KIND_TEXT[u.type]))), /*#__PURE__*/React.createElement(Leds, {
       ports: st && st.ports
     }));
-  }), edit ? /*#__PURE__*/React.createElement("button", {
-    className: "tile add",
-    onClick: newTile
-  }, /*#__PURE__*/React.createElement(Icon, {
-    name: "plus",
-    size: 20
-  }), /*#__PURE__*/React.createElement("span", null, "\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C")) : null, !rack.units.length && !edit ? /*#__PURE__*/React.createElement("div", {
+  }), !rack.units.length ? /*#__PURE__*/React.createElement("div", {
     className: "empty",
     style: {
-      gridColumn: '1 / -1',
-      padding: 36
+      position: 'absolute',
+      inset: 0,
+      display: 'grid',
+      placeItems: 'center'
     }
-  }, "\u041F\u0443\u0441\u0442\u043E. \u0412\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \xAB\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435\xBB, \u0447\u0442\u043E\u0431\u044B \u0434\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0441\u044E\u0434\u0430 \u043E\u0431\u043E\u0440\u0443\u0434\u043E\u0432\u0430\u043D\u0438\u0435.") : null));
+  }, edit ? 'Нажмите «Оборудование», чтобы добавить' : 'Пусто. Включите «Редактирование».') : null));
 }
 function NewPlace({
   onClose,

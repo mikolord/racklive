@@ -184,26 +184,59 @@ function RackView() {
   </div>;
 }
 
-/* Box / room: devices shown as free tiles instead of U-slots */
+/* Box / room: devices as free tiles you can drag around (edit mode), snapped to a grid */
+const TW = 214, TH = 64, TGRID = 12;
 function TileView({ rack, edit, devById, openDevice, onEdit, onInfo, onSettings }) {
+  const { saveRack } = useApp();
   const kinfo = placeKind(rack);
   const linked = rack.units.filter(u => u.deviceId).length;
-  const newTile = () => onEdit({ id: null, name: '', type: 'router', uSize: 1, uStart: rack.units.length + 1, side: 'front', color: '#0a84ff', deviceId: null, notes: '' });
+  const ref = useRef(null);
+  const [w, setW] = useState(900);
+  const [drag, setDrag] = useState(null);                 // {id, x, y}
+  useEffect(() => { const el = ref.current; if (!el || !window.ResizeObserver) return;
+    const ro = new ResizeObserver(es => setW(es[0].contentRect.width)); ro.observe(el); return () => ro.disconnect(); }, []);
+  const cols = Math.max(1, Math.floor((w + TGRID) / (TW + TGRID)));
+  // position each tile: its saved x/y, or an auto grid slot for ones never moved
+  let auto = 0;
+  const placed = rack.units.map(u => {
+    if (typeof u.x === 'number' && typeof u.y === 'number') return { u, x: u.x, y: u.y };
+    const c = auto % cols, r = Math.floor(auto / cols); auto++;
+    return { u, x: c * (TW + TGRID), y: r * (TH + TGRID) };
+  });
+  const maxX = Math.max(0, w - TW);
+  const height = Math.max(TH + TGRID, ...placed.map(p => p.y + TH)) + TGRID + (edit ? TH + TGRID : 0);
+  const newTile = () => { const n = auto, c = n % cols, r = Math.floor(n / cols);
+    onEdit({ id: null, name: '', type: 'router', uSize: 1, uStart: 1, side: 'front', color: '#0a84ff', deviceId: null, notes: '', x: c * (TW + TGRID), y: r * (TH + TGRID) }); };
+  const start = (u, p, e) => {
+    if (!edit) return; e.preventDefault(); e.stopPropagation();
+    const sx = e.clientX, sy = e.clientY; let moved = false;
+    const at = ev => ({ x: Math.min(maxX, Math.max(0, Math.round((p.x + ev.clientX - sx) / TGRID) * TGRID)), y: Math.max(0, Math.round((p.y + ev.clientY - sy) / TGRID) * TGRID) });
+    const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 4) moved = true; if (moved) setDrag({ id: u.id, ...at(ev) }); };
+    const up = ev => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      if (moved) { const np = at(ev); saveRack({ ...rack, units: rack.units.map(x => x.id === u.id ? { ...x, x: np.x, y: np.y } : x) }); }
+      else onEdit(u);
+      setDrag(null); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
   return <div className="tilebox">
     <div className="rack-top"><div><div className="title row" style={{ gap: 8 }}><Icon name={kinfo.icon} size={17} />{rack.name}
       {edit ? <button className="icon-link" onClick={onSettings} title="Настройки места"><Icon name="settings" size={15} /></button> : null}</div>
-      <div className="meta">{kinfo.label} · {linked} {linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств'}</div></div></div>
-    <div className="tiles">
-      {rack.units.map(u => { const d = devById[u.deviceId]; const st = d && d.state; const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
-        return <div key={u.id} className={'tile' + (PASSIVE.includes(u.type) ? ' passive' : '')} onClick={() => { if (edit) { onEdit(u); return; } d ? openDevice(d) : onInfo(u); }}>
+      <div className="meta">{kinfo.label} · {linked} {linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств'}{edit ? ' · перетаскивайте плитки' : ''}</div></div>
+      {edit ? <Btn size="sm" icon="plus" onClick={newTile}>Оборудование</Btn> : null}</div>
+    <div className={'tiles-canvas' + (edit ? ' editing' : '')} ref={ref} style={{ height }}>
+      {placed.map(({ u, x, y }) => { const d = devById[u.deviceId]; const st = d && d.state; const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
+        const dp = drag && drag.id === u.id ? drag : null;
+        return <div key={u.id} className={'tile free' + (PASSIVE.includes(u.type) ? ' passive' : '') + (dp ? ' grabbing' : '')}
+          style={{ left: dp ? dp.x : x, top: dp ? dp.y : y, width: TW }}
+          onPointerDown={e => start(u, { x, y }, e)} onClick={() => { if (edit) return; d ? openDevice(d) : onInfo(u); }}>
           <div className="strip" style={{ background: u.color || '#0a84ff' }} />
           <div className="row" style={{ gap: 9, minWidth: 0 }}><KindIcon kind={kind} size={32} round={9} />
             <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{st ? <span className={'dot ' + st.status} /> : null}<span className="ellipsis" style={{ fontWeight: 650, fontSize: 14 }}>{u.name}</span></div>
               <div className="dim ellipsis" style={{ fontSize: 12 }}>{d ? deviceLine(d) : KIND_TEXT[u.type]}</div></div></div>
           <Leds ports={st && st.ports} />
         </div>; })}
-      {edit ? <button className="tile add" onClick={newTile}><Icon name="plus" size={20} /><span>Добавить</span></button> : null}
-      {!rack.units.length && !edit ? <div className="empty" style={{ gridColumn: '1 / -1', padding: 36 }}>Пусто. Включите «Редактирование», чтобы добавить сюда оборудование.</div> : null}
+      {!rack.units.length ? <div className="empty" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+        {edit ? 'Нажмите «Оборудование», чтобы добавить' : 'Пусто. Включите «Редактирование».'}</div> : null}
     </div>
   </div>;
 }

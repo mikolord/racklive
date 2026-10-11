@@ -339,3 +339,10 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .place-opt { display: flex; align-items: center; gap: 12px; text-align: left; padding: 12px 14px; border-radius: 13px; border: 1.5px solid var(--line); background: var(--bg2); cursor: pointer; color: var(--text); }
 .place-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .place-opt b { display: block; font-size: 14.5px; } .place-opt small { color: var(--text2); font-size: 12.5px; }
+
+/* draggable box tiles */
+.tiles-canvas { position: relative; margin-top: 14px; border-radius: 12px; min-height: 120px; }
+.tiles-canvas.editing { background-image: radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0); background-size: 226px 76px; }
+.tiles-canvas.editing .tile.free { cursor: grab; }
+.tile.free { position: absolute; margin: 0; touch-action: none; user-select: none; transition: box-shadow .15s; }
+.tile.free.grabbing { cursor: grabbing; box-shadow: var(--shadow-lg); z-index: 5; opacity: .95; transition: none; }
