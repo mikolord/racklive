@@ -68,7 +68,7 @@ function App() {
     : <div className="dim">Загрузка…</div>}</div>;
   if (data.setupNeeded) return <AuthScreen setup title={data.settings && data.settings.title} onDone={refresh} />;
   if (tg === 'pending' && !data.authed) return <div className="auth"><div className="app-bg" /><div className="dim">Вход через Telegram…</div></div>;
-  if ((data.needLogin && !data.devices) || login) return <AuthScreen title={data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''}
+  if ((data.needLogin && !data.devices) || login) return <AuthScreen title={data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin}
     onDone={() => { setLogin(false); refresh(); }} />;
 
   const admin = !!data.authed;

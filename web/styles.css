@@ -436,3 +436,11 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .guide summary { cursor: pointer; font-weight: 650; color: var(--accent); }
 .guide ol, .guide ul { margin: 8px 0 4px; padding-left: 20px; } .guide li { margin-bottom: 5px; }
 .guide code { font-family: var(--mono); font-size: 12px; background: var(--fill); padding: 1px 5px; border-radius: 5px; }
+
+/* Telegram login / link */
+.tg-flow { display: flex; flex-direction: column; gap: 10px; align-items: stretch; padding: 12px; border-radius: 13px; background: color-mix(in srgb, #229ed9 10%, transparent); border: 1px solid color-mix(in srgb, #229ed9 30%, transparent); font-size: 14px; }
+.btn.tg-btn { background: #229ed9; color: #fff; justify-content: center; gap: 8px; text-decoration: none; }
+.btn.tg-btn:hover { background: #1b8bc0; }
+.or-line { display: flex; align-items: center; gap: 10px; color: var(--text3); font-size: 12.5px; margin: 2px 0; }
+.or-line::before, .or-line::after { content: ''; flex: 1; height: .5px; background: var(--line); }
+.tg-linked { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--bg2); border: .5px solid var(--line); }

@@ -3,7 +3,7 @@ FROM python:3.12-alpine
 RUN apk add --no-cache iputils tzdata openssh-client sshpass
 WORKDIR /app
 COPY rackd ./rackd
-COPY web/index.html web/styles.css web/app.js web/agent.py web/icon.svg web/icon-512.png web/manifest.json ./web/
+COPY web/index.html web/styles.css web/app.js web/agent.py web/icon.svg web/icon-512.png web/icon-192.png web/apple-touch-icon.png web/manifest.json ./web/
 COPY web/vendor ./web/vendor
 ENV RL_DATA=/data RL_WEB=/app/web RL_PORT=8080 PYTHONUNBUFFERED=1
 VOLUME /data

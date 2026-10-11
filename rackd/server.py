@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, auth, topology
+from . import alerts, analysis, auth, tgbot, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -30,6 +30,7 @@ class App:
         self.retried = set()
         self._view_cache = {}
         self.alerter = alerts.Alerter(self.store)
+        self.tgbot = tgbot.TgBot(self)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -187,6 +188,8 @@ class App:
             health = None
         return {'notify': alerts.public(cfg.get('notify')) if authed else None,
                 'notifyStatus': self.alerter.status if authed else None,
+                'tgBot': {'username': self.tgbot.username, 'error': self.tgbot.error} if authed else None,
+                'tgLogin': self.tgbot.login_available(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
@@ -291,7 +294,8 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = APP.store.cfg
                 if not a and (not cfg.get('auth') or not cfg['settings'].get('publicView')):
                     return self.send({'authed': False, 'setupNeeded': not cfg.get('auth'), 'needLogin': bool(cfg.get('auth')),
-                                      'settings': {'title': cfg['settings'].get('title')}, 'version': VERSION})
+                                      'settings': {'title': cfg['settings'].get('title')}, 'version': VERSION,
+                                      'tgLogin': APP.tgbot.login_available()})
                 return self.send(APP.view(a))
             m = re.match(r'/api/history/(\w+)$', path)
             if m:
@@ -372,6 +376,31 @@ class Handler(BaseHTTPRequestHandler):
                 st.add_event(None, 'Вход', 'info', f'вход через Telegram: {who} (id {user.get("id")})')
                 tok = APP.sessions.create()
                 return self.send({'ok': True, 'token': tok}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+            if path == '/api/tgauth/start' and method == 'POST':
+                # «Войти через Telegram» on the login page: a one-time code → the bot asks «это вы?»
+                ua = self.headers.get('User-Agent') or ''
+                short = next((b for b in ('Edg', 'YaBrowser', 'Firefox', 'Chrome', 'Safari') if b in ua), 'браузер')
+                short = {'Edg': 'Edge', 'YaBrowser': 'Яндекс Браузер'}.get(short, short) + next((f', {o}' for o in ('iPhone', 'Android', 'Windows', 'Mac', 'Linux') if o in ua), '')
+                try:
+                    code, url = APP.tgbot.new_code('login', self.client_ip(), short)
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                return self.send({'ok': True, 'code': code, 'url': url})
+            if path == '/api/tgauth/poll' and method == 'POST':
+                code = str(body.get('code') or '')
+                c = APP.tgbot.check(code)
+                if not c:
+                    return self.send({'status': 'expired'})
+                if c['status'] == 'ok' and c['kind'] == 'login':
+                    APP.tgbot.consume(code)
+                    u = c['user'] or {}
+                    st.add_event(None, 'Вход', 'info', f"вход через Telegram: {u.get('first_name', '')} (id {u.get('id')}) с адреса {c['ip']}")
+                    tok = APP.sessions.create()
+                    return self.send({'status': 'ok', 'token': tok}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+                if c['status'] == 'ok' and c['kind'] == 'link':
+                    APP.tgbot.consume(code)
+                    return self.send({'status': 'ok', 'user': c['user'], 'telegram': alerts.public(st.cfg.get('notify'))['telegram']})
+                return self.send({'status': c['status']})
             if path == '/api/logout' and method == 'POST':
                 APP.sessions.drop(self.token())
                 return self.send({'ok': True}, headers={'Set-Cookie': self.cookie('', 0)})
@@ -431,6 +460,16 @@ class Handler(BaseHTTPRequestHandler):
                         st.cfg['map'][k] = body[k]
                 st.save()
                 return self.send({'ok': True})
+            if path == '/api/tglink/start' and method == 'POST':
+                try:
+                    code, url = APP.tgbot.new_code('link', self.client_ip())
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                return self.send({'ok': True, 'code': code, 'url': url})
+            if path == '/api/tglink/remove' and method == 'POST':
+                APP.tgbot.unlink(body.get('id'))
+                st.add_event(None, 'Telegram', 'info', f"отвязан аккаунт {body.get('id')}")
+                return self.send({'ok': True, 'telegram': alerts.public(st.cfg.get('notify'))['telegram']})
             if path in ('/api/notify', '/api/notify/test') and method in ('PUT', 'POST'):
                 # empty secret fields in the form mean "keep the saved one"
                 cur = alerts.merged(st.cfg.get('notify'))
@@ -439,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not (body.get(ch) or {}).get(key):
                         new[ch][key] = cur[ch][key]
                     new[ch].pop(key + 'Set', None)
+                new['telegram']['linked'] = cur['telegram'].get('linked') or []      # changed only by link / unlink
                 menu = APP.alerter.setup_menu(new)                   # bot menu button → mini app (None if Telegram is off)
                 if path == '/api/notify/test':
                     res = APP.alerter.send(['✅ Проверка уведомлений Rack Live — если вы это видите, всё настроено.'], cfg=new) or {}

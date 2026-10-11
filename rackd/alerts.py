@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 
 DEFAULT_NOTIFY = {
     # webapp: public https address of Rack Live → bot menu button + «Открыть» under alerts; allowed: who may log in from Telegram
-    'telegram': {'enabled': False, 'token': '', 'chat': '', 'api': '', 'webapp': '', 'allowed': ''},
+    'telegram': {'enabled': False, 'token': '', 'chat': '', 'api': '', 'webapp': '', 'allowed': '', 'linked': []},
     'email': {'enabled': False, 'host': '', 'port': '587', 'user': '', 'password': '', 'from': '', 'to': '', 'tls': True},
     'webhook': {'enabled': False, 'url': ''},
     'url': '',
@@ -227,11 +227,11 @@ class Alerter:
         return results
 
     @staticmethod
-    def tg_call(c, method, payload):
+    def tg_call(c, method, payload, timeout=15):
         api = (c.get('api') or 'https://api.telegram.org').rstrip('/')
         req = urllib.request.Request(f"{api}/bot{c['token']}/{method}", data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
         try:
-            return json.loads(urllib.request.urlopen(req, timeout=15).read() or b'{}')
+            return json.loads(urllib.request.urlopen(req, timeout=timeout).read() or b'{}')
         except urllib.error.HTTPError as e:
             detail = json.loads(e.read() or b'{}').get('description', '')
             raise ValueError({401: 'неверный токен бота', 404: 'неверный токен бота',

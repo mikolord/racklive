@@ -10,10 +10,50 @@ const RULES = [
   ['cpu', 'Процессор загружен', 'больше чем на … дольше …', [['pct', '%'], ['minutes', 'мин']]],
   ['warning', 'Любое «требует внимания»', 'статус «внимание» дольше', [['minutes', 'мин']]],
 ];
+/* Telegram confirm flow for login (from the login page) and linking (from settings) */
+function TgFlow({ kind, onOk, onClose }) {
+  const [st, setSt] = useState({ phase: 'start' });           // start | wait | denied | expired | error
+  useEffect(() => {
+    let alive = true, timer = null;
+    api(kind === 'link' ? '/api/tglink/start' : '/api/tgauth/start', { method: 'POST', body: {} }).then(r => {
+      if (!alive) return; setSt({ phase: 'wait', url: r.url, code: r.code });
+      try { window.open(r.url, '_blank'); } catch (e) { }
+      const poll = async () => {
+        try {
+          const p = await api('/api/tgauth/poll', { method: 'POST', body: { code: r.code } });
+          if (!alive) return;
+          if (p.status === 'ok') { if (p.token) ssSet('rl_tok', p.token); onOk(p); return; }
+          if (p.status === 'denied' || p.status === 'expired') { setSt(s => ({ ...s, phase: p.status })); return; }
+          if (p.status === 'asked') setSt(s => ({ ...s, asked: true }));
+        } catch (e) { }
+        timer = setTimeout(poll, 2000);
+      };
+      timer = setTimeout(poll, 1500);
+    }).catch(e => alive && setSt({ phase: 'error', msg: e.message }));
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
+  return <div className="tg-flow">
+    {st.phase === 'start' ? <div className="dim">Готовлю ссылку…</div> : null}
+    {st.phase === 'wait' ? <>
+      <div style={{ fontWeight: 650 }}>{kind === 'link' ? 'Откройте бота и нажмите «Start» — аккаунт привяжется сам'
+        : st.asked ? 'Бот спросил «Это вы?» — нажмите «Да, войти»' : 'Откройте бота и нажмите «Start», затем подтвердите вход'}</div>
+      <a className="btn primary tg-btn" href={st.url} target="_blank" rel="noreferrer"><Icon name="send" size={17} />Открыть Telegram</a>
+      <div className="dim3 row" style={{ gap: 8, fontSize: 12.5 }}><span className="spin-dot" />жду подтверждения… ссылка действует 10 минут</div></> : null}
+    {st.phase === 'denied' ? <div style={{ color: 'var(--red)' }}>Вход отклонён или аккаунт не привязан — подробности бот написал в Telegram.</div> : null}
+    {st.phase === 'expired' ? <div style={{ color: 'var(--red)' }}>Время вышло — попробуйте ещё раз.</div> : null}
+    {st.phase === 'error' ? <div style={{ color: 'var(--red)' }}>{st.msg}</div> : null}
+    {onClose ? <button type="button" className="btn" onClick={onClose}>Отмена</button> : null}
+  </div>;
+}
+
 function NotifyCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const [n, setN] = useState(() => JSON.parse(JSON.stringify(data.notify)));
   const [res, setRes] = useState(null);
+  const [linking, setLinking] = useState(false);
+  const bot = data.tgBot || {};
+  const syncTg = t => setN(x => ({ ...x, telegram: { ...x.telegram, chat: t.chat, allowed: t.allowed, linked: t.linked, enabled: true } }));
+  const unlink = async id => { try { const r = await api('/api/tglink/remove', { method: 'POST', body: { id } }); syncTg(r.telegram); toast('Аккаунт отвязан'); refresh(); } catch (e) { toast(e.message, true); } };
   const ch = (c, k, v) => setN(x => ({ ...x, [c]: { ...x[c], [k]: v } }));
   const rule = (r, k, v) => setN(x => ({ ...x, rules: { ...x.rules, [r]: { ...x.rules[r], [k]: v } } }));
   const save = async () => { try { const r = await api('/api/notify', { method: 'PUT', body: n });
@@ -35,13 +75,27 @@ function NotifyCard() {
         <div className="card-title">Куда отправлять</div>
         {chan('telegram', 'Telegram', <>
           <details className="guide"><summary>Как подключить — по шагам</summary><ol>
-            <li>В Telegram откройте <b>@BotFather</b> → <code>/newbot</code> → придумайте имя → он пришлёт <b>токен</b> вида <code>123456:ABC…</code>. Вставьте его ниже.</li>
-            <li>Найдите своего нового бота и нажмите <b>Start</b> (или напишите <code>/start</code>) — без этого бот не сможет вам писать.</li>
-            <li>Узнайте свой ID: напишите <b>@userinfobot</b> — он ответит числом. Вставьте его в «Chat ID».</li>
-            <li>Нажмите <b>«Отправить тест»</b> — в боте должно прийти сообщение. Затем <b>«Сохранить»</b>.</li>
+            <li>В Telegram откройте <b>@BotFather</b> → <code>/newbot</code> → придумайте имя → он пришлёт <b>токен</b> вида <code>123456:ABC…</code>. Вставьте его ниже и нажмите <b>«Сохранить»</b>.</li>
+            <li>Нажмите <b>«Привязать Telegram»</b> → откроется ваш бот → <b>Start</b>. Готово: ID впишется сам, уведомления пойдут вам, а на странице входа появится «Войти через Telegram».</li>
+            <li>Нажмите <b>«Отправить тест»</b> — в боте должно прийти сообщение.</li>
+            <li>Красивая аватарка боту: скачайте её кнопкой ниже → <b>@BotFather</b> → <code>/setuserpic</code> → выберите бота → отправьте картинку.</li>
           </ol></details>
           {inp('telegram', 'token', 'Токен бота', { secret: true, hint: 'От @BotFather' })}
-          {inp('telegram', 'chat', 'Chat ID', { ph: '123456789', hint: 'Ваш ID от @userinfobot. Несколько — через запятую; можно ID группы (начинается с минуса)' })}
+          <div className="tg-linked">
+            <div className="row"><b className="grow" style={{ fontSize: 14 }}>Привязанные аккаунты</b>
+              {bot.username ? <span className="badge online">бот @{bot.username}</span> : null}</div>
+            {(n.telegram.linked || []).map(l => <div className="li" key={l.id}><div className="ico-circle"><Icon name="send" size={16} /></div>
+              <div className="grow" style={{ minWidth: 0 }}><b style={{ fontSize: 14 }}>{l.name || l.id}</b><div className="dim" style={{ fontSize: 12 }}>{l.username ? '@' + l.username + ' · ' : ''}ID {l.id}</div></div>
+              <Btn size="sm" onClick={() => unlink(l.id)}>Отвязать</Btn></div>)}
+            {linking ? <TgFlow kind="link" onClose={() => setLinking(false)}
+              onOk={p => { setLinking(false); syncTg(p.telegram); toast('Telegram привязан: ' + ((p.user && p.user.first_name) || '')); refresh(); }} />
+              : !n.telegram.tokenSet ? <div className="dim3" style={{ fontSize: 12.5 }}>Вставьте токен и нажмите «Сохранить» — появится кнопка привязки.</div>
+              : bot.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>Бот: {bot.error}</div>
+              : !bot.username ? <div className="dim3" style={{ fontSize: 12.5 }}>Подключаюсь к боту… (до 15 секунд после сохранения)</div>
+              : <div className="row wrap"><Btn icon="send" kind="primary" onClick={() => setLinking(true)}>Привязать Telegram</Btn>
+                <a className="btn" href="/icon-512.png" download="rack-live-bot.png"><Icon name="download" size={16} />Аватар для бота</a></div>}
+          </div>
+          {inp('telegram', 'chat', 'Chat ID (заполняется привязкой)', { ph: '123456789', hint: 'Можно вручную: ваш ID (бот пришлёт его на /start) или ID группы, начинается с минуса. Несколько — через запятую' })}
           <details className="guide"><summary>Открывать Rack Live прямо в Telegram (мини-приложение)</summary>
             <div>У бота появится кнопка <b>«Rack Live»</b>, а под каждым уведомлением — <b>«Открыть»</b>. Вход — по вашему аккаунту Telegram, без пароля.</div>
             <div style={{ marginTop: 6 }}><b>Нужно одно:</b> адрес Rack Live в интернете по <b>https://</b> (Telegram по-другому не открывает). Как его получить:</div>
@@ -156,7 +210,8 @@ function EventsView() {
     <EventsList events={ev} /></>;
 }
 
-function AuthScreen({ setup, title, onDone, note }) {
+function AuthScreen({ setup, title, onDone, note, tgLogin }) {
+  const [tgMode, setTgMode] = useState(false);
   const [pw, setPw] = useState(''); const [pw2, setPw2] = useState(''); const [t, setT] = useState(title || 'Серверный шкаф');
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   const submit = async e => {
@@ -177,6 +232,9 @@ function AuthScreen({ setup, title, onDone, note }) {
       {setup ? <Field label="Ещё раз"><input className="input" type="password" value={pw2} onChange={e => setPw2(e.target.value)} /></Field> : null}
       {err ? <div style={{ color: 'var(--red)', fontSize: 14 }}>{err}</div> : null}
       <button className={'btn primary' + (busy ? ' busy' : '')} type="submit" style={{ padding: 13, marginTop: 4 }}>{setup ? 'Начать' : 'Войти'}</button>
+      {!setup && tgLogin ? (tgMode ? <TgFlow kind="login" onOk={() => onDone()} onClose={() => setTgMode(false)} />
+        : <><div className="or-line"><span>или</span></div>
+          <button type="button" className="btn tg-btn" style={{ padding: 13 }} onClick={() => setTgMode(true)}><Icon name="send" size={17} />Войти через Telegram</button></>) : null}
     </div>
   </form></div>;
 }
