@@ -12,6 +12,7 @@ VERSION = '2.0.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
+DEMO = os.environ.get('RL_DEMO', '').lower() in ('1', 'true', 'yes')     # demo office, no login, nothing real is touched
 
 
 def log(*a):
@@ -149,7 +150,7 @@ class App:
             devices.append(pd)
         topo = topology.build(cfg['devices'], self.states, cfg['rack']['units'], cfg['map'].get('links'),
                               cfg['settings'].get('showClients', True), REGISTRY)
-        return {'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'),
+        return {'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'rack': cfg['rack'], 'map': cfg['map'], 'topology': topo,
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
@@ -174,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
         return c['rl_session'].value if 'rl_session' in c else None
 
     def authed(self):
-        return APP.sessions.valid(self.token())
+        return DEMO or APP.sessions.valid(self.token())
 
     def body(self):
         n = int(self.headers.get('Content-Length') or 0)
@@ -437,6 +438,11 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global APP
     APP = App()
+    if DEMO:
+        from .drivers import demo
+        demo.seed(APP.store)
+        APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
+        log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()
     port = int(os.environ.get('RL_PORT', '8080'))
     log(f'Rack Live {VERSION}: http://0.0.0.0:{port}  data={DATA}  drivers={", ".join(REGISTRY)}')

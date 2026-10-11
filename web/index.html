@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="icon-512.png">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css">
-  <script>try{var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);
+  <script>try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);
   if(t!=='auto'){document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.removeAttribute('media');m.setAttribute('content',r==='dark'?'#000000':'#f2f2f7')})}}catch(e){}</script>
 </head>
 <body>

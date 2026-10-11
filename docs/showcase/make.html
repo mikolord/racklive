@@ -1,0 +1,94 @@
+﻿<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>showcase</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, sans-serif; }
+  .stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; color: #f5f5f7;
+    background: radial-gradient(1200px 700px at 12% -10%, rgba(10,132,255,.42), transparent 60%),
+                radial-gradient(1000px 650px at 105% 20%, rgba(191,90,242,.32), transparent 60%),
+                radial-gradient(900px 600px at 50% 120%, rgba(48,209,88,.20), transparent 60%), #05060a; }
+  .stage.light { color: #1c1c1e; background: radial-gradient(1200px 700px at 10% -10%, rgba(10,132,255,.25), transparent 60%),
+                radial-gradient(1000px 650px at 105% 20%, rgba(191,90,242,.18), transparent 60%), #eef0f6; }
+  .grid { position: absolute; inset: 0; background: radial-gradient(circle at 1px 1px, rgba(255,255,255,.07) 1px, transparent 0) 0 0/28px 28px; }
+  .light .grid { background: radial-gradient(circle at 1px 1px, rgba(0,0,0,.06) 1px, transparent 0) 0 0/28px 28px; }
+  .win { position: absolute; border-radius: 16px; overflow: hidden; background: #111;
+    box-shadow: 0 50px 120px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.10); }
+  .light .win { box-shadow: 0 40px 100px rgba(30,40,80,.25), 0 0 0 1px rgba(0,0,0,.08); }
+  .bar { height: 38px; background: #1c1c1f; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .bar.l { background: #f2f2f6; border-color: rgba(0,0,0,.07); }
+  .bar i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .bar .url { margin: 0 auto; width: 46%; height: 24px; border-radius: 7px; background: rgba(255,255,255,.07); color: rgba(235,235,245,.55);
+    font-size: 12.5px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .bar.l .url { background: rgba(0,0,0,.05); color: rgba(60,60,67,.6); }
+  .win img { display: block; width: 100%; }
+  .phone { position: absolute; border-radius: 58px; padding: 12px; background: linear-gradient(145deg, #3a3a3e, #121214);
+    box-shadow: 0 50px 110px rgba(0,0,0,.6), inset 0 0 0 2px rgba(255,255,255,.12); }
+  .phone .scr { position: relative; border-radius: 46px; overflow: hidden; background-repeat: no-repeat; }
+  .phone .island { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 34%; height: 30px; border-radius: 20px; background: #000; z-index: 2; }
+  .title { position: absolute; display: flex; align-items: center; gap: 18px; }
+  .logo { width: 74px; height: 74px; border-radius: 20px; background: linear-gradient(145deg, #0a84ff, #5e5ce6); display: grid; place-items: center;
+    box-shadow: 0 14px 40px rgba(10,132,255,.45); }
+  h1 { font-size: 60px; letter-spacing: -1.6px; font-weight: 800; line-height: 1; }
+  .sub { font-size: 22px; opacity: .72; margin-top: 8px; letter-spacing: -.2px; }
+  .chips { position: absolute; display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip { font-size: 15px; font-weight: 600; padding: 8px 14px; border-radius: 30px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); backdrop-filter: blur(10px); }
+  .light .chip { background: rgba(255,255,255,.7); border-color: rgba(0,0,0,.06); }
+  .cap { position: absolute; font-size: 34px; font-weight: 750; letter-spacing: -.8px; }
+  .cap small { display: block; font-size: 18px; font-weight: 500; opacity: .65; letter-spacing: -.1px; margin-top: 6px; }
+  .pcap { position: absolute; text-align: center; font-size: 19px; font-weight: 650; opacity: .9; }
+</style></head>
+<body><div id="s" class="stage"><div class="grid"></div></div>
+<script>
+const RAW = '../raw/';
+const LOGO = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M5 2h14v20H5zM5 7h14M5 12h14M5 17h14"/><path d="M8 4.5h.01M8 9.5h.01M8 14.5h.01M8 19.5h.01" stroke="#30d158" stroke-width="2.6"/></svg>';
+const s = document.getElementById('s');
+const add = h => { s.insertAdjacentHTML('beforeend', h); };
+function win(img, x, y, w, light, url) {
+  add(`<div class="win" style="left:${x}px;top:${y}px;width:${w}px"><div class="bar ${light ? 'l' : ''}"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+    <div class="url">🔒 ${url || 'racklive.local'}</div><span style="width:52px"></span></div><img src="${RAW + img}"></div>`);
+}
+// phone: shows the n-th 390x844 screen from mobile3_dark.png (3 screens, 400px apart)
+function phone(n, x, y, w) {
+  const k = (w - 24) / 390, SB = 50 * k, H = 844 * k - 20 * k;
+  const status = `<div style="position:absolute;top:0;left:0;right:0;height:${SB}px;display:flex;align-items:center;justify-content:space-between;
+      padding:${6 * k}px ${30 * k}px 0;font-weight:600;font-size:${15 * k}px;color:#fff;z-index:1">
+      <span>9:41</span><span style="display:flex;gap:${5 * k}px;align-items:center">
+      <svg width="${17 * k}" height="${11 * k}" viewBox="0 0 17 11"><rect x="0" y="7" width="3" height="4" rx="1" fill="#fff"/><rect x="4.5" y="5" width="3" height="6" rx="1" fill="#fff"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" fill="#fff"/><rect x="13.5" y="0" width="3" height="11" rx="1" fill="#fff"/></svg>
+      <svg width="${16 * k}" height="${11 * k}" viewBox="0 0 16 11"><path d="M8 10.5l2.2-2.6a3.3 3.3 0 0 0-4.4 0zM3.3 5.6a7 7 0 0 1 9.4 0l1.4-1.6a9.2 9.2 0 0 0-12.2 0zM.4 2.6a11.2 11.2 0 0 1 15.2 0" fill="#fff" stroke="#fff" stroke-width=".6"/></svg>
+      <span style="width:${25 * k}px;height:${12 * k}px;border:${1.2 * k}px solid rgba(255,255,255,.5);border-radius:${4 * k}px;padding:${1.5 * k}px;display:inline-block">
+      <span style="display:block;height:100%;width:80%;background:#fff;border-radius:${2 * k}px"></span></span></span></div>`;
+  add(`<div class="phone" style="left:${x}px;top:${y}px;width:${w}px"><div class="scr" style="width:${w - 24}px;height:${H + SB}px;background-color:#000;
+    background-image:url(${RAW}mobile3_dark.png);background-size:${1190 * k}px ${844 * k}px;background-position:${-400 * n * k}px ${SB}px">${status}<div class="island"></div></div></div>`);
+}
+function title(x, y, size) {
+  add(`<div class="title" style="left:${x}px;top:${y}px"><div class="logo">${LOGO}</div><div><h1 style="font-size:${size || 60}px">Rack Live</h1>
+    <div class="sub">Серверный шкаф и карта сети с живыми данными</div></div></div>`);
+}
+function chips(x, y, list) { add(`<div class="chips" style="left:${x}px;top:${y}px">${list.map(c => `<span class="chip">${c}</span>`).join('')}</div>`); }
+function cap(x, y, t, sub) { add(`<div class="cap" style="left:${x}px;top:${y}px">${t}${sub ? `<small>${sub}</small>` : ''}</div>`); }
+
+const v = location.hash.slice(1);
+if (v === 'hero') {
+  title(90, 70);
+  chips(90, 190, ['Keenetic', 'TP-Link', 'SNMP', 'Synology', 'Home Assistant', 'OpenWrt', 'Docker', 'PWA']);
+  win('map_dark.png', 470, 270, 1060);
+  phone(0, 90, 262, 330);
+} else if (v === 'rack') {
+  cap(90, 60, 'Шкаф', 'Юниты с живыми данными, светодиоды портов, проблемы и события');
+  win('rack_dark.png', 90, 180, 1420);
+} else if (v === 'map') {
+  cap(90, 60, 'Карта сети', 'Строится сама: кабели от портов, PoE, VLAN, Wi-Fi-клиенты у своих точек');
+  win('map_dark.png', 90, 180, 1420);
+} else if (v === 'ports') {
+  cap(90, 60, 'Порты и трафик', 'Лицевая панель коммутатора, PoE в ваттах, VLAN, график за сутки, перезапуск PoE');
+  win('ports_dark.png', 90, 180, 1420);
+} else if (v === 'light') {
+  s.classList.add('light');
+  cap(90, 60, 'Светлая тема', 'Карточки устройств, графики CPU, памяти и температуры');
+  win('devices_light.png', 90, 190, 900, true);
+  win('nas_light.png', 610, 330, 900, true);
+} else if (v === 'mobile') {
+  cap(90, 60, 'На телефоне — как приложение', 'PWA: добавьте на экран «Домой». Тёмная и светлая тема, жесты, плавающий док');
+  [[0, 'Шкаф'], [1, 'Карта сети'], [2, 'Порт коммутатора']].forEach(([n, t], i) => { phone(n, 230 + i * 400, 190, 340); add(`<div class="pcap" style="left:${230 + i * 400}px;top:948px;width:340px">${t}</div>`); });
+}
+</script></body></html>

@@ -28,7 +28,7 @@ function DevicesView() {
     {(sites.length ? [...sites, ''] : ['']).map(site => {
       const items = list.filter(d => (d.site || '') === site); if (!items.length) return null;
       return <div key={site || '_'} style={{ marginBottom: 20 }}>
-        {sites.length ? <div className="card-title" style={{ margin: '4px 2px 10px' }}><Icon name="globe" size={14} />{site || 'Без площадки'}</div> : null}
+        {sites.length ? <div className="card-title" style={{ margin: '4px 2px 10px' }}><Icon name="globe" size={14} />{site || 'Локальная сеть'}</div> : null}
         <div className="grid cards">{items.map(d => { const st = d.state || {}; const s = st.summary || {};
           return <div key={d.id} className="card dev-card fade-in" onClick={() => openDevice(d)}>
             <div className="row"><KindIcon kind={d.kind} size={42} round={12} />
@@ -55,7 +55,7 @@ function DeviceEditor({ device, onClose }) {
 
   if (!drvId) return <Modal title="Новое устройство" wide onClose={onClose}>
     <div className="dim" style={{ fontSize: 14 }}>Как подключиться к устройству?</div>
-    <div className="driver-pick">{data.drivers.map(d => <button key={d.id} onClick={() => setDrvId(d.id)}>
+    <div className="driver-pick">{data.drivers.filter(d => !d.hidden).map(d => <button key={d.id} onClick={() => setDrvId(d.id)}>
       <KindIcon kind={d.kind} size={38} /><div><b>{d.title}</b><small>{d.description}</small></div></button>)}</div>
   </Modal>;
 

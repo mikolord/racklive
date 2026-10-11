@@ -13,3 +13,7 @@ shot_*.png
 local.*
 *.zip
 .DS_Store
+
+# raw captures used to build the showcase images
+docs/raw/
+

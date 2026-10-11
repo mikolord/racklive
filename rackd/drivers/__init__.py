@@ -28,6 +28,7 @@ class Driver:
     description = ''
     fields = []               # form fields shown in "Add device"
     actions = []              # actions this driver can perform
+    hidden = False            # not offered in "Add device" (demo drivers)
 
     def poll(self, cfg):
         raise NotImplementedError
@@ -38,7 +39,7 @@ class Driver:
     @classmethod
     def schema(cls):
         return {'id': cls.id, 'title': cls.title, 'kind': cls.kind, 'description': cls.description,
-                'fields': cls.fields, 'actions': cls.actions}
+                'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden}
 
 
 REGISTRY = {}

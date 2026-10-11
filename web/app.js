@@ -665,16 +665,17 @@ function TrafficChart({
   };
   const ticks = [0, .25, .5, .75, 1].map(f => t0 + (t1 - t0) * f);
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "row",
+    className: "row wrap",
     style: {
-      gap: 16,
+      gap: '4px 16px',
       fontSize: 13,
       marginBottom: 6
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "row",
     style: {
-      gap: 6
+      gap: 6,
+      whiteSpace: 'nowrap'
     }
   }, /*#__PURE__*/React.createElement("i", {
     style: {
@@ -686,7 +687,8 @@ function TrafficChart({
   }), "\u041A \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0443 ", /*#__PURE__*/React.createElement("b", null, fmt.bps(hp.tx))), /*#__PURE__*/React.createElement("span", {
     className: "row",
     style: {
-      gap: 6
+      gap: 6,
+      whiteSpace: 'nowrap'
     }
   }, /*#__PURE__*/React.createElement("i", {
     style: {
@@ -698,7 +700,10 @@ function TrafficChart({
   }), "\u041E\u0442 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430 ", /*#__PURE__*/React.createElement("b", null, fmt.bps(hp.rx))), /*#__PURE__*/React.createElement("span", {
     className: "grow"
   }), /*#__PURE__*/React.createElement("span", {
-    className: "dim3"
+    className: "dim3",
+    style: {
+      whiteSpace: 'nowrap'
+    }
   }, new Date(hp.t * 1000).toLocaleTimeString('ru-RU', {
     hour: '2-digit',
     minute: '2-digit'
@@ -2423,9 +2428,10 @@ function layoutMap(data, collapsed) {
     h: M.NH
   };
   const remotes = (kids['inet'] || []).filter(e => e.kind === 'remote').map(e => e.target);
+  // remote devices go to the left of the internet node, so they never collide with the columns on the right
   remotes.forEach((id, i) => {
     pos[id] = {
-      x: (pos.inet ? pos.inet.x : 0) + (M.NW + 40) * (i + 1),
+      x: (pos.inet ? pos.inet.x : 0) - (M.NW + 50) * (i + 1),
       y: topY,
       w: M.NW,
       h: M.NH
@@ -2489,6 +2495,18 @@ function edgePath(e, L) {
       d: `M${sx},${sy} C${sx},${sy + 60} ${tx + 70},${ty - 40} ${tx + 2},${ty}`,
       lx: tx + 34,
       ly: (sy + ty) / 2
+    };
+  }
+  if (e.source === 'inet' && b.x + b.w <= a.x) {
+    // remote device to the left of the internet node
+    const sx = a.x,
+      sy = a.y + a.h / 2,
+      tx = b.x + b.w,
+      ty = b.y + b.h / 2;
+    return {
+      d: `M${sx},${sy} C${sx - 30},${sy} ${tx + 30},${ty} ${tx},${ty}`,
+      lx: (sx + tx) / 2,
+      ly: sy - 8
     };
   }
   if (e.source === 'inet') {
@@ -2623,7 +2641,7 @@ function MapView() {
       w: 100,
       h: 100
     };
-    const x1 = Math.min(-110, ...ps.map(p => p.x)),
+    const x1 = Math.min(-110, ...ps.map(p => p.x)) - 20,
       y1 = Math.min(-60, ...ps.map(p => p.y)) - 20;
     const x2 = Math.max(...ps.map(p => p.x + p.w)) + 20,
       y2 = Math.max(data.rack.totalU * M.RU, ...ps.map(p => p.y + p.h)) + 30;
@@ -3321,7 +3339,7 @@ function DevicesView() {
     }, /*#__PURE__*/React.createElement(Icon, {
       name: "globe",
       size: 14
-    }), site || 'Без площадки') : null, /*#__PURE__*/React.createElement("div", {
+    }), site || 'Локальная сеть') : null, /*#__PURE__*/React.createElement("div", {
       className: "grid cards"
     }, items.map(d => {
       const st = d.state || {};
@@ -3423,7 +3441,7 @@ function DeviceEditor({
     }
   }, "\u041A\u0430\u043A \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u044C\u0441\u044F \u043A \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0443?"), /*#__PURE__*/React.createElement("div", {
     className: "driver-pick"
-  }, data.drivers.map(d => /*#__PURE__*/React.createElement("button", {
+  }, data.drivers.filter(d => !d.hidden).map(d => /*#__PURE__*/React.createElement("button", {
     key: d.id,
     onClick: () => setDrvId(d.id)
   }, /*#__PURE__*/React.createElement(KindIcon, {

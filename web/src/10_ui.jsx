@@ -124,10 +124,10 @@ function TrafficChart({ points }) {
     let best = 0; pts.forEach((p, i) => { if (Math.abs(p.t - t) < Math.abs(pts[best].t - t)) best = i; }); setHover(best); };
   const ticks = [0, .25, .5, .75, 1].map(f => t0 + (t1 - t0) * f);
   return <div>
-    <div className="row" style={{ gap: 16, fontSize: 13, marginBottom: 6 }}>
-      <span className="row" style={{ gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--accent)' }} />К устройству <b>{fmt.bps(hp.tx)}</b></span>
-      <span className="row" style={{ gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--green)' }} />От устройства <b>{fmt.bps(hp.rx)}</b></span>
-      <span className="grow" /><span className="dim3">{new Date(hp.t * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+    <div className="row wrap" style={{ gap: '4px 16px', fontSize: 13, marginBottom: 6 }}>
+      <span className="row" style={{ gap: 6, whiteSpace: 'nowrap' }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--accent)' }} />К устройству <b>{fmt.bps(hp.tx)}</b></span>
+      <span className="row" style={{ gap: 6, whiteSpace: 'nowrap' }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--green)' }} />От устройства <b>{fmt.bps(hp.rx)}</b></span>
+      <span className="grow" /><span className="dim3" style={{ whiteSpace: 'nowrap' }}>{new Date(hp.t * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
     </div>
     <svg className="chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
       {[.25, .5, .75].map(f => <line key={f} x1={0} x2={W} y1={Y(max / 1.1 * f)} y2={Y(max / 1.1 * f)} stroke="var(--line)" />)}

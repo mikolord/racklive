@@ -66,7 +66,8 @@ function layoutMap(data, collapsed) {
   const topY = hasRack ? -170 : Math.min(0, ...Object.values(pos).map(p => p.y)) - 170;
   if (inet) pos['inet'] = { x: (hasRack ? M.RW / 2 : M.NW / 2) - M.NW / 2, y: topY, w: M.NW, h: M.NH };
   const remotes = (kids['inet'] || []).filter(e => e.kind === 'remote').map(e => e.target);
-  remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) + (M.NW + 40) * (i + 1), y: topY, w: M.NW, h: M.NH }; col[id] = -1; });
+  // remote devices go to the left of the internet node, so they never collide with the columns on the right
+  remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) - (M.NW + 50) * (i + 1), y: topY, w: M.NW, h: M.NH }; col[id] = -1; });
   // nodes never reached (shouldn't happen) go to a bottom row
   let stray = 0; Object.keys(nodes).forEach(id => { if (!pos[id] && !hiddenIds.has(id)) {
     const [w, h] = sizeOf(id); pos[id] = { x: colX(1) + stray * (w + 20), y: total * M.RU + 80, w, h }; stray++; } });
@@ -86,6 +87,10 @@ function edgePath(e, L) {
   if (e.source === 'inet' && b.rack) {
     const sx = a.x + a.w / 2, sy = a.y + a.h, ty = b.y + b.h / 2, tx = M.RW;
     return { d: `M${sx},${sy} C${sx},${sy + 60} ${tx + 70},${ty - 40} ${tx + 2},${ty}`, lx: tx + 34, ly: (sy + ty) / 2 };
+  }
+  if (e.source === 'inet' && b.x + b.w <= a.x) {      // remote device to the left of the internet node
+    const sx = a.x, sy = a.y + a.h / 2, tx = b.x + b.w, ty = b.y + b.h / 2;
+    return { d: `M${sx},${sy} C${sx - 30},${sy} ${tx + 30},${ty} ${tx},${ty}`, lx: (sx + tx) / 2, ly: sy - 8 };
   }
   if (e.source === 'inet') {
     const sx = a.x + a.w, sy = a.y + a.h / 2, tx = b.x, ty = b.y + b.h / 2;
@@ -137,7 +142,7 @@ function MapView() {
 
   const bbox = () => {
     const ps = Object.values(L.pos); if (!ps.length) return { x: 0, y: 0, w: 100, h: 100 };
-    const x1 = Math.min(-110, ...ps.map(p => p.x)), y1 = Math.min(-60, ...ps.map(p => p.y)) - 20;
+    const x1 = Math.min(-110, ...ps.map(p => p.x)) - 20, y1 = Math.min(-60, ...ps.map(p => p.y)) - 20;
     const x2 = Math.max(...ps.map(p => p.x + p.w)) + 20, y2 = Math.max(data.rack.totalU * M.RU, ...ps.map(p => p.y + p.h)) + 30;
     return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
   };

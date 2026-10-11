@@ -5,8 +5,8 @@ plus any manual links the user drew in edit mode.
 """
 import ipaddress
 
-ROUTER_DRIVERS = ('keenetic', 'openwrt')
-SWITCH_DRIVERS = ('tplink_jetstream',)
+ROUTER_DRIVERS = ('keenetic', 'openwrt', 'demo_router')
+SWITCH_DRIVERS = ('tplink_jetstream', 'snmp', 'demo_switch')
 
 
 def _is_ip(s):
@@ -91,7 +91,7 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         return add({'id': 'h:' + mac, 'label': fallback_label or mac, 'sub': '', 'kind': 'other', 'status': 'unknown', 'client': True, 'mac': mac})
 
     routers = [d for d in active if d.get('driver') in ROUTER_DRIVERS and (states.get(d['id']) or {}).get('ports')]
-    main = next((d for d in routers if d.get('driver') == 'keenetic'), routers[0] if routers else None)
+    main = next((d for d in routers if d.get('driver') in ('keenetic', 'demo_router')), routers[0] if routers else None)
     main_id = 'd:' + main['id'] if main else None
     main_ports = (states.get(main['id']) or {}).get('ports', []) if main else []
     inet = None
