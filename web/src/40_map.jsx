@@ -361,7 +361,7 @@ function RackFrame({ rk, devById, dimSet, markSet, onOpen }) {
         <rect x={0} y={y} width={M.RW} height={hh} rx={6} />
         {d && markSet && markSet.has('d:' + d.id) ? <rect className="spof-mark" x={-3} y={y - 3} width={M.RW + 6} height={hh + 6} rx={8} /> : null}
         <rect x={0} y={y} width={4} height={hh} rx={2} fill={u.color || '#0a84ff'} stroke="none" />
-        <g transform={`translate(12,${y + hh / 2 - 9})`}><Icon name={kind} size={18} color="#f5f5f7" /></g>
+        <g className="u-ic" transform={`translate(12,${y + hh / 2 - 9})`}><Icon name={kind} size={18} color="currentColor" /></g>
         <text x={38} y={y + (hh > 30 ? hh / 2 - 2 : hh / 2 + 4)} fontSize="12.5" fontWeight="600">{trunc(u.name, 30)}</text>
         {hh > 30 ? <text x={38} y={y + hh / 2 + 12} className="usub">{trunc(d ? deviceLine(d) : KIND_TEXT[u.type], 40)}</text> : null}
         {st ? <circle cx={M.RW - 12} cy={y + 11} r={4} fill={st.status === 'online' ? 'var(--green)' : st.status === 'warning' ? 'var(--orange)' : 'var(--red)'} /> : null}

@@ -761,3 +761,81 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
 .router-st { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; margin-top: 5px; flex-wrap: wrap; }
 .router-st.ok { color: var(--green); } .router-st.warn { color: var(--orange); }
 .router-st .link-btn { font-size: 12.5px; padding: 0; margin-left: 4px; }
+
+/* phones: modals are bottom sheets that fit the screen; a swipe scrolls the sheet, never the page behind it */
+html.modal-open, html.modal-open body { overflow: hidden; }
+.overlay { overscroll-behavior: contain; touch-action: none; }
+.modal, .sheet, .sheet-body { overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.modal-body textarea, .modal-body select, .modal-body input { touch-action: auto; }
+@media (max-width: 760px) {
+  .overlay:has(> .modal) { align-items: flex-end; }
+  .modal, .modal.wide { width: 100%; margin: auto 0 0; max-height: calc(100dvh - env(safe-area-inset-top) - 12px); border-radius: 22px 22px 0 0;
+    border-left: 0; border-right: 0; border-bottom: 0; animation: up .3s cubic-bezier(.2,1,.3,1); }
+  .modal-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .modal-body { padding: 14px 16px 18px; }
+  /* 16px+ in inputs: smaller text makes iPhone zoom the whole page in when a field is tapped */
+  .input, .select, .textarea, input, select, textarea { font-size: 16px; }
+}
+@media (max-width: 520px) { .driver-pick { grid-template-columns: 1fr !important; } }
+
+/* header: desktop tools in a row; on phones one «⋯» button with an iOS-style menu */
+.hdr-tools { display: flex; align-items: center; gap: 10px; }
+.hdr-more { width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0; place-items: center; cursor: pointer; color: var(--text);
+  background: var(--fill); position: relative; flex-shrink: 0; display: none; }
+.hdr-more.editing::after { content: ""; position: absolute; top: 4px; right: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 2px var(--bg); }
+@media (max-width: 760px) { .hdr-more.only-sm { display: grid !important; } }
+.hdr-menu-wrap { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.18); animation: fade .15s; }
+.hdr-menu { position: absolute; top: calc(env(safe-area-inset-top) + 64px); right: 12px; width: min(330px, calc(100vw - 24px)); padding: 10px; border-radius: 28px;
+  display: flex; flex-direction: column; gap: 2px; background: var(--dock-glass, var(--elev)); border: .5px solid var(--glass-line, var(--line));
+  backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%); box-shadow: 0 18px 50px rgba(0,0,0,.35);
+  animation: pop .25s cubic-bezier(.2,1.2,.4,1); transform-origin: top right; }
+.hdr-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding-bottom: 8px; margin-bottom: 4px; border-bottom: .5px solid var(--line); }
+.hdr-tiles button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px 8px; border: 0; border-radius: 18px; background: none;
+  color: var(--text); font: inherit; font-size: 13px; cursor: pointer; text-align: center; line-height: 1.2; }
+.hdr-tiles button:active, .hdr-tiles button:hover { background: var(--fill); }
+.hdr-tiles .frank { background: transparent; }
+.hdr-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 50px; padding: 6px 12px; border: 0; border-radius: 16px; background: none;
+  color: var(--text); font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
+button.hdr-row:active, button.hdr-row:hover { background: var(--fill); }
+.hdr-row > svg:first-child { color: var(--text2); flex-shrink: 0; }
+.hdr-row .seg button { padding: 6px 9px; font-size: 12.5px; }
+
+/* ── rack colours follow the theme: a dark cabinet in the dark theme, a light «aluminium» one in the light theme ── */
+:root, [data-theme="dark"] {
+  --rack-bg: linear-gradient(180deg, #2c2c2e, #1c1c1e); --rack-text: #f5f5f7; --rack-meta: rgba(235,235,245,.62); --rack-body: #0b0b0c;
+  --rack-rail: rgba(235,235,245,.32); --rack-hole: #2c2c2e; --rack-slot: rgba(255,255,255,.04);
+  --unit-bg: linear-gradient(180deg, #2f2f33, #232326); --unit-text: #f5f5f7; --unit-meta: rgba(235,235,245,.62); --unit-icon-bg: rgba(255,255,255,.08);
+  --rack-icon: #f5f5f7; --unit-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 1px 2px rgba(0,0,0,.5);
+  --led-off: #3a3a3c; --led-dead: #4b1c1a; --unit-passive: repeating-linear-gradient(90deg, #252527 0 6px, #202022 6px 12px); --unit-blank: #171718;
+  --rack-seg-bg: rgba(0,0,0,.4); --rack-seg-text: rgba(235,235,245,.72); --rack-seg-on: rgba(255,255,255,.2); --rack-seg-on-text: #fff;
+  --map-rack-frame: #1c1c1e; --map-rack-stroke: #3a3a3c; --map-unit: #2a2a2d; --map-unit-stroke: rgba(255,255,255,.06);
+}
+[data-theme="light"] {
+  --rack-bg: linear-gradient(180deg, #fdfdfe, #e9e9ef); --rack-text: #1c1c1e; --rack-meta: rgba(60,60,67,.64); --rack-body: #d6d6dd;
+  --rack-rail: rgba(60,60,67,.55); --rack-hole: #b4b4bc; --rack-slot: rgba(0,0,0,.07);
+  --unit-bg: linear-gradient(180deg, #ffffff, #f2f2f6); --unit-text: #1c1c1e; --unit-meta: rgba(60,60,67,.66); --unit-icon-bg: rgba(0,0,0,.06);
+  --rack-icon: #3a3a3c; --unit-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(0,0,0,.14);
+  --led-off: #c9c9cf; --led-dead: #f2b8b3; --unit-passive: repeating-linear-gradient(90deg, #e6e6ec 0 6px, #dedee5 6px 12px); --unit-blank: #cdcdd4;
+  --rack-seg-bg: rgba(0,0,0,.07); --rack-seg-text: rgba(60,60,67,.78); --rack-seg-on: #fff; --rack-seg-on-text: #1c1c1e;
+  --map-rack-frame: #f4f4f7; --map-rack-stroke: #d1d1d8; --map-unit: #ffffff; --map-unit-stroke: rgba(0,0,0,.1);
+}
+.rack, [data-theme="light"] .rack { background: var(--rack-bg); box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,.08); border: .5px solid var(--line); }
+.rack-top { color: var(--rack-text); } .rack-top .meta { color: var(--rack-meta); }
+.tilebox .rack-top { color: var(--text); } .tilebox .rack-top .meta { color: var(--text2); }     /* box / room: a normal card, normal text */
+.rack-body { background: var(--rack-body); }
+.rack-rail div { color: var(--rack-rail); } .rack-rail div::before { background: var(--rack-hole); }
+.rack-slot { border-top-color: var(--rack-slot); } .rack-slot.addable:hover { background: var(--rack-slot); }
+.unit { background: var(--unit-bg); color: var(--unit-text); box-shadow: var(--unit-shadow); }
+.unit .uicon { background: var(--unit-icon-bg); color: var(--rack-icon); } .unit .umeta { color: var(--unit-meta); }
+.unit .leds i { background: var(--led-off); } .unit .leds i.off { background: var(--led-dead); }
+.unit.passive { background: var(--unit-passive); } .unit.blank { background: var(--unit-blank); }
+.rack-top .seg { background: var(--rack-seg-bg); }
+.rack-top .seg button { color: var(--rack-seg-text); }
+.rack-top .seg button.on { background: var(--rack-seg-on); color: var(--rack-seg-on-text); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.tilebox .rack-top .seg { background: var(--fill); } .tilebox .rack-top .seg button { color: var(--text2); }
+.tilebox .rack-top .seg button.on { background: var(--card-solid); color: var(--text); }
+/* the map draws cabinets in SVG */
+.rackbox rect.frame, [data-theme="light"] .rackbox rect.frame { fill: var(--map-rack-frame); stroke: var(--map-rack-stroke); }
+.rackbox .u rect { fill: var(--map-unit); stroke: var(--map-unit-stroke); }
+.rackbox text { fill: var(--unit-text); } .rackbox .usub { fill: var(--unit-meta); }
+.rackbox .u-ic { color: var(--rack-icon); }

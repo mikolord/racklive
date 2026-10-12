@@ -10,7 +10,7 @@ const TABS = [
 /* one hint per tab (and a different one while editing) — shown above the page until dismissed */
 const TAB_HINTS = {
   rack: ['Здесь шкафы, щитки и комнаты с оборудованием. Нажмите на устройство — откроется карточка: порты, графики, действия. ' +
-    'Чтобы добавить или переставить оборудование, включите «Редактирование» вверху.',
+    'Чтобы добавить или переставить оборудование, включите «Редактирование» вверху (на телефоне — в меню «⋯»).',
     'Перетаскивайте оборудование мышью или пальцем. «+ Шкаф» добавит ещё одно место: стойку, щиток или комнату. ' +
     'Нажмите на юнит, чтобы переименовать его или привязать к устройству — тогда на нём появятся живые данные.'],
   map: ['Карта строится сама по данным роутера и коммутатора: кто к какому порту подключён. Цвет линии — скорость: зелёный — 1 Гбит, ' +
@@ -60,6 +60,7 @@ function App() {
   const [login, setLogin] = useState(false);
   const [speed, setSpeed] = useState(() => new URLSearchParams(location.search).get('speedtest'));      // '1' open · 'run' open and start
   const [pinTest, setPinTest] = useState(null);             // speed test id waiting for a tap on the plan
+  const [menu, setMenu] = useState(() => new URLSearchParams(location.search).get('hmenu') === '1');   // phone header menu «⋯»
   const [ai, setAi] = useState(() => new URLSearchParams(location.search).get('ai') ? { n: 0 } : null);     // assistant panel: {q, n}
   const [theme, setTheme] = useTheme();
   const toast = useToast();
@@ -144,13 +145,19 @@ function App() {
       <nav className="tabs">{tabs.map(t => <button key={t.id} className={'tab' + (cur === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>
         <Icon name={t.icon} size={15} />{t.label}{t.id === 'events' && problems ? <span className="count">{problems}</span> : null}</button>)}</nav>
       <div className="grow" />
-      {admin ? <Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
-        { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
-      {admin ? <button type="button" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}><FrankEye size={26} round={8} /></button> : null}
-      <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
-      <Btn size="sm" icon={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} title={'Тема: ' + ({ auto: 'как в системе', dark: 'тёмная', light: 'светлая' })[theme]}
-        onClick={() => setTheme(theme === 'auto' ? 'dark' : theme === 'dark' ? 'light' : 'auto')} />
+      <div className="hdr-tools hide-sm">
+        {admin ? <Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
+          { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
+        {admin ? <button type="button" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}><FrankEye size={26} round={8} /></button> : null}
+        <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
+        <Btn size="sm" icon={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} title={'Тема: ' + ({ auto: 'как в системе', dark: 'тёмная', light: 'светлая' })[theme]}
+          onClick={() => setTheme(theme === 'auto' ? 'dark' : theme === 'dark' ? 'light' : 'auto')} />
+      </div>
+      {/* phones: everything above folds into one «⋯» button with a menu, like iOS */}
+      <button type="button" className={'hdr-more only-sm' + (edit ? ' editing' : '')} title="Меню" onClick={() => setMenu(true)}><Icon name="more" size={22} stroke={2.6} /></button>
     </header>
+    {menu ? <HeaderMenu admin={admin} mode={mode} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
+      onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
     <main className="page">
       <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
         <div className="grow"><div className="page-title">{tabs.find(t => t.id === cur).label}</div><div className="page-sub" style={{ marginBottom: 0 }}>{subtitle}</div></div>
@@ -172,6 +179,27 @@ function App() {
     {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={() => setAi(null)} /> : null}
     {speed ? <SpeedTestModal autoRun={speed === 'run'} onClose={() => setSpeed(null)} /> : null}
   </AppCtx.Provider>;
+}
+
+/* phone header menu: tiles on top (Frank, speed test, refresh), rows below (editing, theme, sign in / out) — like an iOS context menu */
+function HeaderMenu({ admin, mode, setMode, theme, setTheme, onClose, onFrank, onSpeed, onRefresh, onLogin, onLogout }) {
+  useEffect(() => { const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
+  const go = fn => () => { onClose(); fn(); };
+  return <div className="hdr-menu-wrap" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="hdr-menu">
+      <div className="hdr-tiles">
+        {admin ? <button type="button" onClick={go(onFrank)}><FrankEye size={30} round={9} /><span>Frank</span></button> : null}
+        <button type="button" onClick={go(onSpeed)}><Icon name="gauge" size={24} /><span>Тест скорости</span></button>
+        <button type="button" onClick={go(onRefresh)}><Icon name="refresh" size={24} /><span>Обновить</span></button>
+      </div>
+      {admin ? <div className="hdr-row">
+        <Icon name="edit" size={20} /><span className="grow">Редактирование</span><Switch on={mode === 'edit'} onChange={v => setMode(v ? 'edit' : 'view')} /></div> : null}
+      <div className="hdr-row"><Icon name={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} size={20} /><span className="grow">Тема</span>
+        <Seg value={theme} onChange={setTheme} options={[{ value: 'auto', label: 'Авто' }, { value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} /></div>
+      {admin ? <button type="button" className="hdr-row" onClick={go(onLogout)}><Icon name="logout" size={20} /><span className="grow">Выйти</span></button>
+        : <button type="button" className="hdr-row" onClick={go(onLogin)}><Icon name="lock" size={20} /><span className="grow">Войти</span></button>}
+    </div>
+  </div>;
 }
 
 /* a render error shows a readable message instead of a blank page (and marks <html data-js-error> for the smoke test) */

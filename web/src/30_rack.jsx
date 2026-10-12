@@ -50,7 +50,7 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, swap, top
   return <div className={['unit', PASSIVE.includes(unit.type) ? 'passive' : '', unit.type === 'blank' ? 'blank' : '', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
     style={{ top: top + 2, height: h, cursor: edit ? 'grab' : 'pointer' }} onClick={onClick} onPointerDown={onPointerDown}>
     <div className="strip" style={{ background: unit.color || '#0a84ff' }} />
-    {unit.type !== 'blank' ? <div className="uicon"><Icon name={kind} size={16} color="#f5f5f7" /></div> : null}
+    {unit.type !== 'blank' ? <div className="uicon"><Icon name={kind} size={16} color="currentColor" /></div> : null}
     <div className="grow" style={{ minWidth: 0 }}>
       <div className="row" style={{ gap: 7 }}>{st ? <span className={'dot ' + st} /> : null}<span className="uname ellipsis">{unit.name}</span></div>
       {h > 30 ? <div className="umeta ellipsis">{dev ? deviceLine(dev) : (KIND_TEXT[unit.type] || '') + (unit.uSize > 1 ? ` · ${unit.uSize}U` : '')}</div> : null}

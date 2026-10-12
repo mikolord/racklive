@@ -11,7 +11,17 @@ function Btn({ children, kind = '', size = '', icon, busy, onClick, disabled, ti
     {icon && !(busy || self) ? <Icon name={icon} size={size === 'sm' ? 15 : 17} /> : null}{children}</button>;
 }
 
+/* while a modal / sheet is open the page behind must not scroll (on the phone a swipe used to fall through to it) */
+let openOverlays = 0;
+function useLockPage() {
+  useEffect(() => {
+    openOverlays++; document.documentElement.classList.add('modal-open');
+    return () => { if (--openOverlays <= 0) { openOverlays = 0; document.documentElement.classList.remove('modal-open'); } };
+  }, []);
+}
+
 function Modal({ title, onClose, children, footer, wide, icon }) {
+  useLockPage();
   useEffect(() => {
     const h = e => e.key === 'Escape' && onClose && onClose();
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
@@ -26,6 +36,7 @@ function Modal({ title, onClose, children, footer, wide, icon }) {
 }
 
 function Sheet({ onClose, head, tabs, tab, setTab, children }) {
+  useLockPage();
   useEffect(() => {
     const h = e => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
