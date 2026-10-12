@@ -16,7 +16,7 @@ DEFAULT = {
     'plan': {'buildings': [], 'links': [], 'poles': []},
 }
 
-SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo')
+SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword')
 
 
 class Store:

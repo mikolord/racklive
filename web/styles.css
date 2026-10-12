@@ -750,3 +750,14 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
 .fr-radio { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; border: 1.5px solid var(--line2); color: #fff; }
 .fr-model-opt.on .fr-radio { background: var(--accent); border-color: var(--accent); }
 .fr-menu .seg { width: 100%; } .fr-menu .seg button { flex: 1; justify-content: center; }
+
+/* device card: «Веб-интерфейс» — link, login and password with copy buttons */
+.web-acc { display: flex; flex-direction: column; gap: 8px; }
+.web-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: var(--fill); min-width: 0; }
+.web-row .mono { font-size: 13.5px; } .web-k { width: 62px; flex-shrink: 0; font-size: 12.5px; color: var(--text2); }
+
+/* Devices → «Роутеры в сети» */
+.router-row { align-items: flex-start; gap: 12px; }
+.router-st { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; margin-top: 5px; flex-wrap: wrap; }
+.router-st.ok { color: var(--green); } .router-st.warn { color: var(--orange); }
+.router-st .link-btn { font-size: 12.5px; padding: 0; margin-left: 4px; }

@@ -142,6 +142,48 @@ function BackupsTab({ device }) {
   </>;
 }
 
+/* routers among the clients (subscribers, relatives, guests): add one with a press → link + login + password in its card */
+function RoutersCard() {
+  const { data, refresh, newDevice } = useApp(); const toast = useToast();
+  const rs = data.routerScan || {}; const list = rs.list || [];
+  const [help, setHelp] = useState(null);
+  useEffect(() => { if (!rs.running) return; const t = setInterval(refresh, 3000); return () => clearInterval(t); }, [rs.running]);
+  const scan = async () => { try { await api('/api/routers/scan', { method: 'POST', body: {} }); toast('Ищу роутеры в сети…'); setTimeout(refresh, 800); } catch (e) { toast(e.message, true); } };
+  const dismiss = async (r, on) => { try { await api('/api/routers/dismiss', { method: 'POST', body: { mac: r.mac, on } }); refresh(); } catch (e) { toast(e.message, true); } };
+  const add = r => {
+    const w = r.web || {};
+    newDevice({ driver: w.keenetic ? 'keenetic' : 'remote_web', kind: 'router', name: r.name,
+      fields: { host: w.url || 'http://' + r.ip, location: 'local', username: 'admin', site: '',
+        notes: [r.vendor, r.hostname, r.model].filter(Boolean).join(' · ') + (r.segment ? ` · сегмент ${r.segment}` : '') } });
+  };
+  return <Card title={`Роутеры в сети${list.length ? ' · ' + list.filter(r => !r.dismissed).length : ''}`}
+    right={<Btn size="sm" icon="refresh" busy={rs.running} onClick={scan}>{rs.running ? 'Ищу…' : 'Проверить'}</Btn>}>
+    <div className="dim" style={{ fontSize: 13, lineHeight: 1.45, marginBottom: 10 }}>Роутеры абонентов, родных, гостей — те, что подключены к вашей сети. Добавьте любой:
+      в его карточке будут кнопка «Открыть», логин и пароль с «Скопировать». Rack Live сам в чужие роутеры не входит — пароль вписываете вы.</div>
+    {!list.length ? <div className="dim3" style={{ fontSize: 13 }}>{rs.last ? 'Роутеров среди клиентов не найдено.' : 'Ещё не искал — нажмите «Проверить».'}</div>
+      : <div className="list">{list.map(r => { const w = r.web || {};
+        return <div className="li router-row" key={r.mac} style={{ opacity: r.dismissed ? .5 : 1 }}>
+          <KindIcon kind="router" size={34} round={10} />
+          <div className="grow" style={{ minWidth: 0 }}>
+            <b style={{ fontSize: 14 }}>{r.name}</b>
+            <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{[r.vendor, r.hostname && r.hostname !== r.name ? r.hostname : '', r.model].filter(Boolean).join(' · ') || 'роутер'}</div>
+            <div className="dim3 mono ellipsis" style={{ fontSize: 11.5 }}>{[r.ip, r.segment, r.via && 'через ' + r.via].filter(Boolean).join(' · ')}</div>
+            {w.ok ? <div className="router-st ok"><Icon name="check" size={13} />{w.keenetic ? 'Keenetic отвечает — можно будет управлять' : 'Страница настроек открывается'}</div>
+              : r.checked ? <div className="router-st warn"><Icon name="lock" size={13} />Вход в настройки закрыт с вашей стороны
+                <button type="button" className="link-btn" onClick={() => setHelp(help === r.mac ? null : r.mac)}>{help === r.mac ? 'скрыть' : 'почему?'}</button></div> : null}
+            {help === r.mac && !w.ok ? <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45, marginTop: 4 }}>Для этого роутера ваша сеть — это «интернет», а заходить
+              в настройки из интернета по умолчанию запрещено. Если нужно — у абонента в настройках роутера разрешите доступ к веб-интерфейсу со стороны WAN,
+              лучше только с адресов вашей сети{r.ip ? ` (${r.ip.split('.').slice(0, 3).join('.')}.0/24)` : ''}. Ссылку и пароль можно сохранить и сейчас.</div> : null}
+          </div>
+          <div className="col" style={{ gap: 6, alignItems: 'stretch' }}>
+            {!r.dismissed ? <Btn size="sm" kind="primary" icon="plus" onClick={() => add(r)}>Добавить</Btn> : null}
+            <Btn size="sm" onClick={() => dismiss(r, !r.dismissed)}>{r.dismissed ? 'Вернуть' : 'Скрыть'}</Btn>
+          </div>
+        </div>; })}</div>}
+    {rs.last ? <div className="dim3" style={{ fontSize: 11.5, marginTop: 8 }}>Проверено {fmt.ago(rs.last, data.now)} · Rack Live смотрит раз в 6 часов</div> : null}
+  </Card>;
+}
+
 /* devices that showed up in the network recently */
 function NewDevicesCard() {
   const { data, refresh } = useApp(); const toast = useToast();

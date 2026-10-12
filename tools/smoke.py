@@ -190,6 +190,24 @@ def main():
         api('/api/ai/chats/' + r['chat'], {}, 'DELETE')
         check('assistant: chat deleted', not api('/api/ai/chats')['chats'])
         api('/api/ai', {'enabled': False, 'preset': 'custom'}, 'PUT')
+        # remote router as a web panel: link + login in the card, the password only through /creds
+        rw = api('/api/devices', {'driver': 'remote_web', 'name': 'Роутер · дача', 'kind': 'router', 'location': 'remote',
+                                  'host': base, 'username': 'admin', 'password': 'smoke-web-pw'}, 'POST')['device']
+        api(f"/api/devices/{rw['id']}/poll", {}, 'POST')
+        s3 = api('/api/state')
+        cr = api(f"/api/devices/{rw['id']}/creds", {}, 'POST')
+        check('remote web panel: online, password only via /creds', next(x for x in s3['devices'] if x['id'] == rw['id'])['state']['status'] == 'online'
+              and 'smoke-web-pw' not in json.dumps(s3) and cr['password'] == 'smoke-web-pw' and cr['url'] == base)
+        api(f"/api/devices/{rw['id']}", None, 'DELETE')
+        api('/api/routers/scan', {}, 'POST')
+        for _ in range(40):
+            rs = api('/api/state')['routerScan']
+            if not rs['running'] and rs['last']:
+                break
+            time.sleep(.5)
+        g = next((r for r in rs['list'] if r['mac'] == '80:af:ca:00:00:99'), None)
+        check('routers in the network: guest Cudy found, page closed', g and g['vendor'] == 'Cudy' and not (g.get('web') or {}).get('ok'),
+              json.dumps(rs['list'], ensure_ascii=False)[:300])
         r = urllib.request.urlopen(urllib.request.Request(base + '/app.js', headers={'Accept-Encoding': 'gzip'}), timeout=30)
         body = r.read()
         check('app.js served gzipped', r.headers.get('Content-Encoding') == 'gzip' and len(gzip.decompress(body)) > len(body))
@@ -220,7 +238,7 @@ def main():
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
-                 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings'}
+                 'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings'}
         for name, q in pages.items():
             if name == 'Помощник — настроен':          # a provider nobody listens on: enough for the panel to show the chat
                 api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-test'}, 'PUT')
@@ -238,6 +256,8 @@ def main():
                 check('окно теста скорости', 'gauge' in out)
             if name == 'Настройки':
                 check('настройки разбиты на разделы', out.count('set-item') >= 6 and 'set-head' in out)
+            if name == 'Устройства · роутеры в сети':
+                check('карточка «Роутеры в сети»', 'router-row' in out and 'Гостевой домик' in out)
             if name == 'Настройки · Frank':
                 check('карточка помощника в настройках', 'ai-settings' in out)
             if name == 'Настройки · Приложения':

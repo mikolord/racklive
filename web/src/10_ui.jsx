@@ -99,6 +99,16 @@ function Hint({ id, title, children, style }) {
   </div>;
 }
 
+/* copy to the clipboard; on plain http (no Clipboard API) a hidden textarea + execCommand — it must run inside the tap, so no await before it */
+function copyText(text) {
+  try { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text); return true; } } catch (e) { }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
+  document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false; try { ok = document.execCommand('copy'); } catch (e) { }
+  ta.remove(); return ok;
+}
+
 /* Promise-based confirm dialog */
 const ConfirmCtx = createContext(null);
 function ConfirmHost({ children }) {

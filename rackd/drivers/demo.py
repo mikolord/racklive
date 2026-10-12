@@ -54,6 +54,9 @@ class DemoRouter(DemoBase):
             clients.append({'mac': MAC(100 + i), 'ip': f'10.0.{20 if seg == "IoT" else 30 if seg == "Гости" else 0}.{100 + i}', 'name': n,
                             'segment': seg, 'ap': ap, 'rssi': rssi + random.randint(-2, 2), 'rate': random.choice([144, 286, 573, 866, 1201]),
                             'band': '5 ГГц' if rssi > -62 else '2.4 ГГц', 'online': True, 'kind': k})
+        # someone's own router behind ours (a guest house): shows up in «Роутеры в сети»
+        clients.append({'mac': '80:af:ca:00:00:99', 'ip': '10.0.30.150', 'name': 'Гостевой домик', 'hostname': 'WR3000E', 'segment': 'Гости',
+                        'ap': None, 'port': '1', 'online': True, 'kind': 'router'})
         by = {}
         for c in clients:
             by[c['segment']] = by.get(c['segment'], 0) + 1

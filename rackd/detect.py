@@ -140,13 +140,55 @@ def p_http(host):
 PROBES = [p_keenetic, p_openwrt, p_synology, p_homeassistant, p_snmp, p_telnet, p_ssh, p_nut, p_http]
 
 
+def _bases(hostport, url):
+    return [url] if url else [f'https://{hostport}', f'http://{hostport}']
+
+
+def p_keenetic_remote(hostport, url):
+    """A Keenetic somewhere else (KeenDNS domain, white IP:port): manageable when it answers RCI directly."""
+    for base in _bases(hostport, url):
+        try:
+            code, h, _ = _http(base + '/auth', timeout=5)
+        except Exception:
+            continue
+        realm = h.get('X-NDM-Realm') or h.get('x-ndm-realm')
+        if realm:
+            return {'driver': 'keenetic', 'score': 101, 'what': f'Keenetic / Netcraze ({realm}) — можно управлять удалённо', 'host': base}
+
+
+def p_remote_web(hostport, url):
+    """Anything with a web panel outside the home network: at least a link and the login in the card."""
+    for base in _bases(hostport, url):
+        try:
+            code, _, body = _http(base, timeout=5)
+        except Exception:
+            continue
+        title = re.search(r'<title[^>]*>([^<]{1,80})', body, re.I)
+        return {'driver': 'remote_web', 'score': 50, 'host': base,
+                'what': f"Веб-панель{': ' + title.group(1).strip() if title else ''} — ссылка, логин и пароль в карточке (без управления)"}
+
+
+def _private(host):
+    try:
+        import ipaddress
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return host.endswith('.local') or '.' not in host
+
+
 def detect(host):
-    host = re.sub(r'^\w+://', '', (host or '').strip()).split('/')[0]
-    if not host:
+    raw = (host or '').strip()
+    url = raw.rstrip('/') if re.match(r'^https?://', raw) else None
+    hostport = re.sub(r'^\w+://', '', raw).split('/')[0]
+    if not hostport:
         return []
-    bare = host.split(':')[0]
-    with concurrent.futures.ThreadPoolExecutor(len(PROBES)) as pool:
-        results = [r for r in pool.map(lambda p: _safe(p, bare), PROBES) if r]
+    bare = hostport.split(':')[0]
+    remote = bool(url) or ':' in hostport or not _private(bare)
+    jobs = [lambda p=p: p(bare) for p in PROBES]
+    if remote:                                       # an address outside: probe exactly what was typed (scheme, port)
+        jobs += [lambda: p_keenetic_remote(hostport, url), lambda: p_remote_web(hostport, url)]
+    with concurrent.futures.ThreadPoolExecutor(len(jobs)) as pool:
+        results = [r for r in pool.map(lambda j: _safe(j), jobs) if r]
     out, seen = [], set()
     for r in sorted(results, key=lambda r: -r['score']):
         if r['driver'] in seen:
@@ -154,13 +196,13 @@ def detect(host):
         seen.add(r['driver'])
         out.append(dict({'host': bare}, **r))
     if out and out[0]['score'] >= 85:              # a sure match: the generic guesses only add noise
-        out = [r for r in out if r['score'] >= 60]
+        out = [r for r in out if r['score'] >= 60 or r['driver'] == 'remote_web']     # remote: the link-only option stays (cloud KeenDNS)
     out.append({'driver': 'ping', 'score': 1, 'what': 'Только доступность (ping) — если ничего не подошло', 'host': bare})
     return out
 
 
-def _safe(fn, host):
+def _safe(fn):
     try:
-        return fn(host)
+        return fn()
     except Exception:
         return None

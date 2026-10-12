@@ -6,6 +6,9 @@ from .. import plugins
 from ..util import DriverError, uptime_seconds, guess_kind
 
 
+BAD_LOGIN = {}              # sha256(address, login, password) → time of the last rejected login
+
+
 class Keenetic(Driver):
     id = 'keenetic'
     title = 'Keenetic / Netcraze'
@@ -44,10 +47,17 @@ class Keenetic(Driver):
             raise DriverError('это не Keenetic, либо доступ к роутеру идёт через облако KeenDNS (оно пускает только браузер). '
                               'Нужен прямой доступ: проброшенный порт на роутере или KeenDNS в режиме «прямой доступ».')
         user = cfg.get('username') or 'admin'
+        # after a wrong password wait 30 min (or until the password is changed): polling every minute would get our IP locked out
+        bad_key = hashlib.sha256(f"{base}\0{user}\0{cfg.get('password', '')}".encode()).hexdigest()
+        if time.time() - BAD_LOGIN.get(bad_key, 0) < 1800:
+            raise DriverError('неверный логин или пароль — следующая попытка через ' +
+                              f"{int((1800 - (time.time() - BAD_LOGIN[bad_key])) / 60) + 1} мин (или сразу после смены пароля), чтобы роутер не заблокировал адрес")
         md5 = hashlib.md5(f"{user}:{realm}:{cfg.get('password', '')}".encode()).hexdigest()
         a = req('/auth', {'login': user, 'password': hashlib.sha256((ch + md5).encode()).hexdigest()})
         if getattr(a, 'status', getattr(a, 'code', 0)) != 200:
+            BAD_LOGIN[bad_key] = time.time()
             raise DriverError('неверный логин или пароль')
+        BAD_LOGIN.pop(bad_key, None)
         get = lambda p: json.loads(req(p).read() or b'{}')
         cli = lambda cmds: json.loads(req('/rci/', [{'parse': c} for c in cmds]).read())
         return get, cli
@@ -185,7 +195,7 @@ class Keenetic(Driver):
             seg = iface.get('description') or iface.get('id') if isinstance(iface, dict) else iface
             mws_i = h.get('mws') or {}
             ap = mws_i.get('cid') or ('self' if h.get('ap') or h.get('ssid') else None)
-            clients.append({'mac': h.get('mac'), 'ip': h.get('ip'), 'name': h.get('name') or h.get('hostname') or '',
+            clients.append({'mac': h.get('mac'), 'ip': h.get('ip'), 'name': h.get('name') or h.get('hostname') or '', 'hostname': h.get('hostname') or '',
                             'segment': seg, 'ap': ap, 'rssi': mws_i.get('rssi') or h.get('rssi'), 'rate': mws_i.get('txrate') or h.get('txrate'),
                             'band': '5 ГГц' if 'WifiMaster1' in (mws_i.get('ap') or h.get('ap') or '') else ('2.4 ГГц' if ap else ''),
                             'port': h.get('port'), 'online': True, 'kind': guess_kind(h.get('name') or h.get('hostname')),

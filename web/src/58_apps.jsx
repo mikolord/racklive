@@ -46,7 +46,7 @@ function InstallModal({ app, base, lanBase, onClose }) {
   const url = ((both && via === 'lan') ? lanBase : base).replace(/\/$/, '') + app.path;
   const http = url.startsWith('http://');
   const toast = useToast();
-  const copy = () => { try { navigator.clipboard.writeText(url); toast('Ссылка скопирована'); } catch (e) { } };
+  const copy = () => { const ok = copyText(url); toast(ok ? 'Ссылка скопирована' : 'Не получилось скопировать — выделите ссылку вручную', !ok); };
   return <Modal title={'Установить «' + app.name + '»'} onClose={onClose} icon={<img src={app.icon} width="28" height="28" style={{ borderRadius: 7 }} alt="" />}>
     {both ? <div className="col" style={{ gap: 8 }}>
       <Seg value={via} onChange={setVia} options={[{ value: 'domain', label: 'Через домен' }, { value: 'lan', label: 'Домашний адрес' }]} />

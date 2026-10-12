@@ -14,9 +14,12 @@ function DevicesView() {
   const counts = { all: data.devices.length, problems: data.devices.filter(d => ['offline', 'warning'].includes((d.state || {}).status)).length,
     local: data.devices.filter(d => d.location !== 'remote').length, remote: data.devices.filter(d => d.location === 'remote').length };
   const [showNew, setShowNew] = useState(false);
+  const routers = ((data.routerScan || {}).list || []).filter(r => !r.dismissed);
+  const [showRouters, setShowRouters] = useState(() => new URLSearchParams(location.search).get('routers') === '1');
   return <>
     <div className="row wrap" style={{ marginBottom: 14 }}>
       {data.newDevices ? <button className={'chip' + (showNew ? ' on' : '')} onClick={() => setShowNew(!showNew)}><Icon name="plus" size={13} />Новые в сети · {data.newDevices.length}</button> : null}
+      {routers.length ? <button className={'chip' + (showRouters ? ' on' : '')} onClick={() => setShowRouters(!showRouters)}><Icon name="router" size={13} />Роутеры в сети · {routers.length}</button> : null}
       {[['all', 'Все'], ['problems', 'Проблемы'], ['local', 'Локальные'], ['remote', 'Удалённые']].map(([k, l]) =>
         <button key={k} className={'chip' + (flt === k ? ' on' : '')} onClick={() => setFlt(k)}>{l} · {counts[k]}</button>)}
       <div className="grow" />
@@ -28,6 +31,7 @@ function DevicesView() {
       <div style={{ margin: '6px 0 16px' }}>Добавьте роутер, коммутатор, NAS или любой сервер — данные начнут собираться автоматически.</div>
       {admin ? <Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить устройство</Btn> : null}</div></Card> : null}
     {data.newDevices && (showNew || data.newDevices.some(r => !r.trusted)) ? <div style={{ marginBottom: 20 }}><NewDevicesCard /></div> : null}
+    {admin && data.routerScan && (showRouters || routers.some(r => !r.seen)) ? <div style={{ marginBottom: 20 }}><RoutersCard /></div> : null}
     {(sites.length ? [...sites, ''] : ['']).map(site => {
       const items = list.filter(d => (d.site || '') === site); if (!items.length) return null;
       return <div key={site || '_'} style={{ marginBottom: 20 }}>
@@ -51,7 +55,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
   const [drvId, setDrvId] = useState(device ? device.driver : (preset && preset.driver) || null);
   const drv = data.drivers.find(d => d.id === drvId);
   const [f, setF] = useState(() => device ? { ...device } : { name: (preset && preset.name) || '', location: 'local', site: '', notes: '', enabled: true,
-    ...(preset && preset.kind ? { kind: preset.kind } : {}) });
+    ...(preset && preset.kind ? { kind: preset.kind } : {}), ...((preset && preset.fields) || {}) });
   const [test, setTest] = useState(null);
   const [token, setToken] = useState(null);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
@@ -59,7 +63,9 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
 
   const pick = c => {                                          // a detected candidate → driver + prefilled address
     const d = data.drivers.find(x => x.id === c.driver); if (!d) return;
-    setF(x => ({ ...x, host: c.host, kind: d.kind, name: x.name || c.what.split(/[(:]/)[0].trim().slice(0, 40), ...(c.mode ? { mode: c.mode } : {}) }));
+    const outside = c.driver === 'remote_web' || (/:\/\//.test(c.host || '') && !/^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|localhost)/.test(c.host));
+    setF(x => ({ ...x, host: c.host, kind: d.kind, name: x.name || c.what.split(/[(:—]/)[0].trim().slice(0, 40), ...(c.mode ? { mode: c.mode } : {}),
+      ...(outside ? { location: 'remote' } : {}) }));
     setDrvId(c.driver);
   };
   if (!drvId) return <Modal title="Новое устройство" wide onClose={onClose}>
@@ -127,6 +133,16 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       <Field label="Площадка / объект" hint="Например «Дача» или «Офис» — устройства группируются по площадкам"><input className="input" value={f.site || ''} onChange={e => set('site', e.target.value)} /></Field>
     </div>
     <Field label="Заметки"><textarea className="textarea" value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
+    {drvId !== 'remote_web' ? <details className="guide" open={!!(f.webUrl || f.webUser || (device && device.webPasswordSet))}>
+      <summary>Вход в веб-интерфейс (необязательно)</summary>
+      <div className="dim" style={{ fontSize: 12.5, margin: '6px 0 10px', lineHeight: 1.45 }}>В карточке устройства появятся кнопка «Открыть» и логин с паролем с кнопкой «Скопировать».
+        Пусто — берутся адрес, логин и пароль подключения выше.</div>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+        <Field label="Адрес веб-интерфейса"><input className="input" value={f.webUrl || ''} placeholder="https://… или http://IP:порт" onChange={e => set('webUrl', e.target.value)} autoComplete="off" /></Field>
+        <Field label="Логин"><input className="input" value={f.webUser || ''} onChange={e => set('webUser', e.target.value)} autoComplete="off" /></Field>
+        <Field label="Пароль"><input className="input" type="password" value={f.webPassword || ''} placeholder={device && device.webPasswordSet ? '•••••••• (не менять)' : ''}
+          onChange={e => set('webPassword', e.target.value)} autoComplete="new-password" /></Field>
+      </div></details> : null}
     <div className="row wrap" style={{ gap: 18 }}>
       <span className="row"><Switch on={f.enabled !== false} onChange={v => set('enabled', v)} /><span>Опрашивать устройство</span></span>
       <span className="row"><Switch on={f.notify !== false} onChange={v => set('notify', v)} /><span>Уведомлять о проблемах</span></span></div>

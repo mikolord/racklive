@@ -116,6 +116,7 @@ function App() {
   const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
+    newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
     askAi: q => setAi({ q, n: Date.now() }) };
   if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
   if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
@@ -167,7 +168,7 @@ function App() {
     <nav className="bottombar">{tabs.map(t => <button key={t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
       <Icon name={t.icon} size={24} />{t.id === 'map' ? 'Карта' : t.label}{t.id === 'events' && problems ? <span className="count">{problems}</span> : null}</button>)}</nav>
     {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={() => setSheet(null)} /> : null}
-    {editor !== undefined ? <DeviceEditor device={editor} onClose={() => setEditor(undefined)} /> : null}
+    {editor !== undefined ? <DeviceEditor device={editor && editor.__preset ? null : editor} preset={editor && editor.__preset} onClose={() => setEditor(undefined)} /> : null}
     {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={() => setAi(null)} /> : null}
     {speed ? <SpeedTestModal autoRun={speed === 'run'} onClose={() => setSpeed(null)} /> : null}
   </AppCtx.Provider>;

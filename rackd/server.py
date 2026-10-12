@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, security, speedtest, tgbot, topology
+from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, routers, security, speedtest, tgbot, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -48,6 +48,7 @@ class App:
         self.backup_busy = False
         self.tgbot = tgbot.TgBot(self)
         self.ai = assistant.Assistant(self)
+        self.routers = routers.RouterScan(self)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
@@ -169,6 +170,8 @@ class App:
             self.inet.start()
         if self.extscan.due():
             self.extscan.start()
+        if self.routers.due():
+            self.routers.run()
         if not self.backup_busy:
             d = next((d for d in self.store.cfg['devices'] if d.get('enabled', True) and hasattr(REGISTRY.get(d.get('driver')), 'backup')
                       and (self.states.get(d['id']) or {}).get('status') == 'online' and self.backups.due(d['id'])), None)
@@ -318,7 +321,7 @@ class App:
         except Exception:
             traceback.print_exc()
             sec = None
-        admin_extra = {'ai': self.ai.public(), 'apps': cfg.get('apps') or {}, 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(),
+        admin_extra = {'ai': self.ai.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
@@ -332,6 +335,25 @@ class App:
 
 
 APP = None
+
+# where a device's own web interface lives when no explicit address is set
+WEB_PORTS = {'synology': ('http', 5000), 'homeassistant': ('http', 8123)}
+
+
+def web_access(d):
+    """{url, username, password} for the «Веб-интерфейс» block of a device card."""
+    host = (d.get('webUrl') or '').strip() or (d.get('host') or '').strip()
+    url = ''
+    if host:
+        if '://' in host:
+            url = host.rstrip('/')
+        elif d.get('driver') in WEB_PORTS and ':' not in host:
+            proto, port = WEB_PORTS[d['driver']]
+            url = f'{proto}://{host}:{port}'
+        elif d.get('driver') not in ('ping', 'agent', 'ups', 'snmp'):
+            url = 'http://' + host
+    return {'url': url, 'username': d.get('webUser') or d.get('username') or '',
+            'password': d.get('webPassword') or (d.get('password') if d.get('driver') in ('remote_web', 'keenetic', 'openwrt', 'tplink_jetstream', 'synology') else '') or ''}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -891,6 +913,9 @@ class Handler(BaseHTTPRequestHandler):
                         st.add_event(did, d.get('name'), 'info', res.get('message') or f'плагин {pid}: {op}')
                         APP.last_start.pop(did, None)               # re-poll soon: the VPN tab shows the new tunnel
                     return self.send(res)
+                if sub == 'creds' and method == 'POST':
+                    # web panel link + login for the device card («Открыть», «Скопировать») — admin only, never part of /api/state
+                    return self.send({'ok': True, **web_access(d)})
                 if sub == 'token' and method == 'POST':
                     return self.send({'ok': True, 'agentToken': d.get('agentToken')})
                 if sub == 'action' and method == 'POST':
@@ -935,6 +960,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path == '/api/routers/scan' and method == 'POST':
+                return self.send({'ok': True, 'started': APP.routers.run()})
+            if path == '/api/routers/dismiss' and method == 'POST':
+                APP.routers.dismiss(str(body.get('mac') or ''), bool(body.get('on', True)))
+                return self.send({'ok': True})
             if path == '/api/apps' and method == 'POST':
                 return self.apps(body)
             if path == '/api/inet' and method == 'PUT':

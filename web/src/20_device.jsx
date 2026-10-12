@@ -72,6 +72,26 @@ function PollNow({ device }) {
   }}>Обновить</Btn>;
 }
 
+/* «Веб-интерфейс»: open the device's own panel, login and password with «Скопировать» (fetched for the admin only, when the card opens) */
+function WebAccess({ device }) {
+  const toast = useToast();
+  const [c, setC] = useState(null); const [show, setShow] = useState(false);
+  useEffect(() => { api(`/api/devices/${device.id}/creds`, { method: 'POST', body: {} }).then(setC).catch(() => setC({})); }, [device.id, device.host, device.webUrl]);
+  if (!c || (!c.url && !c.username && !c.password)) return null;
+  const copy = (v, what) => toast(copyText(v) ? what + ' скопирован' : 'Не получилось скопировать — выделите вручную', !v);
+  return <Card title="Веб-интерфейс">
+    <div className="web-acc">
+      {c.url ? <div className="web-row"><Icon name="globe" size={16} color="var(--text3)" /><span className="mono grow ellipsis">{c.url.replace(/^https?:\/\//, '')}</span>
+        <a className="btn sm primary" href={c.url} target="_blank" rel="noreferrer">Открыть</a></div> : null}
+      {c.username ? <div className="web-row"><span className="web-k">Логин</span><span className="mono grow ellipsis">{c.username}</span>
+        <Btn size="sm" icon="copy" onClick={() => copy(c.username, 'Логин')}>Скопировать</Btn></div> : null}
+      {c.password ? <div className="web-row"><span className="web-k">Пароль</span><span className="mono grow ellipsis">{show ? c.password : '•'.repeat(Math.min(12, c.password.length))}</span>
+        <Btn size="sm" icon="eye" title={show ? 'Скрыть' : 'Показать'} onClick={() => setShow(!show)} />
+        <Btn size="sm" icon="copy" onClick={() => copy(c.password, 'Пароль')}>Скопировать</Btn></div> : null}
+    </div>
+  </Card>;
+}
+
 function Overview({ device, drv }) {
   const { admin, data } = useApp();
   const st = device.state || {}; const s = st.summary || {};
@@ -91,6 +111,7 @@ function Overview({ device, drv }) {
       {st.updated && st.summary ? <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>Показаны последние известные данные</div> : null}</div> : null}
     {stats.length ? <div className="stats">{stats}</div> : null}
     {st.ups ? <UpsCard ups={st.ups} /> : null}
+    {admin ? <WebAccess device={device} /> : null}
     <Card title="Сведения">
       <KV rows={[['Модель', s.model], ['Прошивка', s.fw], ['IP-адрес', s.ip ? <span className="mono">{s.ip}</span> : null],
         ['MAC', s.mac ? <span className="mono">{s.mac}</span> : null], ['Тип подключения', drv?.title],
