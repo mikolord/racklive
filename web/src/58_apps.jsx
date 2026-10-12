@@ -39,12 +39,21 @@ function QrCode({ text, size = 200 }) {
   return <div className="qr" style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-function InstallModal({ app, base, onClose }) {
-  const url = base.replace(/\/$/, '') + app.path;
+function InstallModal({ app, base, lanBase, onClose }) {
+  // the speed test can go either way: the domain works anywhere, the home address measures Wi-Fi exactly (and sees the access point)
+  const both = app.lan && lanBase && lanBase !== base;
+  const [via, setVia] = useState('domain');
+  const url = ((both && via === 'lan') ? lanBase : base).replace(/\/$/, '') + app.path;
   const http = url.startsWith('http://');
   const toast = useToast();
   const copy = () => { try { navigator.clipboard.writeText(url); toast('Ссылка скопирована'); } catch (e) { } };
   return <Modal title={'Установить «' + app.name + '»'} onClose={onClose} icon={<img src={app.icon} width="28" height="28" style={{ borderRadius: 7 }} alt="" />}>
+    {both ? <div className="col" style={{ gap: 8 }}>
+      <Seg value={via} onChange={setVia} options={[{ value: 'domain', label: 'Через домен' }, { value: 'lan', label: 'Домашний адрес' }]} />
+      <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45 }}>{via === 'domain'
+        ? 'Работает везде, в том числе вне дома, по https. Но запросы идут через роутер: точку доступа и сигнал Rack Live не увидит, а очень высокие скорости может упереться в роутер.'
+        : 'Самый точный замер Wi-Fi: видно точку доступа, диапазон и сигнал. Работает только дома. Можно поставить оба значка.'}</div>
+    </div> : null}
     <div className="inst-modal">
       <QrCode text={url} />
       <div className="col" style={{ gap: 10, minWidth: 0 }}>
@@ -60,8 +69,7 @@ function InstallModal({ app, base, onClose }) {
     </div>
     <div className="dim3" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
       {app.id !== 'rack' ? 'Приложение открывается сразу на весь экран, без вкладок Rack Live. ' : ''}На новом адресе нужно один раз войти тем же паролем.
-      {app.lan ? ' Тест скорости ставится по домашнему адресу: так он меряет именно Wi-Fi и сеть, а не https-прокси роутера. Работает, когда телефон дома.'
-        : http ? ' Адрес без https: на iPhone установка работает, но на Android не будет кнопки «Установить», а голосовой ввод в Frank не включится. Лучше сделать доменное имя (в карточке «Приложения на телефон»).' : ''}</div>
+      {http && !app.lan ? ' Адрес без https: на iPhone установка работает, но на Android не будет кнопки «Установить», а голосовой ввод в Frank не включится. Лучше сделать доменное имя (в карточке «Приложения на телефон»).' : ''}</div>
   </Modal>;
 }
 
@@ -136,6 +144,6 @@ function AppsCard() {
       </div>
     </div>
     {/* a portal: the card's backdrop-filter would otherwise trap the fixed overlay inside the card */}
-    {inst ? ReactDOM.createPortal(<InstallModal app={inst} base={inst.lan ? lanBase : base} onClose={() => setInst(null)} />, document.body) : null}
+    {inst ? ReactDOM.createPortal(<InstallModal app={inst} base={base} lanBase={lanBase} onClose={() => setInst(null)} />, document.body) : null}
   </Card>;
 }

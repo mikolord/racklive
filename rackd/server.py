@@ -411,10 +411,12 @@ class Handler(BaseHTTPRequestHandler):
         else the local IP this host uses towards the router + our port."""
         host = (self.headers.get('Host') or '').strip()
         h, _, p = host.rpartition(':') if host.count(':') == 1 else (host, '', '')
+        # through the router's own proxy the Host is rewritten to our bare IP without the port: then it is our listening port
+        via_router = self.client_ip() == re.sub(r'^\w+://|[:/].*$', '', router_host or '')
         try:
             import ipaddress
             if ipaddress.ip_address(h).is_private:
-                return h, int(p or 80)
+                return h, int(p or (os.environ.get('RL_PORT', '8080') if via_router else 80))
         except ValueError:
             pass
         import socket

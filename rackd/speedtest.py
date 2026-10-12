@@ -4,7 +4,7 @@ The browser test needs no app: the page downloads incompressible bytes from /api
 to /api/speedtest/up. Who is testing (which access point, band, signal) is looked up by the client's IP
 in the routers' client lists — that only works when the container sees real addresses (network_mode: host).
 """
-import ipaddress, json, os, secrets, shutil, subprocess, threading, time
+import ipaddress, json, os, re, secrets, shutil, subprocess, threading, time
 
 CHUNK = os.urandom(1 << 20)          # random → gzip / Wi-Fi compression can't cheat
 MAX_BYTES = 256 << 20                # one download/upload request is capped
@@ -64,6 +64,9 @@ def who(devices, states, ip):
     info = {'ip': ip}
     if not ip:
         return info
+    # opened through the router's domain name (KeenDNS proxy): every request comes from the router itself, the phone is not visible
+    if any(d.get('driver') == 'keenetic' and re.sub(r'^\w+://|[:/].*$', '', d.get('host') or '') == ip for d in devices):
+        return dict(info, proxy=True)
     by_id = {d['id']: d for d in devices}
     for did, st in states.items():
         for c in st.get('clients') or []:

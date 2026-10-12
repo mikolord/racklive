@@ -98,6 +98,8 @@ function WhoLine({ who }) {
     {who.rssi ? <span style={{ color: who.rssi > -65 ? 'var(--green)' : who.rssi > -75 ? 'var(--orange)' : 'var(--red)' }}> · {who.rssi} дБм</span> : null}
     {who.rate ? ` · соединение ${who.rate} Мбит/с` : ''}</span></div>;
   if (who.wired) return <div className="who"><Icon name="cable" size={16} /><span>Кабель · <b>{who.switch}</b>, порт {who.port}{who.linkSpeed ? ' · ' + fmt.speed(who.linkSpeed) : ''}</span></div>;
+  if (who.proxy) return <div className="who"><Icon name="globe" size={16} /><span>Открыто через доменное имя — запросы идут через роутер, поэтому точку доступа
+    и сигнал Rack Live не видит. Для точного замера Wi-Fi дома откройте тест по домашнему адресу.</span></div>;
   if (who.nat) return <div className="who warn"><Icon name="alert" size={16} /><span>Сервер видит не ваш адрес, а адрес Docker ({who.ip}) — точку доступа определить нельзя.
     Запустите контейнер с <code>network_mode: host</code> (см. README).</span></div>;
   return <div className="who"><Icon name="other" size={16} /><span>Устройство {who.ip} не найдено в списках роутера — точку доступа определить не удалось.</span></div>;
@@ -169,7 +171,7 @@ function SpeedApp() {
   const [view, setView] = useState('test');                 // 'test' | 'list'
   const last = list.find(t => t.kind !== 'iperf');
   const col = run ? speedLevel(run.value)[1] : res ? speedLevel(res.down)[1] : 'var(--text3)';
-  const sub = !who ? 'определяю подключение…' : who.wifi ? `Wi-Fi · ${who.apName}${who.band ? ' · ' + who.band : ''}` : who.wired ? `кабель · порт ${who.port}` : 'домашняя сеть';
+  const sub = !who ? 'определяю подключение…' : who.proxy ? 'через доменное имя' : who.wifi ? `Wi-Fi · ${who.apName}${who.band ? ' · ' + who.band : ''}` : who.wired ? `кабель · порт ${who.port}` : 'домашняя сеть';
   return <div className="frank-app"><div className="ai-panel standalone speed-app">
     <div className="fr-blur" />
     <div className="fr-top">
