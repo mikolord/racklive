@@ -43,6 +43,7 @@ function SecurityBody({ s }) {
     </div>
     <Hint id="security">Rack Live проверяет то, что видит сам: пробросы портов и удалённый доступ к роутеру, пароли по умолчанию, telnet и SNMP, прошивки.
       Где безопасно — есть кнопка «Исправить»; где нет — инструкция. Если что-то открыто специально, нажмите «Это нормально» — пункт уйдёт из оценки.</Hint>
+    <ExtScanBox />
     {groups.map(([l, list]) => <div key={l}>
       <div className="card-title" style={{ marginBottom: 6 }}>{SEC_LEVEL[l]} · {list.length}</div>
       <div className="list">{list.map(f => <SecurityItem key={f.id} f={f} onFix={fix} onIgnore={ignore} />)}</div>
@@ -51,6 +52,30 @@ function SecurityBody({ s }) {
       <button className="link-btn" onClick={() => setShowHidden(!showHidden)}><Icon name="chevron" size={13} style={{ transform: showHidden ? 'rotate(90deg)' : '' }} />Скрытые («это нормально») · {s.ignored.length}</button>
       {showHidden ? <div className="list">{s.ignored.map(f => <SecurityItem key={f.id} f={f} onIgnore={ignore} hidden />)}</div> : null}
     </div> : null}
+  </div>;
+}
+
+/* outside port check: an SSH server outside the home knocks on the home public IP */
+function ExtScanBox() {
+  const { data, refresh } = useApp(); const toast = useToast();
+  const x = data.extscan;
+  useEffect(() => { if (!x || !x.running) return; const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [x && x.running]);
+  if (!x) return null;
+  const servers = data.devices.filter(d => d.driver === 'ssh' || d.driver === 'demo_server');
+  const run = async () => { try { await api('/api/extscan/run', { method: 'POST', body: {} }); toast('Проверка снаружи началась'); setTimeout(refresh, 1500); } catch (e) { toast(e.message, true); } };
+  const pick = async id => { try { await api('/api/extscan', { method: 'PUT', body: { device: id } }); refresh(); } catch (e) { toast(e.message, true); } };
+  return <div className="awg-form">
+    <div className="row wrap" style={{ gap: 8 }}><Icon name="globe" size={17} color="var(--accent)" /><b className="grow">Проверка снаружи</b>
+      {servers.length ? <Btn size="sm" kind="primary" icon="refresh" busy={x.running} onClick={run}>{x.running ? 'Проверяю…' : 'Проверить сейчас'}</Btn> : null}</div>
+    {!servers.length ? <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>Изнутри своей сети нельзя честно проверить, что видно из интернета. Добавьте любой VPS как
+      «Сервер / VPS по SSH» — с него Rack Live раз в сутки «постучится» на ваш внешний IP и покажет, какие порты действительно открыты.</div> : <>
+      {servers.length > 1 ? <div className="row wrap" style={{ gap: 6 }}><span className="dim" style={{ fontSize: 13 }}>Проверять с:</span>
+        {servers.map(d => <button key={d.id} type="button" className={'chip' + (x.scanner && x.scanner.id === d.id ? ' on' : '')} onClick={() => pick(d.id)}>{d.name}</button>)}</div> : null}
+      {x.t ? x.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{x.error}</div>
+        : <div style={{ fontSize: 13.5, lineHeight: 1.45 }}>{fmt.ago(x.t, data.now)} с «{x.viaName}» на {x.ip}: проверено {x.checked.length} портов,{' '}
+          {x.open.length ? <>открыто <b>{x.open.length}</b>: <span className="mono">{x.open.join(', ')}</span></> : <b style={{ color: 'var(--green)' }}>ничего не открыто</b>}.
+          <div className="dim3" style={{ fontSize: 12 }}>Открытые порты учтены в замечаниях ниже: «✔ проверено снаружи» или отдельный пункт, если проброса для порта нет.</div></div>
+        : <div className="dim3" style={{ fontSize: 13 }}>Проверок ещё не было — «Проверить сейчас» или подождите, проверка идёт раз в сутки.</div>}</>}
   </div>;
 }
 

@@ -211,6 +211,23 @@ class Keenetic(Driver):
                             'ip': cfg['host'], 'mac': lanmac},
                 'ports': ports, 'clients': clients, 'children': children, 'sections': sections, 'vpn': self._vpn(get, rc)}
 
+    def backup(self, cfg):
+        """running-config as text — what rackd/backups.py versions."""
+        _, cli = self._session(cfg)
+        return '\n'.join(self._rc(cli)) + '\n'
+
+    # ───────── internet speed through a channel (rackd/inet.py) ─────────
+    def inet_test(self, cfg, iface):
+        """iface: 'isp' (the default route) or 'WireguardN' — curl in Entware bound to the tunnel (WireguardN = nwgN in Linux)."""
+        from .. import inet
+        if not cfg.get('entwarePassword'):
+            raise DriverError('для замера по каналам нужен доступ к Entware (плагин «Entware» → SSH)')
+        m = re.match(r'Wireguard(\d+)$', iface or '')
+        if iface not in ('isp', None) and not m:
+            raise DriverError(f'канал {iface}: поддерживаются только WireGuard/AmneziaWG')
+        iface_k = f'nwg{m.group(1)}' if m else ''
+        return inet.parse_curl(self._ssh(cfg, f'IFACE="{iface_k}"\nBIN=/opt/bin\n' + inet.CURL_TEST, 180))
+
     # ───────── security facts for the advisor (rackd/security.py) ─────────
     _updates = {}                                           # host -> (checked_at, info); the update check goes online, so 6 h cache
 

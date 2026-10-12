@@ -25,6 +25,9 @@ DEFAULT_NOTIFY = {
         'speed': {'on': True, 'minutes': 5},
         'errors': {'on': True, 'count': 50},
         'security': {'on': True},
+        'inet': {'on': True, 'pct': 50},
+        'newdev': {'on': True},
+        'config': {'on': True},
     },
 }
 SECRETS = (('telegram', 'token'), ('email', 'password'))
@@ -206,6 +209,10 @@ class Alerter:
                 cur.update(self.security_conditions(devices, states))
             except Exception:
                 pass
+            slow = self.inet.slow() if getattr(self, 'inet', None) and self.cfg()['rules']['inet']['on'] else None
+            if slow:
+                cur['inet:slow'] = (0, f'🐢 Интернет: {slow[0]:g} Мбит/с вместо {slow[1]:g} по тарифу (два замера подряд)',
+                                    '✅ Скорость интернета снова в норме', None)
             changed = self.base_dirty
             for key, (hold, on, off, did) in cur.items():
                 a = self.active.get(key)

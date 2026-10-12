@@ -137,6 +137,35 @@ def main():
         api('/api/security/ignore', {'id': upnp['id'], 'ignore': True}, 'POST')
         s2 = api('/api/state')['security']
         check('security: ignore hides a finding', any(f['id'] == upnp['id'] for f in s2['ignored']) and not any(f['id'] == upnp['id'] for f in s2['findings']))
+        # internet speed history + a manual run; config backups with diff; new devices; outside port check
+        st2 = api('/api/state')
+        n0 = len(st2['inet']['items'])
+        check('inet: history and settings', n0 > 20 and st2['inet']['cfg']['tariff'] == 1000)
+        api('/api/inet/run', {}, 'POST')
+        for _ in range(30):
+            if not api('/api/state')['inet']['running']:
+                break
+            time.sleep(.5)
+        check('inet: manual run adds results', len(api('/api/state')['inet']['items']) > n0)
+        b1 = api(f"/api/backups/{rt['id']}/run", {}, 'POST')
+        b2 = api(f"/api/backups/{rt['id']}/run", {}, 'POST')
+        vers = api(f"/api/backups/{rt['id']}")['versions']
+        diff = api(f"/api/backups/{rt['id']}/{vers[0]['t']}")['diff'] if vers else []
+        check('backups: first copy, then «unchanged», diff', b1['changed'] and not b2['changed'] and len(vers) == 1 and any(l.startswith('+') for l in diff),
+              json.dumps([b1, b2, len(vers)], ensure_ascii=False))
+        nd = st2.get('newDevices') or []
+        check('new devices: list', len(nd) >= 2)
+        api('/api/newdev/trust', {'mac': nd[0]['mac'], 'on': True}, 'POST')
+        check('new devices: «это моё»', next(r for r in api('/api/state')['newDevices'] if r['mac'] == nd[0]['mac'])['trusted'])
+        api('/api/extscan/run', {}, 'POST')
+        for _ in range(30):
+            x = api('/api/state')['extscan']
+            if not x['running'] and x.get('t'):
+                break
+            time.sleep(.5)
+        sec = api('/api/state')['security']
+        check('outside check: open ports feed the advisor', 22 in (x.get('open') or []) and any('Проверено снаружи' in f['text'] for f in sec['findings'])
+              and any(f['id'] == 'ext:1900' for f in sec['findings']), json.dumps(x, ensure_ascii=False)[:200])
         found = api('/api/detect', {'host': f'127.0.0.1:{port}'}, 'POST')['found']
         check('detect: answers with a ranked list', found and found[-1]['driver'] == 'ping', json.dumps(found, ensure_ascii=False)[:200])
         r = urllib.request.urlopen(urllib.request.Request(base + '/app.js', headers={'Accept-Encoding': 'gzip'}), timeout=30)
@@ -166,7 +195,8 @@ def main():
                  'Новое устройство (автоопределение)': '?add=1#devices',
                  'VPS · 3x-ui': f'?device={dev["demo_server"]}&tab=plugins&plugin=3xui',
                  'VPS · Remnawave': f'?device={dev["demo_server"]}&tab=plugins&plugin=remnawave',
-                 'Безопасность': '?security=1#rack'}
+                 'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
+                 'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices'}
         for name, q in pages.items():
             out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
                                   '--dump-dom', base + '/' + q], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout

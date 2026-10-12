@@ -44,7 +44,9 @@ class Driver:
     def schema(cls):
         return {'id': cls.id, 'title': cls.title, 'kind': cls.kind, 'description': cls.description,
                 'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden,
-                'plugins': callable(getattr(cls, 'plugins', None))}      # driver has a «Плагины» tab (see rackd/plugins.py)
+                'plugins': callable(getattr(cls, 'plugins', None)),      # driver has a «Плагины» tab (see rackd/plugins.py)
+                'backup': callable(getattr(cls, 'backup', None)),        # config versions (rackd/backups.py)
+                'inetTest': callable(getattr(cls, 'inet_test', None))}   # internet speed through it (rackd/inet.py)
 
 
 REGISTRY = {}

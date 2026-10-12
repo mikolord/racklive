@@ -208,6 +208,23 @@ class SSHHost(Driver):
             return self.iperf(cfg)
         return super().action(cfg, action_id, params)
 
+    def inet_test(self, cfg, iface=None):
+        """Internet speed of the server itself (Cloudflare, 4 streams via curl)."""
+        from .. import inet
+        return inet.parse_curl(self._run(cfg, 'IFACE=""\nBIN=/tmp/rl-bin\n' + inet.CURL_TEST, 180))
+
+    def port_scan(self, cfg, ip, ports):
+        """From this (outside) server: which TCP ports of `ip` answer. bash /dev/tcp, nc as a fallback."""
+        plist = ' '.join(str(int(p)) for p in ports)
+        script = f'''T=""; command -v timeout >/dev/null 2>&1 && T="timeout 3"
+for p in {plist}; do
+  ( if command -v bash >/dev/null 2>&1; then $T bash -c "</dev/tcp/{ip}/$p" 2>/dev/null; else nc -z -w 3 {ip} $p 2>/dev/null; fi && echo "@@open $p" ) &
+done; wait; echo @@end'''
+        out = self._run(cfg, script, 90)
+        if '@@end' not in out:
+            raise DriverError('сервер не завершил проверку портов')
+        return sorted({int(l.split()[1]) for l in out.splitlines() if l.startswith('@@open ')})
+
     # ───────── plugins: 3x-ui / Remnawave (see rackd/vps.py) ─────────
     async_ops = ('install', 'remove')                  # minutes long → the server runs them as background jobs
 

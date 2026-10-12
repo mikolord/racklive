@@ -83,6 +83,15 @@ class DemoRouter(DemoBase):
                            'ssh': {'on': True, 'level': 'private', 'port': 22}, 'http': {'level': 'private'}},
                 'upnp': True, 'update': {'available': True, 'title': '4.3.7', 'channel': 'stable'}}
 
+    def backup(self, cfg):
+        fw = '\n'.join(f"ip static {f['rule']} !{f['name']}" for f in self._security()['forwards'])
+        return f'! $$$ Model: Keenetic Ultra\n! $$$ Last change: {time.ctime()}\nsystem\n    hostname Office\n!\n{fw}\nip telnet\n    port 23\n!\n'
+
+    def inet_test(self, cfg, iface):
+        time.sleep(.5)
+        return {'down': round(random.uniform(280, 340), 1), 'up': round(random.uniform(60, 90), 1), 'ping': round(random.uniform(38, 45), 1),
+                'server': 'Cloudflare AMS', 'ip': '194.5.53.17', 'loc': 'NL'}
+
     def action(self, cfg, action_id, params):
         if action_id == 'sec_fix':
             self._closed.add(params.get('service') or str(params.get('rule', '')).split()[2])
@@ -323,6 +332,14 @@ class DemoServer(DemoBase):
     actions = [{'id': 'iperf', 'label': 'Тест скорости (iperf3)', 'scope': 'device', 'kind': 'speed',
                 'confirm': 'Измерить скорость до сервера в обе стороны? (демо)'}]
 
+    def inet_test(self, cfg, iface=None):
+        time.sleep(.5)
+        return {'down': round(random.uniform(850, 940), 1), 'up': round(random.uniform(820, 930), 1), 'ping': 1.2, 'server': 'Cloudflare FRA', 'ip': '198.51.100.40'}
+
+    def port_scan(self, cfg, ip, ports):
+        time.sleep(.5)
+        return sorted({22, 3389, 32400, 1900} & set(ports) | ({32400} if 32400 in ports else set()))
+
     # VPS panels, simulated: the same stages as the real installer
     async_ops = ('install', 'remove')
     _panels = {}
@@ -472,6 +489,23 @@ def seed(store):
                                      'client': {'ip': '10.0.0.' + str(100 + i), 'name': who, 'wifi': True, 'apName': ap_name[ap], 'band': band, 'rssi': rssi,
                                                 'rate': 866 if band.startswith('5') else 144}}
                                     for i, (f, x, y, dn, upl, png, ap, band, rssi, who) in enumerate(tests)])
+    # internet speed: a week every 4 hours, the provider sags in the evening; the Netherlands tunnel alongside
+    hist = []
+    for k in range(42):
+        tt = now - (41 - k) * 4 * 3600
+        hour = time.localtime(tt).tm_hour
+        sag = .35 if 19 <= hour <= 23 else 1
+        hist.append({'t': tt, 'source': 'racklive', 'label': 'Rack Live (основной канал)', 'down': round(random.uniform(880, 940) * sag, 1),
+                     'up': round(random.uniform(400, 460), 1), 'ping': round(random.uniform(3, 6), 1), 'server': 'Ростелеком, Москва', 'isp': 'Оптика 1 Гбит/с'})
+        hist.append({'t': tt + 60, 'source': f'{r}:wg1', 'label': 'Роутер · Выход · Нидерланды', 'down': round(random.uniform(260, 330), 1),
+                     'up': round(random.uniform(60, 90), 1), 'ping': round(random.uniform(38, 46), 1), 'server': 'Cloudflare AMS', 'loc': 'NL'})
+    store._dump('inetspeed.json', hist)
+    store.cfg['inet'] = {'enabled': True, 'hours': 4, 'tariff': 1000, 'server': 'ookla', 'channels': {r: ['wg1']}, 'servers': []}
+    store._dump('known.json', {'sources': {r: now, s: now}, 'trusted': [], 'macs': {},          # learning the office's devices silently
+                               'recent': [{'t': now - 5400, 'mac': 'de:ad:be:ef:10:01', 'name': 'Galaxy-A54', 'ip': '10.0.30.141', 'segment': 'Гости',
+                                           'via': 'Роутер', 'random': False},
+                                          {'t': now - 600, 'mac': '7a:11:22:33:44:55', 'name': '', 'ip': '10.0.0.188', 'segment': 'Основная',
+                                           'via': 'Роутер', 'random': True}]})
     store.add_event(None, 'Камера · Склад', 'offline', 'нет связи: не отвечает')
     store.add_event(s, 'Коммутатор ядра', 'info', 'PoE на порту 3 перезапущено')
     store.add_event(None, 'Камера · Склад', 'online', 'снова в сети')

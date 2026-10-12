@@ -1,14 +1,14 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threading, time, traceback
+import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threading, time, traceback, urllib.parse
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, auth, detect, security, speedtest, tgbot, topology
+from . import alerts, analysis, auth, backups, detect, extscan, inet, newdev, security, speedtest, tgbot, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.3.0'
+VERSION = '2.4.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -40,9 +40,16 @@ class App:
         self.alerter = alerts.Alerter(self.store)
         self.speed = speedtest.SpeedTests(self.store)
         self.jobs = {}
+        self.inet = inet.InetSpeed(self)
+        self.backups = backups.Backups(self.store)
+        self.newdev = newdev.NewDevices(self.store)
+        self.extscan = extscan.ExtScan(self)
+        self.alerter.inet = self.inet
+        self.backup_busy = False
         self.tgbot = tgbot.TgBot(self)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+        self.started = time.time()
 
     # ───────── polling ─────────
     def poll_device(self, d):
@@ -113,6 +120,46 @@ class App:
             if len(point) > 1:
                 self.store.add_point(d['id'], point)
 
+    def take_backup(self, d, force=False):
+        """Save the device config if it changed; an event + a notification when it did (not for the very first copy)."""
+        drv = REGISTRY.get(d.get('driver'))
+        v, msg = self.backups.take(d, drv, force)
+        if v:
+            self.store.add_event(d['id'], d.get('name'), 'info' if v['first'] else 'warning', msg)
+            if not v['first'] and self.alerter.cfg()['rules'].get('config', {}).get('on'):
+                threading.Thread(target=self.alerter.send, args=([f"⚙️ {d.get('name')}: {msg}"], None, d['id']), daemon=True).start()
+        return v, msg
+
+    def background(self):
+        """Scheduled jobs riding on the poller: internet speed, outside port check, config backups, new devices."""
+        if time.time() - self.started < 90:                  # let every device be polled first
+            return
+        if self.inet.due():
+            self.inet.start()
+        if self.extscan.due():
+            self.extscan.start()
+        if not self.backup_busy:
+            d = next((d for d in self.store.cfg['devices'] if d.get('enabled', True) and hasattr(REGISTRY.get(d.get('driver')), 'backup')
+                      and (self.states.get(d['id']) or {}).get('status') == 'online' and self.backups.due(d['id'])), None)
+            if d:
+                self.backup_busy = True
+
+                def job():
+                    try:
+                        self.take_backup(d)
+                    except Exception as e:
+                        log('backup', d.get('name'), e)
+                    finally:
+                        self.backup_busy = False
+                self.pool.submit(job)
+        new = self.newdev.scan(self.store.cfg['devices'], self.states)
+        if new:
+            lines = [newdev.describe(r) for r in new]
+            for r, l in zip(new, lines):
+                self.store.add_event(None, 'Новое устройство', 'warning', l[2:].strip())
+            if self.alerter.cfg()['rules'].get('newdev', {}).get('on'):
+                threading.Thread(target=self.alerter.send, args=(lines[:10] + ([f'…и ещё {len(lines) - 10}'] if len(lines) > 10 else []),), daemon=True).start()
+
     def poller(self):
         last_save = last_alert = time.time()
         while True:
@@ -120,6 +167,10 @@ class App:
                 last_alert = time.time()
                 try:
                     self.alerter.evaluate(list(self.store.cfg['devices']), self.states)
+                except Exception:
+                    traceback.print_exc()
+                try:
+                    self.background()
                 except Exception:
                     traceback.print_exc()
             try:
@@ -232,11 +283,13 @@ class App:
             traceback.print_exc()
             health = None
         try:                                                # security findings name ports and devices — only for the admin
-            sec = security.audit(cfg['devices'], self.states, idx, (cfg.get('security') or {}).get('ignored')) if authed else None
+            sec = security.audit(cfg['devices'], self.states, idx, (cfg.get('security') or {}).get('ignored'), self.extscan.last) if authed else None
         except Exception:
             traceback.print_exc()
             sec = None
-        return {'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
+        admin_extra = {'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(),
+                       'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
+        return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
                 'tgBot': {'username': self.tgbot.username, 'error': self.tgbot.error} if authed else None,
                 'tgLogin': self.tgbot.login_available(),
@@ -411,6 +464,24 @@ class Handler(BaseHTTPRequestHandler):
                 q = self.query()
                 key = m.group(1) + (f":p{int(q['port'])}" if q.get('port', '').isdigit() else '')
                 return self.send(APP.store.history.get(key, []))
+            m = re.match(r'/api/backups/(\w+)(?:/(\d+))?$', path)
+            if m:                                           # versions list · diff · raw file (admin only: configs hold secrets)
+                if not self.need_admin():
+                    return
+                did, t, q = m.group(1), m.group(2), self.query()
+                if not t:
+                    return self.send({'versions': (APP.backups.index.get(did) or [])[::-1]})
+                if q.get('raw'):
+                    d = APP.store.device(did) or {}
+                    b = APP.backups.read(did, t).encode()
+                    name = re.sub(r'[^\w.-]', '_', f"{d.get('name') or did}-{time.strftime('%Y%m%d-%H%M', time.localtime(int(t)))}.txt")
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                    self.send_header('Content-Disposition', f"attachment; filename=\"config.txt\"; filename*=UTF-8''{urllib.parse.quote(name)}")
+                    self.send_header('Content-Length', str(len(b)))
+                    self.end_headers()
+                    return self.wfile.write(b)
+                return self.send({'diff': APP.backups.diff(did, t, q.get('prev'))})
             if path == '/api/export':
                 if not self.need_admin():
                     return
@@ -660,6 +731,7 @@ class Handler(BaseHTTPRequestHandler):
                 if sub is None and method == 'DELETE':
                     st.add_event(None, d.get('name'), 'info', 'устройство удалено')
                     st.delete_device(did)
+                    APP.backups.forget(did)
                     APP.states.pop(did, None)
                     return self.send({'ok': True})
                 if sub == 'poll' and method == 'POST':
@@ -737,6 +809,37 @@ class Handler(BaseHTTPRequestHandler):
                     st.add_event(did, d.get('name'), 'info', f"{msg}")
                     threading.Thread(target=lambda: (time.sleep(3), APP.poll_device(d)), daemon=True).start()
                     return self.send({'ok': True, 'message': msg})
+            if path == '/api/inet' and method == 'PUT':
+                c = st.cfg.setdefault('inet', {})
+                for k in ('enabled', 'hours', 'tariff', 'server', 'channels', 'servers'):
+                    if k in body:
+                        c[k] = body[k]
+                st.save()
+                return self.send({'ok': True})
+            if path == '/api/inet/run' and method == 'POST':
+                return self.send({'ok': True, 'started': APP.inet.start()})
+            if path == '/api/extscan' and method == 'PUT':
+                c = st.cfg.setdefault('extscan', {})
+                for k in ('enabled', 'device'):
+                    if k in body:
+                        c[k] = body[k]
+                st.save()
+                return self.send({'ok': True})
+            if path == '/api/extscan/run' and method == 'POST':
+                if not APP.extscan.scanner():
+                    return self.err('нет внешнего сервера: добавьте любой VPS как «Сервер / VPS по SSH»')
+                return self.send({'ok': True, 'started': APP.extscan.start()})
+            if path == '/api/newdev/trust' and method == 'POST':
+                APP.newdev.trust(str(body.get('mac') or ''), bool(body.get('on', True)))
+                st.bump()
+                return self.send({'ok': True})
+            m = re.match(r'/api/backups/(\w+)/run$', path)
+            if m and method == 'POST':
+                d = st.device(m.group(1))
+                if not d or not hasattr(REGISTRY.get(d.get('driver')), 'backup'):
+                    return self.err('у этого устройства нет бэкапа конфигурации')
+                v, msg = APP.take_backup(d, force=True)
+                return self.send({'ok': True, 'changed': bool(v), 'message': msg})
             if path == '/api/security/ignore' and method == 'POST':
                 sec = st.cfg.setdefault('security', {})
                 ign = [x for x in sec.get('ignored') or [] if x != body.get('id')]
@@ -782,6 +885,9 @@ def main():
         from .drivers import demo
         demo.seed(APP.store)
         APP.speed.items = APP.store._load('speedtests.json', [])
+        APP.inet.items = APP.store._load('inetspeed.json', [])
+        APP.inet.last_run = max([x['t'] for x in APP.inet.items] or [0])
+        APP.newdev = newdev.NewDevices(APP.store)
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
         log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()

@@ -75,6 +75,17 @@ class OpenWrt(Driver):
         return SSHHost()._run({'host': self._hostname(cfg), 'sshPort': cfg.get('sshPort') or 22, 'username': cfg.get('username') or 'root',
                                'password': cfg.get('password') or ''}, script, timeout=timeout)
 
+    def inet_test(self, cfg, iface=None):
+        from .. import inet
+        return inet.parse_curl(self._ssh(cfg, 'IFACE=""\nBIN=/tmp/rl-bin\n' + inet.CURL_TEST, 180))
+
+    def backup(self, cfg):
+        """Full UCI configuration (all /etc/config files) — the text that is versioned."""
+        out = self._ssh(cfg, 'uci export 2>/dev/null; echo @@end', 40)
+        if '@@end' not in out:
+            raise DriverError('OpenWrt не отдал конфигурацию')
+        return out.split('@@end')[0]
+
     def _state(self, cfg):
         out = self._ssh(cfg, plugins.OWRT_STATUS, 30)
         if '@@end' not in out:

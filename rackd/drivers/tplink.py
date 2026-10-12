@@ -133,6 +133,15 @@ class TPLinkJetStream(Driver):
                                                                ['Серийный номер', info.get('Serial Number', '—')],
                                                                ['Имя', info.get('System Name', '—')]]}]}
 
+    def backup(self, cfg):
+        """running-config as text (prompt and echo lines removed) — what rackd/backups.py versions."""
+        out = self._cli(cfg, ['show running-config']).get('show running-config', '')
+        lines = [l.rstrip() for l in out.replace('\r', '').split('\n')]
+        lines = [l for l in lines if l.strip() and not re.match(r'^\S+[#>]\s*$', l) and l.strip() != 'show running-config']
+        if len(lines) < 5:
+            raise DriverError('коммутатор не отдал конфигурацию')
+        return '\n'.join(lines) + '\n'
+
     def action(self, cfg, action_id, params):
         port = int(params.get('port') or 0)
         if not 1 <= port <= 64:

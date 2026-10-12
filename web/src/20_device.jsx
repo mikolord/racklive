@@ -43,6 +43,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
   if ((st.vpn || []).length) tabs.push({ id: 'vpn', label: `VPN · ${st.vpn.filter(t => t.up).length}` });
   if (st.storage) tabs.push({ id: 'storage', label: 'Хранилище' });
   if ((st.services || []).length || (st.entities || []).length) tabs.push({ id: 'services', label: st.entities ? 'Управление' : `Сервисы · ${st.services.length}` });
+  if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигурация' });
   if (admin && drv && drv.plugins) tabs.push({ id: 'plugins', label: 'Плагины' });
   const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : 'overview');
   return <Sheet onClose={onClose} tab={tab} setTab={setTab} tabs={tabs}
@@ -59,6 +60,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
     {tab === 'storage' ? <StorageTab storage={st.storage} /> : null}
     {tab === 'services' ? <ServicesTab device={device} drv={drv} /> : null}
     {tab === 'plugins' ? <PluginsTab device={device} /> : null}
+    {tab === 'config' ? <BackupsTab device={device} /> : null}
   </Sheet>;
 }
 

@@ -13,8 +13,10 @@ function DevicesView() {
   const sites = [...new Set(data.devices.map(d => d.site).filter(Boolean))];
   const counts = { all: data.devices.length, problems: data.devices.filter(d => ['offline', 'warning'].includes((d.state || {}).status)).length,
     local: data.devices.filter(d => d.location !== 'remote').length, remote: data.devices.filter(d => d.location === 'remote').length };
+  const [showNew, setShowNew] = useState(false);
   return <>
     <div className="row wrap" style={{ marginBottom: 14 }}>
+      {data.newDevices ? <button className={'chip' + (showNew ? ' on' : '')} onClick={() => setShowNew(!showNew)}><Icon name="plus" size={13} />Новые в сети · {data.newDevices.length}</button> : null}
       {[['all', 'Все'], ['problems', 'Проблемы'], ['local', 'Локальные'], ['remote', 'Удалённые']].map(([k, l]) =>
         <button key={k} className={'chip' + (flt === k ? ' on' : '')} onClick={() => setFlt(k)}>{l} · {counts[k]}</button>)}
       <div className="grow" />
@@ -25,6 +27,7 @@ function DevicesView() {
       <div style={{ fontSize: 40, marginBottom: 10 }}>🛰️</div><div style={{ fontSize: 17, fontWeight: 600, color: 'var(--text)' }}>Пока нет ни одного устройства</div>
       <div style={{ margin: '6px 0 16px' }}>Добавьте роутер, коммутатор, NAS или любой сервер — данные начнут собираться автоматически.</div>
       {admin ? <Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить устройство</Btn> : null}</div></Card> : null}
+    {data.newDevices && (showNew || data.newDevices.some(r => !r.trusted)) ? <div style={{ marginBottom: 20 }}><NewDevicesCard /></div> : null}
     {(sites.length ? [...sites, ''] : ['']).map(site => {
       const items = list.filter(d => (d.site || '') === site); if (!items.length) return null;
       return <div key={site || '_'} style={{ marginBottom: 20 }}>

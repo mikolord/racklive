@@ -37,12 +37,21 @@ def _port0(p):
         return 0
 
 
-def audit(devices, states, peer_index=None, ignored=()):
-    """→ {score, counts, findings: [...], ignored: [...]} — findings sorted bad → warn → info."""
+def audit(devices, states, peer_index=None, ignored=(), ext=None):
+    """→ {score, counts, findings: [...], ignored: [...]} — findings sorted bad → warn → info.
+    `ext` = the last outside port check {open, checked, ...}: confirms findings and reveals unexpected open ports."""
     found, by_id = [], {d['id']: d for d in devices}
     idx = peer_index or {}
+    ext = ext if ext and not ext.get('error') and ext.get('checked') else None
+    ext_open, ext_checked, explained = set(ext['open']) if ext else set(), set(ext['checked']) if ext else set(), set()
 
-    def add(fid, level, title, text, did=None, fix=None, how=''):
+    def add(fid, level, title, text, did=None, fix=None, how='', port=None):
+        if ext and port:
+            explained.add(port)
+            if port in ext_open:
+                text += ' ✔ Проверено снаружи: порт действительно открыт.'
+            elif port in ext_checked:
+                text += ' Снаружи порт сейчас не отвечает (устройство выключено или сервис не слушает), но проброс остаётся.'
         found.append({'id': fid, 'level': level, 'title': title, 'text': text, 'deviceId': did, 'fix': fix, 'how': how})
 
     for d in devices:
@@ -61,7 +70,7 @@ def audit(devices, states, peer_index=None, ignored=()):
                 (f'{what}: {why}. ' if what else 'Любой в интернете может подключиться к этому порту. ') +
                 'Если доступ нужен только вам — используйте VPN (у вас есть WireGuard на роутере), а проброс закройте.',
                 did, {'action': 'sec_fix', 'params': {'kind': 'forward', 'rule': f['rule'], 'label': label}, 'label': 'Закрыть проброс',
-                      'confirm': f'Закрыть проброс {label}? Доступ из интернета к этому порту пропадёт.'})
+                      'confirm': f'Закрыть проброс {label}? Доступ из интернета к этому порту пропадёт.'}, port=port)
         # ── router: management from the internet ──
         rem = sec.get('remote') or {}
         t = rem.get('telnet') or {}
@@ -69,19 +78,20 @@ def audit(devices, states, peer_index=None, ignored=()):
             add(f'remote:{did}:telnet', 'bad', f"Telnet роутера «{name}» открыт в интернет (порт {t.get('port', 23)})",
                 'Через telnet можно управлять роутером, а пароль летит открытым текстом. Боты сканируют telnet постоянно.', did,
                 {'action': 'sec_fix', 'params': {'kind': 'remote', 'service': 'telnet'}, 'label': 'Только из домашней сети',
-                 'confirm': 'Оставить telnet роутера доступным только из домашней сети?'})
+                 'confirm': 'Оставить telnet роутера доступным только из домашней сети?'}, port=t.get('port', 23))
         s = rem.get('ssh') or {}
         if s.get('on') and s.get('level') == 'public':
             add(f'remote:{did}:ssh', 'warn', f"SSH роутера «{name}» открыт в интернет (порт {s.get('port', 22)})",
                 'Управление роутером доступно из интернета — его будут перебирать. Для доступа снаружи надёжнее VPN.', did,
                 {'action': 'sec_fix', 'params': {'kind': 'remote', 'service': 'ssh'}, 'label': 'Только из домашней сети',
-                 'confirm': 'Оставить SSH роутера доступным только из домашней сети?'})
+                 'confirm': 'Оставить SSH роутера доступным только из домашней сети?'}, port=s.get('port', 22))
         h = rem.get('http') or {}
         if h.get('level') == 'public':
             add(f'remote:{did}:http', 'warn', f"Веб-интерфейс роутера «{name}» доступен из интернета",
                 'Страница входа в роутер открыта всему интернету. Если веб-приложения KeenDNS вам не нужны снаружи — запретите удалённый доступ.',
                 did, None, 'Веб-интерфейс роутера → «Пользователи и доступ» → доступ к веб-конфигуратору — только из домашней сети. '
-                           'Внимание: опубликованные через KeenDNS веб-приложения тоже перестанут открываться снаружи.')
+                           'Внимание: опубликованные через KeenDNS веб-приложения тоже перестанут открываться снаружи.', port=h.get('port', 80))
+            explained.add(h.get('sslPort', 443))
         if sec.get('upnp'):
             add(f'upnp:{did}', 'info', 'UPnP включён',
                 'Любая программа или умное устройство в сети может само открыть себе порт в интернет — без вашего ведома.', did, None,
@@ -123,6 +133,14 @@ def audit(devices, states, peer_index=None, ignored=()):
             if m.get('label') == 'Сертификат' and isinstance(m.get('value'), (int, float)) and m['value'] <= 14:
                 add(f'cert:{did}', 'warn' if m['value'] > 3 else 'bad', f"«{name}»: сертификат истекает через {m['value']} дн.",
                     'После истечения браузеры и приложения покажут ошибку безопасности.', did, None, 'Проверьте автопродление сертификата на сервере.')
+
+    # ports that answer from the internet although no router forwards them (UPnP, the router's own services, another router)
+    for port in sorted(ext_open - explained):
+        lvl, what, why = RISKY_PORTS.get(port, ('warn', '', ''))
+        add(f'ext:{port}', lvl, f"Снаружи отвечает порт {port}" + (f' · {what}' if what else ''),
+            (f'{what}: {why}. ' if what else '') + 'Проброса для него в настройках роутера нет — его могла открыть программа через UPnP, '
+            'это может быть сервис самого роутера или второго роутера за ним.', None, None,
+            'Найдите, кто слушает порт: список UPnP-пробросов и приложений в веб-интерфейсе роутера. Если порт не нужен — выключите UPnP или сервис.')
 
     ign = set(ignored or ())
     order = {'bad': 0, 'warn': 1, 'info': 2}
