@@ -168,6 +168,28 @@ def main():
               and any(f['id'] == 'ext:1900' for f in sec['findings']), json.dumps(x, ensure_ascii=False)[:200])
         found = api('/api/detect', {'host': f'127.0.0.1:{port}'}, 'POST')['found']
         check('detect: answers with a ranked list', found and found[-1]['driver'] == 'ping', json.dumps(found, ensure_ascii=False)[:200])
+        try:
+            api('/api/ai/ask', {'chat': None, 'text': 'привет'}, 'POST')
+            check('assistant: refuses until set up', False)
+        except urllib.error.HTTPError as e:
+            check('assistant: refuses until set up', e.code == 400)
+        api('/api/ai', {'enabled': False, 'preset': 'deepseek', 'key': 'sk-smoke-secret'}, 'PUT')
+        ai = api('/api/state')
+        check('assistant: key kept server-side only', ai['ai']['keySet'] and 'sk-smoke-secret' not in json.dumps(ai))
+        # saved chats: a provider nobody listens on → the question and the error are both kept in the conversation
+        api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-x'}, 'PUT')
+        r = api('/api/ai/ask', {'chat': None, 'text': 'Всё ли в порядке?'}, 'POST')
+        for _ in range(40):
+            if api('/api/ai/job', {'job': r['job']}, 'POST')['done']:
+                break
+            time.sleep(.3)
+        lst = api('/api/ai/chats')['chats']
+        c = api('/api/ai/chats/' + r['chat'])
+        check('assistant: chat saved on the server', len(lst) == 1 and lst[0]['title'] == 'Всё ли в порядке?' and len(c['messages']) == 2 and c['messages'][1].get('err'),
+              json.dumps(lst, ensure_ascii=False)[:200])
+        api('/api/ai/chats/' + r['chat'], {}, 'DELETE')
+        check('assistant: chat deleted', not api('/api/ai/chats')['chats'])
+        api('/api/ai', {'enabled': False, 'preset': 'custom'}, 'PUT')
         r = urllib.request.urlopen(urllib.request.Request(base + '/app.js', headers={'Accept-Encoding': 'gzip'}), timeout=30)
         body = r.read()
         check('app.js served gzipped', r.headers.get('Content-Encoding') == 'gzip' and len(gzip.decompress(body)) > len(body))
@@ -196,8 +218,12 @@ def main():
                  'VPS · 3x-ui': f'?device={dev["demo_server"]}&tab=plugins&plugin=3xui',
                  'VPS · Remnawave': f'?device={dev["demo_server"]}&tab=plugins&plugin=remnawave',
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
-                 'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices'}
+                 'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
+                 'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
+                 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings'}
         for name, q in pages.items():
+            if name == 'Помощник — настроен':          # a provider nobody listens on: enough for the panel to show the chat
+                api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-test'}, 'PUT')
             out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
                                   '--dump-dom', base + '/' + q], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
             err = ''
@@ -210,6 +236,34 @@ def main():
                 check('покрытие Wi-Fi на плане', 'cov-pin' in out)
             if name == 'Тест скорости':
                 check('окно теста скорости', 'gauge' in out)
+            if name == 'Настройки':
+                check('настройки разбиты на разделы', out.count('set-item') >= 6 and 'set-head' in out)
+            if name == 'Настройки · Frank':
+                check('карточка помощника в настройках', 'ai-settings' in out)
+            if name == 'Настройки · Приложения':
+                check('карточка «Приложения на телефон»', 'Приложения на телефон' in out and 'app-row' in out)
+            if name == 'Настройки · Уведомления':
+                check('уведомления в своём разделе', 'notify-grid' in out)
+            if name == 'Помощник — не настроен':
+                # the API part above saved a key with the assistant switched off
+                check('панель помощника: «ключ есть, но выключен»', 'ai-panel' in out and 'Frank выключен' in out)
+            if name == 'Помощник — настроен':
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=600,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/frank'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('Frank отдельным приложением (/frank)', 'ai-panel standalone' in out and 'frank-manifest.json' in out and 'data-js-error="' not in out)
+                man = json.loads(urllib.request.urlopen(base + '/frank-manifest.json', timeout=10).read())
+                check('манифест Frank', man['start_url'] == '/frank' and man['name'] == 'Frank')
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=600,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/speed'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('тест скорости отдельным приложением (/speed)', 'speed-app' in out and 'sp-start' in out and 'gauge' in out and 'data-js-error="' not in out)
+                man = json.loads(urllib.request.urlopen(base + '/speed-manifest.json', timeout=10).read())
+                check('манифест теста скорости', man['start_url'] == '/speed')
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/?section=apps&install=frank#settings'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('окно установки Frank с QR-кодом', 'class="qr"' in out and '<svg' in out.split('class="qr"', 1)[-1][:200] and 'data-js-error="' not in out)
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/' + q], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('панель помощника: подсказки и поле ввода', 'ai-suggest' in out and 'ai-foot' in out)
     finally:
         srv.terminate()
         try:

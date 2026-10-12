@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, auth, backups, detect, extscan, inet, newdev, security, speedtest, tgbot, topology
+from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, security, speedtest, tgbot, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.4.0'
+VERSION = '2.5.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -47,6 +47,7 @@ class App:
         self.alerter.inet = self.inet
         self.backup_busy = False
         self.tgbot = tgbot.TgBot(self)
+        self.ai = assistant.Assistant(self)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
@@ -287,7 +288,7 @@ class App:
         except Exception:
             traceback.print_exc()
             sec = None
-        admin_extra = {'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(),
+        admin_extra = {'ai': self.ai.public(), 'apps': cfg.get('apps') or {}, 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
@@ -404,6 +405,67 @@ class Handler(BaseHTTPRequestHandler):
             APP.speed.slots.release()
         return self.send({'bytes': n - left, 'ms': round((time.time() - t) * 1000)})
 
+    # ── «apps on the phone»: an https address for installing Frank / speed test, made on the Keenetic if there is one ──
+    def own_address(self, router_host):
+        """Where the router should send the domain's traffic: the address the admin opened Rack Live by (it reaches us),
+        else the local IP this host uses towards the router + our port."""
+        host = (self.headers.get('Host') or '').strip()
+        h, _, p = host.rpartition(':') if host.count(':') == 1 else (host, '', '')
+        try:
+            import ipaddress
+            if ipaddress.ip_address(h).is_private:
+                return h, int(p or 80)
+        except ValueError:
+            pass
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((re.sub(r'^\w+://|[:/].*$', '', router_host) or '192.168.1.1', 80))
+            return s.getsockname()[0], int(os.environ.get('RL_PORT', '8080'))
+        finally:
+            s.close()
+
+    def apps(self, body):
+        st = APP.store
+        cur = st.cfg.setdefault('apps', {})
+        op = body.get('op') or 'status'
+        routers = [d for d in st.cfg['devices'] if d.get('driver') == 'keenetic' and d.get('enabled', True)]
+        d = next((x for x in routers if x['id'] == body.get('device')), None) or next(
+            (x for x in routers if (APP.states.get(x['id']) or {}).get('status') != 'offline'), None) or (routers[0] if routers else None)
+        if op == 'set':                                      # an address made by hand (any reverse proxy with https)
+            url = str(body.get('url') or '').strip().rstrip('/')
+            if url and not url.startswith('https://'):
+                return self.err('нужен адрес, начинающийся с https:// — иначе телефон не даст микрофон и установку на Android')
+            st.cfg['apps'] = {'url': url} if url else {}
+            st.save()
+            return self.send({'ok': True, 'apps': st.cfg['apps']})
+        if not d:
+            return self.send({'ok': True, 'apps': cur, 'router': None})
+        drv = REGISTRY['keenetic']
+        ip, port = self.own_address(d.get('host') or '')
+        try:
+            if op == 'status':
+                r = drv.keendns(d, 'status', {'ip': ip, 'port': port})
+            elif op == 'create':
+                r = drv.keendns(d, 'create', {'ip': ip, 'port': port, 'public': bool(body.get('public')), 'name': body.get('name') or 'racklive'})
+                st.cfg['apps'] = {'url': r['url'], 'device': d['id'], 'proxy': r['proxy'], 'public': r['public'],
+                                  'created': bool(r.get('created') or cur.get('created') and cur.get('proxy') == r['proxy'])}
+                st.save()
+                st.add_event(d['id'], d.get('name'), 'info', f"доменное имя Rack Live: {r['url']} ({'из интернета' if r['public'] else 'только из домашней сети'})")
+            elif op == 'remove':
+                if cur.get('created') and cur.get('proxy') and cur.get('device') == d['id']:
+                    r = drv.keendns(d, 'remove', {'name': cur['proxy']})
+                    st.add_event(d['id'], d.get('name'), 'info', f"доменное имя Rack Live удалено: {cur.get('url')}")
+                else:
+                    r = {}
+                st.cfg['apps'] = {}
+                st.save()
+            else:
+                return self.err('неизвестная операция')
+        except DriverError as e:
+            return self.send({'ok': False, 'error': str(e), 'apps': st.cfg.get('apps') or {}, 'router': {'id': d['id'], 'name': d.get('name')}})
+        return self.send({'ok': True, 'apps': st.cfg.get('apps') or {}, 'router': dict(r, id=d['id'], name=d.get('name'), target=f'{ip}:{port}')})
+
     def need_admin(self):
         if not self.authed():
             self.err('нужен вход администратора', 401)
@@ -414,6 +476,8 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, path):
         if path in ('', '/'):
             path = '/index.html'
+        if path.rstrip('/') in ('/frank', '/speed'):          # separate installable apps (own manifest and icon): Frank, speed test
+            path = path.rstrip('/') + '.html'
         full = os.path.normpath(os.path.join(WEB, path.lstrip('/')))
         if not full.startswith(os.path.normpath(WEB)) or not os.path.isfile(full):
             full = os.path.join(WEB, 'index.html')          # SPA fallback
@@ -482,6 +546,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     return self.wfile.write(b)
                 return self.send({'diff': APP.backups.diff(did, t, q.get('prev'))})
+            m = re.match(r'/api/ai/chats(?:/(\w+))?$', path)
+            if m:                                           # saved conversations with Frank (admin only: they quote the network)
+                if not self.need_admin():
+                    return
+                if not m.group(1):
+                    return self.send({'chats': APP.ai.chat_list()})
+                c = APP.ai.chat_view(m.group(1))
+                return self.send(c) if c else self.err('разговор не найден', 404)
             if path == '/api/export':
                 if not self.need_admin():
                     return
@@ -809,6 +881,37 @@ class Handler(BaseHTTPRequestHandler):
                     st.add_event(did, d.get('name'), 'info', f"{msg}")
                     threading.Thread(target=lambda: (time.sleep(3), APP.poll_device(d)), daemon=True).start()
                     return self.send({'ok': True, 'message': msg})
+            if path in ('/api/ai', '/api/ai/test') and method in ('PUT', 'POST'):
+                cur =assistant.merged(st.cfg.get('ai'))
+                new = assistant.merged(dict(cur, **{k: v for k, v in body.items() if k in assistant.DEFAULT and k != 'key'}))
+                # empty key = keep the saved one, but only for the same provider (a DeepSeek key must not go to another service)
+                new['key'] = str(body.get('key') or '').strip() or (cur['key'] if new['preset'] == cur['preset'] else '')
+                new['limit'] = max(0, int(new.get('limit') or 0))
+                if path == '/api/ai/test':
+                    try:
+                        return self.send({'ok': True, 'answer': assistant.ping(new)[:200]})
+                    except assistant.AiError as e:
+                        return self.send({'ok': False, 'error': str(e)})
+                st.cfg['ai'] = new
+                st.save()
+                return self.send({'ok': True})
+            if path == '/api/ai/ask' and method == 'POST':
+                try:
+                    job = APP.ai.start(body.get('chat') or None, body.get('text'))
+                except assistant.AiError as e:
+                    return self.err(str(e))
+                return self.send({'ok': True, 'job': job['id'], 'chat': job['chat']})
+            m = re.match(r'/api/ai/chats/(\w+)$', path)
+            if m and method == 'DELETE':
+                APP.ai.delete_chat(m.group(1))
+                return self.send({'ok': True})
+            if m and method == 'PUT':
+                return self.send({'ok': bool(APP.ai.rename_chat(m.group(1), body.get('title')))})
+            if path == '/api/ai/job' and method == 'POST':
+                j = APP.ai.jobs.get(str(body.get('job') or ''))
+                return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path == '/api/apps' and method == 'POST':
+                return self.apps(body)
             if path == '/api/inet' and method == 'PUT':
                 c = st.cfg.setdefault('inet', {})
                 for k in ('enabled', 'hours', 'tariff', 'server', 'channels', 'servers'):

@@ -55,7 +55,8 @@ function HealthBody({ h, onCheck, onNode }) {
     <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>{t.note}</div>
 
     <div>
-      <div className="card-title" style={{ marginBottom: 6 }}>Замечания</div>
+      <div className="row" style={{ marginBottom: 6 }}><div className="card-title grow" style={{ margin: 0 }}>Замечания</div>
+        <AskAi label="Разобрать" q="Разбери замечания по здоровью сети: что из этого действительно важно, чем грозит и что сделать — по шагам." /></div>
       <div className="list">{h.checks.map((c, i) => <CheckItem key={i} c={c} onClick={onCheck} />)}</div>
     </div>
 

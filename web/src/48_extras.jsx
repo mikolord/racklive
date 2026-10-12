@@ -128,7 +128,8 @@ function BackupsTab({ device }) {
     <Hint id="backups">Rack Live раз в 6 часов сохраняет конфигурацию устройства, если она изменилась, и показывает, что именно поменялось. Если что-то сломалось после правки настроек —
       здесь видно, какие строки менялись, и можно скачать прошлую версию. Пароли и ключи в сравнении скрыты.</Hint>
     <div className="row wrap"><Btn icon="download" kind="primary" onClick={now}>Сохранить сейчас</Btn>
-      <span className="dim3" style={{ fontSize: 12.5 }}>{vers.length ? `версий: ${vers.length} · проверено ${fmt.ago(vers[0].checked || vers[0].t, data.now)}` : 'копий ещё нет'}</span></div>
+      <span className="dim3" style={{ fontSize: 12.5 }}>{vers.length ? `версий: ${vers.length} · проверено ${fmt.ago(vers[0].checked || vers[0].t, data.now)}` : 'копий ещё нет'}</span>
+      {sel && diff && diff.length > 0 && (vers.find(v => v.t === sel) || {}).first === false ? <AskAi label="Что изменилось?" q={`Объясни простыми словами, что изменилось в конфигурации устройства «${device.name}» (id ${device.id}) в версии ${sel} от ${fmt.time(sel)}: что включили или выключили и не опасно ли это.`} /> : null}</div>
     {vers.length ? <div className="backup-grid">
       <div className="list backup-list">{vers.map(v => <div role="button" tabIndex={0} key={v.t} className={'li backup-v' + (sel === v.t ? ' on' : '')} onClick={() => setSel(v.t)}>
         <div className="grow" style={{ textAlign: 'left' }}><b style={{ fontSize: 13.5 }}>{fmt.time(v.t)}</b>

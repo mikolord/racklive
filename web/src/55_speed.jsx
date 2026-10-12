@@ -103,8 +103,9 @@ function WhoLine({ who }) {
   return <div className="who"><Icon name="other" size={16} /><span>Устройство {who.ip} не найдено в списках роутера — точку доступа определить не удалось.</span></div>;
 }
 
-function SpeedTestModal({ onClose, autoRun }) {
-  const { data, admin, refresh, pinSpeedTest } = useApp(); const toast = useToast(); const confirm = useConfirm();
+/* the test itself — shared by the modal inside Rack Live and the separate /speed app */
+function useSpeedTest(autoRun) {
+  const { data, admin, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [who, setWho] = useState(null);
   const [run, setRun] = useState(null);                   // {phase, value, progress}
   const [res, setRes] = useState(null);
@@ -131,8 +132,13 @@ function SpeedTestModal({ onClose, autoRun }) {
   const del = async t => { if (!(await confirm('Удалить этот замер?', { danger: true, ok: 'Удалить' }))) return;
     try { await api('/api/speedtest/' + t.id, { method: 'DELETE' }); refresh(); } catch (e) { toast(e.message, true); } };
   useEffect(() => { if (autoRun) start(); }, []);          // ?speedtest=run — e.g. a home-screen shortcut
-  const hasPlan = ((data.plan || {}).buildings || []).length > 0;
-  const list = (data.speedtests || []).slice().reverse();
+  return { data, admin, who, run, res, saved, note, setNote, start, saveNote, del,
+    hasPlan: ((data.plan || {}).buildings || []).length > 0, list: (data.speedtests || []).slice().reverse() };
+}
+
+function SpeedTestModal({ onClose, autoRun }) {
+  const { pinSpeedTest } = useApp();
+  const s = useSpeedTest(autoRun); const { data, admin, who, run, res, saved, note, setNote, start, saveNote, del, hasPlan, list } = s;
   return <Modal title="Тест скорости" onClose={onClose} icon={<Icon name="gauge" size={20} color="var(--accent)" />}>
     <Hint id="speed-intro">Тест меряет скорость между этим устройством и сервером Rack Live — то есть вашу домашнюю сеть и Wi-Fi, а не интернет.
       Пройдитесь по дому и сделайте тест в каждой комнате — на «Плане» получится карта покрытия Wi-Fi.</Hint>
@@ -154,6 +160,47 @@ function SpeedTestModal({ onClose, autoRun }) {
       <div className="list">{list.slice(0, 30).map(t => <SpeedRow key={t.id} t={t} now={data.now} onDelete={admin ? () => del(t) : null} />)}</div>
     </div> : null}
   </Modal>;
+}
+
+/* /speed — the speed test as a separate app: same floating chrome as Frank (glass circles on top, a capsule at the bottom) */
+function SpeedApp() {
+  const s = useSpeedTest(new URLSearchParams(location.search).get('run') === '1');
+  const { data, admin, who, run, res, saved, note, setNote, start, saveNote, del, list } = s;
+  const [view, setView] = useState('test');                 // 'test' | 'list'
+  const last = list.find(t => t.kind !== 'iperf');
+  const col = run ? speedLevel(run.value)[1] : res ? speedLevel(res.down)[1] : 'var(--text3)';
+  const sub = !who ? 'определяю подключение…' : who.wifi ? `Wi-Fi · ${who.apName}${who.band ? ' · ' + who.band : ''}` : who.wired ? `кабель · порт ${who.port}` : 'домашняя сеть';
+  return <div className="frank-app"><div className="ai-panel standalone speed-app">
+    <div className="fr-blur" />
+    <div className="fr-top">
+      <div className="fr-side"><button type="button" className="fr-circle" title={view === 'list' ? 'К тесту' : 'Все замеры'} onClick={() => setView(view === 'list' ? 'test' : 'list')}>
+        <Icon name={view === 'list' ? 'chevronLeft' : 'menu'} size={22} stroke={2} /></button></div>
+      <div className="fr-title"><b>{view === 'list' ? 'Замеры' : 'Тест скорости'}</b><span>{view === 'list' ? `всего ${list.length}` : sub}</span></div>
+      <div className="fr-side r"><div className={'fr-circle sp-ind' + (run ? ' on' : '')} style={{ color: col }} title={run ? run.phase : 'Тест скорости'}><Icon name="gauge" size={22} stroke={2.2} /></div></div>
+    </div>
+    <div className="ai-list sp-body">
+      <InstallBanner app="speed" name="Тест скорости" />
+      {view === 'list' ? (list.length ? <div className="list sp-glass">{list.slice(0, 100).map(t => <SpeedRow key={t.id} t={t} now={data.now} onDelete={admin ? () => del(t) : null} />)}</div>
+        : <div className="ai-empty"><div className="dim">Замеров пока нет — сделайте первый тест.</div></div>) : <>
+        <div className="sp-who"><WhoLine who={who} /></div>
+        <Gauge value={run ? run.value : res ? res.down : 0} phase={run ? run.phase : res ? 'Загрузка ↓' : ''} progress={run ? run.progress : null} />
+        {res ? <>
+          <div className="stats">
+            <Stat k="Загрузка ↓" v={mbpsText(res.down)} unit="Мбит/с" /><Stat k="Отдача ↑" v={mbpsText(res.up)} unit="Мбит/с" />
+            <Stat k="Задержка" v={res.ping} unit="мс" /><Stat k="Джиттер" v={res.jitter} unit="мс" /></div>
+          <div className="speed-verdict" style={{ borderColor: speedLevel(res.down)[1] }}>{speedVerdict(res, who).map((l, i) => <div key={i}>{l}</div>)}</div>
+          {saved ? <input className="input sp-note" value={note} placeholder="Где вы? Например: кухня, у окна" onChange={e => setNote(e.target.value)} onBlur={saveNote} />
+            : !admin ? <div className="dim3" style={{ fontSize: 12.5, textAlign: 'center' }}>Результат не сохранён: сохранять замеры может только администратор.</div> : null}
+        </> : !run ? <div className="dim" style={{ fontSize: 14, lineHeight: 1.5, textAlign: 'center', maxWidth: 380, margin: '0 auto' }}>
+          Тест меряет скорость между телефоном и Rack Live — то есть вашу домашнюю сеть и Wi-Fi, а не интернет. Сделайте тест в каждой комнате — получится карта покрытия.
+          {last ? <div className="dim3" style={{ marginTop: 10, fontSize: 13 }}>Прошлый замер: ↓ {mbpsText(last.down)} · ↑ {mbpsText(last.up)} Мбит/с · {fmt.ago(last.t, data.now)}</div> : null}</div> : null}
+      </>}
+    </div>
+    {view === 'test' ? <div className="fr-dock sp-dock">
+      <button type="button" className={'sp-start' + (run ? ' busy' : '')} onClick={() => !run && start()} disabled={!!run}>
+        {run ? <><span className="spin-dot" />{run.phase}{run.progress != null ? ' · ' + Math.round(run.progress * 100) + '%' : ''}</> : res ? 'Повторить тест' : 'Начать тест'}</button>
+    </div> : null}
+  </div></div>;
 }
 
 function SpeedRow({ t, now, onDelete }) {

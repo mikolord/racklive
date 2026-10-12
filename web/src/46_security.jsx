@@ -15,6 +15,7 @@ function SecurityItem({ f, onFix, onIgnore, hidden }) {
         <div className="row wrap" style={{ gap: 6 }}>
           {f.fix && onFix && !hidden ? <Btn size="sm" kind="primary" icon="check" onClick={() => onFix(f)}>{f.fix.label}</Btn> : null}
           {onIgnore ? <Btn size="sm" onClick={() => onIgnore(f, !hidden)}>{hidden ? 'Снова показывать' : 'Это нормально, не показывать'}</Btn> : null}
+          {!hidden ? <AskAi label="Объяснить" q={`Объясни простыми словами замечание безопасности «${f.title}» (id ${f.id}): чем это опасно именно у меня и как исправить по шагам.`} /> : null}
         </div></div> : null}
     </div></div>;
 }
@@ -41,6 +42,7 @@ function SecurityBody({ s }) {
         <div className="dim" style={{ fontSize: 13, marginTop: 3 }}>{['bad', 'warn', 'info'].filter(l => s.counts[l]).map(l => `${SEC_LEVEL[l].toLowerCase()}: ${s.counts[l]}`).join(' · ') || 'Rack Live не нашёл открытых портов, паролей по умолчанию и небезопасных протоколов.'}</div>
       </div>
     </div>
+    {s.findings.length ? <div><AskAi label="Что исправить в первую очередь?" q="Посмотри замечания безопасности и скажи, что исправить в первую очередь и как — по шагам, начиная с самого опасного." /></div> : null}
     <Hint id="security">Rack Live проверяет то, что видит сам: пробросы портов и удалённый доступ к роутеру, пароли по умолчанию, telnet и SNMP, прошивки.
       Где безопасно — есть кнопка «Исправить»; где нет — инструкция. Если что-то открыто специально, нажмите «Это нормально» — пункт уйдёт из оценки.</Hint>
     <ExtScanBox />

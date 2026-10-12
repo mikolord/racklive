@@ -286,6 +286,61 @@ class Keenetic(Driver):
             return f"{'Telnet' if params['service'] == 'telnet' else 'SSH'} роутера теперь доступен только из домашней сети"
         raise DriverError('это нельзя исправить автоматически')
 
+    # ───────── domain name for Rack Live itself (KeenDNS reverse proxy: https with the router's certificate) ─────────
+    def keendns(self, cfg, op, params):
+        """op 'status' → what exists; 'create' {ip, port, public, name} → a proxy rule <name>.<keendns>; 'remove' {name}.
+        An existing rule that already points to the same host and port is reused instead of making a second one."""
+        get, cli = self._session(cfg)
+        nd = get('/rci/show/ndns') or {}
+        name, dom = nd.get('name') or nd.get('booked'), nd.get('domain')
+        prox = get('/rci/ip/http/proxy') or {}
+        prox = prox if isinstance(prox, dict) else {}
+        ip, port = str(params.get('ip') or ''), str(params.get('port') or '')
+        hosts = (get('/rci/show/ip/hotspot') or {}).get('host') or []
+        mac = next((h.get('mac') for h in hosts if ip and h.get('ip') == ip), None)
+
+        def target(p):
+            u = (p or {}).get('upstream') or {}
+            return str(u.get('upstream') or ''), str(u.get('port') or '')
+        match = next((n for n, p in prox.items() if target(p)[1] == port and target(p)[0] in {ip, mac} - {''}
+                      and ((p or {}).get('domain') or {}).get('ndns')), None)
+        url = lambda n: f'https://{n}.{name}.{dom}'
+        res = {'ndns': bool(name and dom), 'keendns': f'{name}.{dom}' if name and dom else None, 'access': nd.get('access'), 'proxy': match,
+               'url': url(match) if match else None, 'mac': mac,
+               'public': bool((((prox.get(match) or {}).get('security-level')) or {}).get('public')) if match else None}
+        if op == 'status':
+            return res
+        if not res['ndns']:
+            raise DriverError('на роутере ещё нет доменного имени KeenDNS: веб-интерфейс роутера → «Доменное имя» → получите имя (бесплатно), потом повторите')
+        log, lvl = [], 'public' if params.get('public') else 'private'
+        if op == 'create':
+            if not (mac or ip) or not port:
+                raise DriverError('не удалось определить адрес Rack Live в сети')
+            n = match
+            if n:                                           # already there: only the access level may change
+                self._run(cli, [f'ip http proxy {n} security-level {lvl}', 'system configuration save'], log)
+            else:
+                want = re.sub(r'[^a-z0-9]', '', str(params.get('name') or 'racklive').lower())[:20] or 'racklive'
+                n, k = want, 2
+                while n in prox:
+                    n, k = f'{want}{k}', k + 1
+                p = f'ip http proxy {n}'
+                try:
+                    self._run(cli, [p, f'{p} upstream http {mac or ip} {port}', f'{p} domain ndns', f'{p} ssl redirect',
+                                    f'{p} security-level {lvl}'], log)
+                except DriverError:
+                    cli([f'no {p}'])                        # half-made rule: roll back
+                    raise
+                self._run(cli, ['system configuration save'], log)
+            return dict(res, proxy=n, url=url(n), public=lvl == 'public', created=not match)
+        if op == 'remove':
+            n = str(params.get('name') or '')
+            if n not in prox:
+                return dict(res, proxy=None, url=None)
+            self._run(cli, [f'no ip http proxy {n}', 'system configuration save'], log)
+            return dict(res, proxy=None, url=None)
+        raise DriverError('неизвестная операция')
+
     # ───────── plugins ─────────
     def _rc(self, cli):
         return cli(['show running-config'])[0]['parse']['message']

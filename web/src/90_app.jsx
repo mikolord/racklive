@@ -1,4 +1,4 @@
-﻿/* App shell */
+/* App shell */
 const TABS = [
   { id: 'rack', label: 'Размещение', icon: 'rack' },
   { id: 'map', label: 'Карта сети', icon: 'map' },
@@ -25,8 +25,10 @@ const TAB_HINTS = {
     'введите адрес и пароль и нажмите «Проверить» — сразу будет видно, подключается ли.'],
   events: ['Журнал: сбои, восстановления, входы и действия. Чтобы узнавать о сбоях сразу, подключите Telegram-бота в «Настройках» → «Уведомления».'],
   settings: ['Начните с уведомлений: подключите Telegram-бота, и Rack Live сам напишет, если что-то сломается. ' +
-    'Подсказки вроде этой выключаются переключателем «Подсказки» в карточке «Общие».'],
+    'Подсказки вроде этой выключаются переключателем «Подсказки» в разделе «Основные».'],
 };
+const APP_MODE = window.RL_APP || (window.RL_FRANK ? 'frank' : '');     // /frank, /speed: separate installable apps
+const FRANK = APP_MODE === 'frank', SPEED_APP = APP_MODE === 'speed';
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
 
@@ -58,6 +60,7 @@ function App() {
   const [login, setLogin] = useState(false);
   const [speed, setSpeed] = useState(() => new URLSearchParams(location.search).get('speedtest'));      // '1' open · 'run' open and start
   const [pinTest, setPinTest] = useState(null);             // speed test id waiting for a tap on the plan
+  const [ai, setAi] = useState(() => new URLSearchParams(location.search).get('ai') ? { n: 0 } : null);     // assistant panel: {q, n}
   const [theme, setTheme] = useTheme();
   const toast = useToast();
   // opened from the Telegram bot: log in with the signed launch data, no password
@@ -75,7 +78,7 @@ function App() {
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
   const scrollerRef = useRef(null);
-  useEffect(() => { location.hash = tab; lsSet('rl_tab', tab); window.scrollTo(0, 0); }, [tab]);
+  useEffect(() => { if (APP_MODE) return; location.hash = tab; lsSet('rl_tab', tab); window.scrollTo(0, 0); }, [tab]);
   // deep link: ?device=<id>&tab=ports&port=9 opens the device sheet
   const deep = useRef(new URLSearchParams(location.search));
   useEffect(() => {
@@ -84,13 +87,13 @@ function App() {
     if (d) setSheet({ id: d.id, tab: p.get('tab'), port: p.get('port') ? +p.get('port') : null });
     deep.current = new URLSearchParams();
   }, [data]);
-  useEffect(() => { if (data && data.settings && data.settings.title) document.title = data.settings.title + ' · Rack Live'; }, [data && data.settings && data.settings.title]);
+  useEffect(() => { if (!APP_MODE && data && data.settings && data.settings.title) document.title = data.settings.title + ' · Rack Live'; }, [data && data.settings && data.settings.title]);
 
   if (!data) return <div className="auth"><div className="app-bg" />{err ? <div className="card pad">Сервер недоступен: {err}<br /><Btn style={{ marginTop: 12 }} onClick={refresh}>Повторить</Btn></div>
     : <div className="dim">Загрузка…</div>}</div>;
   if (data.setupNeeded) return <AuthScreen setup title={data.settings && data.settings.title} onDone={refresh} />;
   if (tg === 'pending' && !data.authed) return <div className="auth"><div className="app-bg" /><div className="dim">Вход через Telegram…</div></div>;
-  if ((data.needLogin && !data.devices) || login) return <AuthScreen title={data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin}
+  if ((data.needLogin && !data.devices) || login || (FRANK && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin}
     onDone={() => { setLogin(false); refresh(); }} />;
 
   const admin = !!data.authed;
@@ -112,7 +115,10 @@ function App() {
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
   const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
-    openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d) };
+    openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
+    askAi: q => setAi({ q, n: Date.now() }) };
+  if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
+  if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
   const stale = data.devices.length && (data.now - newest > Math.max(180, (data.settings.poll || 60) * 3));
@@ -125,7 +131,7 @@ function App() {
     plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
-    settings: 'Название, доступ, VLAN и резервные копии',
+    settings: 'Уведомления, Frank, приложения на телефон, доступ и резервные копии',
   }[cur];
 
   return <AppCtx.Provider value={ctx}>
@@ -139,6 +145,7 @@ function App() {
       <div className="grow" />
       {admin ? <Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
         { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
+      {admin ? <button type="button" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}><FrankEye size={26} round={8} /></button> : null}
       <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
       <Btn size="sm" icon={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} title={'Тема: ' + ({ auto: 'как в системе', dark: 'тёмная', light: 'светлая' })[theme]}
         onClick={() => setTheme(theme === 'auto' ? 'dark' : theme === 'dark' ? 'light' : 'auto')} />
@@ -161,6 +168,7 @@ function App() {
       <Icon name={t.icon} size={24} />{t.id === 'map' ? 'Карта' : t.label}{t.id === 'events' && problems ? <span className="count">{problems}</span> : null}</button>)}</nav>
     {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={() => setSheet(null)} /> : null}
     {editor !== undefined ? <DeviceEditor device={editor} onClose={() => setEditor(undefined)} /> : null}
+    {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={() => setAi(null)} /> : null}
     {speed ? <SpeedTestModal autoRun={speed === 'run'} onClose={() => setSpeed(null)} /> : null}
   </AppCtx.Provider>;
 }

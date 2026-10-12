@@ -1,0 +1,17 @@
+{
+  "id": "/speed",
+  "name": "Тест скорости",
+  "short_name": "Скорость",
+  "description": "Тест скорости Wi-Fi и домашней сети — Rack Live",
+  "start_url": "/speed",
+  "scope": "/speed",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    { "src": "/speed-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/speed-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/speed-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/speed-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

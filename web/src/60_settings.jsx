@@ -145,6 +145,21 @@ function NotifyCard() {
   </Card>;
 }
 
+/* settings sections, like the Settings app: a list on the left (chips on the phone), one section on the right; state = a short live status */
+const SET_SECTIONS = [
+  { id: 'general', label: 'Основные', icon: 'settings', color: '#8e8e93', desc: 'Название, опрос данных, подсказки, VLAN', state: d => d.settings.title },
+  { id: 'notify', label: 'Уведомления', icon: 'bell', color: '#ff3b30', need: 'notify', desc: 'Telegram, почта, webhook — и о чём сообщать',
+    state: d => { const ch = [['telegram', 'Telegram'], ['email', 'почта'], ['webhook', 'webhook']].filter(([k]) => (d.notify[k] || {}).enabled).map(x => x[1]);
+      return ch.length ? ch.join(', ') : 'каналы не настроены'; } },
+  { id: 'frank', label: 'Frank', icon: 'eye', color: '#5856d6', need: 'ai', desc: 'Помощник (ИИ): сервис, ключ, лимиты',
+    state: d => d.ai.ready ? 'включён · ' + d.ai.title.split(' ')[0] : d.ai.keySet ? 'выключен' : 'не настроен' },
+  { id: 'apps', label: 'Приложения', icon: 'phone', color: '#007aff', desc: 'Frank и тест скорости на экран телефона, доменное имя',
+    state: d => (d.apps || {}).url ? d.apps.url.replace(/^https:\/\//, '') : 'установка на телефон' },
+  { id: 'access', label: 'Доступ', icon: 'lock', color: '#34c759', desc: 'Пароль администратора и выход' },
+  { id: 'backup', label: 'Резервная копия', icon: 'download', color: '#ff9500', desc: 'Скачать все настройки или восстановить из файла' },
+  { id: 'about', label: 'О программе', icon: 'other', color: '#8e8e93', desc: 'Версия и ссылки', state: d => 'Rack Live ' + d.version },
+];
+
 function SettingsView() {
   const { data, refresh, logout } = useApp(); const toast = useToast();
   const [s, setS] = useState({ ...data.settings });
@@ -167,7 +182,19 @@ function SettingsView() {
     e.target.value = '';
   };
   const vl = s.vlans || [];
-  return <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', alignItems: 'start' }}>
+  const [sec, setSec] = useState(() => { const q = new URLSearchParams(location.search).get('section'); return SET_SECTIONS.some(x => x.id === q) ? q : lsGet('rl_set_sec', 'general'); });
+  const pick = id => { setSec(id); lsSet('rl_set_sec', id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const secs = SET_SECTIONS.filter(x => !x.need || data[x.need]);
+  const cur = secs.find(x => x.id === sec) || secs[0];
+  useEffect(() => { const el = document.querySelector('.set-item.on'); if (el && innerWidth <= 900) el.scrollIntoView({ inline: 'center', block: 'nearest' }); }, [cur.id]);
+  return <div className="set-layout">
+    <nav className="set-nav">{secs.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
+      {x.id === 'frank' ? <FrankEye size={30} round={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
+      <span className="set-txt"><b>{x.label}</b><small>{x.state ? x.state(data) : x.desc}</small></span>
+      <Icon name="chevron" size={14} color="var(--text3)" /></button>)}</nav>
+    <div className="set-body">
+    <div className="set-head"><b>{cur.label}</b><span>{cur.desc}</span></div>
+    {cur.id === 'general' ? <>
     <Card title="Общие">
       <div className="col" style={{ gap: 14 }}>
         <Field label="Название"><input className="input" value={s.title} onChange={e => set('title', e.target.value)} /></Field>
@@ -197,8 +224,11 @@ function SettingsView() {
         <input type="color" value={v.color} onChange={e => set('vlans', vl.map((x, j) => j === i ? { ...x, color: e.target.value } : x))} style={{ width: 40, height: 38, border: 0, background: 'none', padding: 0 }} />
         <Btn size="sm" icon="trash" onClick={() => set('vlans', vl.filter((_, j) => j !== i))} /></div>)}</div>
       <Btn style={{ marginTop: 12 }} onClick={save}>Сохранить VLAN</Btn></>}
-    </Card>
-    {data.notify ? <NotifyCard /> : null}
+    </Card></> : null}
+    {cur.id === 'notify' ? <NotifyCard /> : null}
+    {cur.id === 'frank' ? <AiCard /> : null}
+    {cur.id === 'apps' ? <AppsCard /> : null}
+    {cur.id === 'access' ? <>
     <Card title="Пароль администратора">
       <div className="col" style={{ gap: 12 }}>
         <input className="input" type="password" placeholder="Текущий пароль" value={pw.old} onChange={e => setPw({ ...pw, old: e.target.value })} />
@@ -207,7 +237,9 @@ function SettingsView() {
         <Btn onClick={changePw} disabled={!pw.old || pw.n1.length < 8}>Сменить пароль</Btn>
       </div>
     </Card>
-    <Card title="Резервная копия и импорт">
+    <Card title="Сеанс"><div className="dim" style={{ fontSize: 13.5, marginBottom: 12 }}>Выйти из Rack Live в этом браузере. Вход — по паролю или через Telegram.</div>
+      <Btn icon="logout" onClick={logout}>Выйти</Btn></Card></> : null}
+    {cur.id === 'backup' ? <Card title="Резервная копия и импорт">
       <div className="col" style={{ gap: 12 }}>
         <div className="dim" style={{ fontSize: 13.5 }}>Копия содержит устройства (с паролями), схему шкафа, карту и настройки. Храните её в надёжном месте.</div>
         <a className="btn" href="/api/export"><Icon name="download" size={17} />Скачать резервную копию</a>
@@ -215,9 +247,10 @@ function SettingsView() {
         <div className="dim3" style={{ fontSize: 12.5 }}>Подходит резервная копия Rack Live или файл server-rack.html / JSON из старого «Конструктора шкафа»</div>
         <input ref={fileRef} type="file" accept=".json,.html,application/json,text/html" style={{ display: 'none' }} onChange={importFile} />
       </div>
-    </Card>
-    <Card title="О программе"><KV rows={[['Версия', 'Rack Live ' + data.version], ['Драйверы', data.drivers.length], ['Устройств', data.devices.length]]} />
-      <Btn style={{ marginTop: 12 }} icon="logout" onClick={logout}>Выйти</Btn></Card>
+    </Card> : null}
+    {cur.id === 'about' ? <Card title="О программе"><KV rows={[['Версия', 'Rack Live ' + data.version], ['Драйверы', data.drivers.length], ['Устройств', data.devices.length]]} />
+      <div className="dim3" style={{ fontSize: 12.5, marginTop: 12 }}>Исходный код и инструкции: <a href="https://github.com/mikolord/racklive" target="_blank" rel="noreferrer">github.com/mikolord/racklive</a></div></Card> : null}
+    </div>
   </div>;
 }
 
