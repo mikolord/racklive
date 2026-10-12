@@ -724,3 +724,29 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
   .set-item small, .set-item > svg:last-child { display: none; }
   .set-ic, .set-item .frank { width: 26px !important; height: 26px !important; }
 }
+
+/* actions Frank proposes (run only on the admin's press) */
+.ai-prop { margin-top: 10px; padding: 11px 12px; border-radius: 14px; background: var(--bg2); border: .5px solid var(--line2); font-size: 13.5px; }
+.ai-prop b { font-size: 14px; } .ai-prop-text { font-size: 13px; line-height: 1.4; margin-top: 5px; color: var(--text2); }
+.ai-prop-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0; background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--orange); }
+.ai-prop.done .ai-prop-ic { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.ai-prop.error .ai-prop-ic { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
+.ai-prop.cancelled { opacity: .6; } .ai-prop.cancelled .ai-prop-ic { background: var(--fill); color: var(--text3); }
+.ai-prop .btn .spin-dot { margin-right: 6px; }
+/* Frank app: the menu behind the eye */
+.fr-circle.eye { cursor: pointer; }
+.fr-menu-wrap { position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,.25); animation: fade .2s; }
+.fr-menu { position: absolute; top: calc(env(safe-area-inset-top) + 66px); right: max(12px, calc((100% - 820px) / 2)); width: min(380px, calc(100% - 24px));
+  max-height: calc(100% - env(safe-area-inset-top) - 90px); overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 26px;
+  background: var(--dock-glass); border: .5px solid var(--glass-line); backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow: 0 18px 50px rgba(0,0,0,.4); animation: pop .25s cubic-bezier(.2,1.2,.4,1); transform-origin: top right; }
+.fr-bal { padding: 12px 14px; border-radius: 18px; background: var(--fr-btn); display: flex; flex-direction: column; }
+.fr-bal b { font-size: 30px; font-weight: 750; letter-spacing: -.6px; line-height: 1.1; } .fr-bal span { font-size: 13px; color: var(--text2); }
+.fr-menu-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text3); margin: 4px 4px -4px; }
+.fr-models { display: flex; flex-direction: column; gap: 4px; }
+.fr-model-opt { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: 16px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.fr-model-opt:hover { background: var(--fill); } .fr-model-opt.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.fr-model-opt b { display: block; font-size: 15px; } .fr-model-opt small { display: block; font-size: 12.5px; color: var(--text2); line-height: 1.35; margin-top: 1px; }
+.fr-radio { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; border: 1.5px solid var(--line2); color: #fff; }
+.fr-model-opt.on .fr-radio { background: var(--accent); border-color: var(--accent); }
+.fr-menu .seg { width: 100%; } .fr-menu .seg button { flex: 1; justify-content: center; }

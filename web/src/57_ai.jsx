@@ -67,6 +67,68 @@ function AiText({ text }) {
   return <div className="ai-text">{blocks}</div>;
 }
 
+/* an action Frank proposed: runs only when the admin presses «Выполнить» */
+function ProposalCard({ p, onAct }) {
+  const [busy, setBusy] = useState(false);
+  const go = async run => { setBusy(true); try { await onAct(p, run); } finally { setBusy(false); } };
+  const st = busy && p.status === 'pending' ? 'running' : p.status;
+  return <div className={'ai-prop ' + st}>
+    <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+      <div className="ai-prop-ic"><Icon name={st === 'done' ? 'check' : st === 'error' ? 'alert' : st === 'cancelled' ? 'x' : 'bolt'} size={16} /></div>
+      <div className="grow" style={{ minWidth: 0 }}>
+        <b>{p.label}</b><div className="dim3" style={{ fontSize: 12 }}>{p.deviceName}</div>
+        {p.text && st === 'pending' ? <div className="ai-prop-text">{p.text}</div> : null}
+        {p.reason && st === 'pending' ? <div className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>Зачем: {p.reason}</div> : null}
+        {st === 'done' || st === 'error' ? <div className="ai-prop-text">{st === 'done' ? '✓ ' : ''}{p.result}</div> : null}
+        {st === 'cancelled' ? <div className="dim3" style={{ fontSize: 12.5, marginTop: 4 }}>Не выполнялось</div> : null}
+      </div>
+    </div>
+    {st === 'pending' || st === 'running' ? <div className="row" style={{ gap: 8, marginTop: 10 }}>
+      <button type="button" className="btn primary sm" disabled={st === 'running'} onClick={() => go(true)}>{st === 'running' ? <><span className="spin-dot" />Выполняю…</> : 'Выполнить'}</button>
+      <button type="button" className="btn sm" disabled={st === 'running'} onClick={() => go(false)}>Не надо</button>
+    </div> : null}
+  </div>;
+}
+
+/* menu behind the eye in the Frank app: balance, model, how deep to think */
+const EFFORTS = [['', 'Обычно'], ['low', 'Быстро'], ['high', 'Вдумчиво'], ['max', 'Максимум']];
+const money = b => b ? (b.currency === 'USD' ? '$' + b.amount.toFixed(2) : b.amount.toFixed(2) + ' ' + b.currency) : null;
+function FrankMenu({ onClose }) {
+  const { refresh } = useApp(); const toast = useToast();
+  const [m, setM] = useState(null); const [err, setErr] = useState(null); const [saving, setSaving] = useState(null);
+  const load = () => api('/api/ai/models', { method: 'POST', body: {} }).then(setM).catch(e => setErr(e.message));
+  useEffect(() => { load(); const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
+  const save = async (part, what) => {
+    setSaving(what);
+    try { await api('/api/ai', { method: 'PUT', body: part }); setM(x => ({ ...x, ...part })); refresh(); }
+    catch (e) { toast(e.message, true); } finally { setSaving(null); }
+  };
+  const cur = m && (m.models.find(x => x.id === m.model) || {});
+  const t = (m && m.today) || {}, mo = (m && m.month) || {};
+  return <div className="fr-menu-wrap" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+    <div className="fr-menu">
+      {!m ? <div className="dim row" style={{ gap: 8, padding: 8 }}>{err || <><span className="spin-dot" />Спрашиваю у {'сервиса'}…</>}</div> : <>
+        <div className="fr-bal">
+          {m.balance ? <><b>{money(m.balance)}</b><span>на балансе {m.title.split(' ')[0]}</span></>
+            : <><b>{t.q || 0}</b><span>{ruPlural(t.q || 0, 'вопрос', 'вопроса', 'вопросов')} сегодня · {m.title.split(' ')[0]} не сообщает баланс</span></>}
+          <div className="dim3" style={{ fontSize: 12, marginTop: 4 }}>Сегодня {t.q || 0} · за месяц {mo.q || 0} {ruPlural(mo.q || 0, 'вопрос', 'вопроса', 'вопросов')}, ≈{Math.round(((mo.in || 0) + (mo.out || 0)) / 1000)}k токенов</div>
+        </div>
+        <div className="fr-menu-title">Модель</div>
+        <div className="fr-models">{m.models.map(x => <button key={x.id} type="button" className={'fr-model-opt' + (x.id === m.model ? ' on' : '')}
+          onClick={() => x.id !== m.model && save({ model: x.id, effort: '' }, x.id)}>
+          <span className="fr-radio">{saving === x.id ? <span className="spin-dot" /> : x.id === m.model ? <Icon name="check" size={14} stroke={2.6} /> : null}</span>
+          <span className="grow" style={{ minWidth: 0 }}><b>{x.name}</b>{x.desc ? <small>{x.desc}</small> : <small className="mono">{x.id}</small>}</span>
+        </button>)}</div>
+        {cur && cur.efforts && cur.efforts.length ? <>
+          <div className="fr-menu-title">Как глубоко думать</div>
+          <Seg value={m.effort || ''} onChange={v => save({ effort: v }, 'effort')} options={EFFORTS.filter(([v]) => !v || cur.efforts.includes(v)).map(([value, label]) => ({ value, label }))} />
+          <div className="dim3" style={{ fontSize: 12, lineHeight: 1.4 }}>Глубже — точнее на сложных вопросах, но дольше и дороже. «Обычно» — как задумал сервис.</div>
+        </> : null}
+      </>}
+    </div>
+  </div>;
+}
+
 const SPEECH = window.isSecureContext ? (window.SpeechRecognition || window.webkitSpeechRecognition || null) : null;
 const CUR_KEY = 'rl_ai_cur';                                   // the open conversation, per browser
 const dayLabel = t => { const d = new Date(t * 1000), now = new Date(), y = new Date(now - 864e5);
@@ -143,6 +205,12 @@ function AiPanel({ initial, onClose, standalone }) {
   const title = view === 'list' ? 'Разговоры' : 'Frank';
   // voice input: the browser's own speech recognition (Safari/Chrome; needs https — on a plain http address the button is hidden)
   const [quick, setQuick] = useState(false);
+  const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1');
+  const act = async (p, run) => {
+    try { const r = await api('/api/ai/act', { method: 'POST', body: { chat: cid, proposal: p.id, run } }); if (r.chat) setMsgs(r.chat.messages);
+      if (run) toast(r.proposal.status === 'done' ? '✓ ' + r.proposal.result : r.proposal.result, r.proposal.status !== 'done'); }
+    catch (e) { toast(e.message, true); open(cid, true); }
+  };
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
   const toggleMic = () => {
@@ -167,7 +235,7 @@ function AiPanel({ initial, onClose, standalone }) {
           <Icon name={view === 'list' ? 'chevronLeft' : 'menu'} size={22} stroke={2} /></button> : null}</div>
         <div className="fr-title"><b>{title}</b><span>{sub}</span></div>
         <div className="fr-side r">
-          <div className="fr-circle eye" title={busy ? busy.stage : 'Frank'}><FrankEye size={46} mood={frankMood(busy)} round={23} /></div>
+          <button type="button" className="fr-circle eye" title={busy ? busy.stage : 'Модель и баланс'} onClick={() => ai.ready && setMenu(true)}><FrankEye size={46} mood={frankMood(busy)} round={23} /></button>
           {ai.ready ? <button type="button" className="fr-circle" title="Новый разговор" onClick={() => open(null)}><Icon name="plus" size={22} stroke={2} /></button> : null}
         </div>
       </div> : <div className="ai-head">
@@ -207,15 +275,17 @@ function AiPanel({ initial, onClose, standalone }) {
           <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Я слежу за вашей сетью. Спросите что угодно — сам посмотрю данные Rack Live и отвечу простыми словами. В сети я ничего не меняю, только подсказываю.</div>
           <div className="ai-suggest">{AI_SUGGEST.map(s => <button key={s} type="button" className="chip" onClick={() => send(s)}>{s}</button>)}</div>
           {standalone ? <div className="dim3" style={{ fontSize: 11.5, lineHeight: 1.4, maxWidth: 340 }}>Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div> : null}
-        </div> : msgs.map((m, i) => <div key={i} className={'ai-msg ' + m.role + (m.err ? ' err' : '')}>
+        </div> : msgs.map((m, i) => m.role === 'event' ? null : <div key={i} className={'ai-msg ' + m.role + (m.err ? ' err' : '')}>
           {m.role === 'user' ? <div className="ai-bubble">{m.text}</div> : <div className="ai-bubble">
             {m.err ? <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="alert" size={16} color="var(--red)" /><span>{m.text}</span></div> : <AiText text={m.text} />}
             {m.tools && m.tools.length ? <div className="ai-tools">{[...new Set(m.tools)].map(t => <span key={t}><Icon name="eye" size={11} />{t}</span>)}</div> : null}
+            {(m.proposals || []).map(p => <ProposalCard key={p.id} p={p} onAct={act} />)}
           </div>}
         </div>)}
         {busy && view === 'chat' ? <div className="ai-msg assistant"><div className="ai-bubble ai-busy"><span className="spin-dot" />{busy.stage}
           {busy.tools.length ? <div className="ai-tools">{[...new Set(busy.tools)].map(t => <span key={t}><Icon name="check" size={11} />{t}</span>)}</div> : null}</div></div> : null}
       </div>}
+      {menu ? <FrankMenu onClose={() => setMenu(false)} /> : null}
       {ai.ready && view === 'chat' && standalone ? <div className="fr-dock">
         {quick ? <div className="fr-quick">{AI_SUGGEST.map(s => <button key={s} type="button" onClick={() => { setQuick(false); send(s); }}>{s}</button>)}</div> : null}
         <textarea rows={1} value={q} placeholder={busy ? busy.stage : listening ? 'Говорите…' : 'Спросите Frank о сети'} onChange={e => setQ(e.target.value)} onKeyDown={key}
@@ -248,7 +318,7 @@ function AskAi({ q, label = 'Спросить Frank', size = 'sm' }) {
 function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
-  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '' }));
+  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false }));
   const [res, setRes] = useState(null);
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
@@ -261,7 +331,9 @@ function AiCard() {
     <div className="notify-grid">
       <div className="col" style={{ gap: 12 }}>
         <div className="row"><Switch on={!!s.enabled} onChange={v => set('enabled', v)} /><div className="grow"><div>Включить Frank</div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка с глазом вверху: вопросы о сети простыми словами. Только чтение — Frank ничего не меняет.</div></div></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка с глазом вверху: вопросы о сети простыми словами.</div></div></div>
+        <div className="row"><Switch on={!!s.actions} onChange={v => set('actions', v)} /><div className="grow"><div>Frank может предлагать действия</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Перезапуск PoE или порта, проверка кабеля, перезагрузка точки, выключатели Home Assistant, исправления безопасности. Сам Frank ничего не делает: под ответом появится карточка, и действие выполнится только после вашей кнопки «Выполнить».</div></div></div>
         <Field label="Сервис">
           <div className="row wrap" style={{ gap: 6 }}>{ai.presets.map(x => <button key={x.id} type="button" className={'chip' + (s.preset === x.id ? ' on' : '')} onClick={() => pick(x.id)}>{x.title}</button>)}</div></Field>
         {!p.noKey ? <Field label="Ключ API" hint={p.keyUrl ? <>Получить: <a href={p.keyUrl} target="_blank" rel="noreferrer">{p.keyUrl.replace(/^https:\/\//, '')}</a></> : null}>

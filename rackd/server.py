@@ -1,5 +1,5 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threading, time, traceback, urllib.parse
+import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -120,6 +120,36 @@ class App:
                     point['ms' if m['label'] == 'Задержка' else 'poe'] = m['value']
             if len(point) > 1:
                 self.store.add_point(d['id'], point)
+
+    def run_action(self, d, action_id, params):
+        """A driver action (device card buttons and actions confirmed in Frank's chat) → the API answer."""
+        st, did = self.store, d['id']
+        drv = REGISTRY.get(d.get('driver'))
+        try:
+            msg = drv.action(d, action_id, params)
+        except Exception as e:
+            st.add_event(did, d.get('name'), 'warning', f"действие не выполнено: {e}")
+            raise
+        act = next((a for a in drv.actions if a['id'] == action_id), {})
+        if isinstance(msg, dict):
+            # measurements (cable test): keep the result next to the port, nothing to re-poll
+            res = msg
+            if res.get('cable') is not None:
+                st.set_cable(did, res.get('port'), res['cable'])
+            if res.get('speedtest'):                # iperf3: kept with the browser tests
+                res['speedtest'] = self.speed.add(dict(res['speedtest'], kind='iperf', device=did, deviceName=d.get('name')))
+            level = 'info' if res.get('speedtest') else {'ok': 'info', 'empty': 'info'}.get((res.get('cable') or {}).get('verdict'), 'warning')
+            st.add_event(did, d.get('name'), level, res.get('message', ''))
+            return {'ok': True, 'message': res.get('message'), 'cable': res.get('cable'), 'port': res.get('port'), 'speedtest': res.get('speedtest')}
+        if act.get('instant'):
+            # quick actions (switches): re-read the device right away and hand the fresh state back
+            if act.get('scope') != 'entity':
+                st.add_event(did, d.get('name'), 'info', f"{msg}")
+            state = self.poll_device(d)
+            return {'ok': True, 'message': msg, 'state': json.loads(json.dumps(state))}
+        st.add_event(did, d.get('name'), 'info', f"{msg}")
+        threading.Thread(target=lambda: (time.sleep(3), self.poll_device(d)), daemon=True).start()
+        return {'ok': True, 'message': msg}
 
     def take_backup(self, d, force=False):
         """Save the device config if it changed; an event + a notification when it did (not for the very first copy)."""
@@ -449,6 +479,14 @@ class Handler(BaseHTTPRequestHandler):
             if op == 'status':
                 r = drv.keendns(d, 'status', {'ip': ip, 'port': port})
             elif op == 'create':
+                # never point the router at a wrong place: the target must answer as this very Rack Live
+                try:
+                    probe = json.loads(urllib.request.urlopen(f'http://{ip}:{port}/api/state', timeout=4).read())
+                    if probe.get('version') != VERSION:
+                        raise ValueError('не Rack Live')
+                except Exception:
+                    return self.send({'ok': False, 'error': f'не удалось проверить, что Rack Live отвечает на {ip}:{port} — откройте настройки по домашнему адресу '
+                                      f'(http://IP:порт) и повторите', 'apps': cur, 'router': {'id': d['id'], 'name': d.get('name')}})
                 r = drv.keendns(d, 'create', {'ip': ip, 'port': port, 'public': bool(body.get('public')), 'name': body.get('name') or 'racklive'})
                 st.cfg['apps'] = {'url': r['url'], 'device': d['id'], 'proxy': r['proxy'], 'public': r['public'],
                                   'created': bool(r.get('created') or cur.get('created') and cur.get('proxy') == r['proxy'])}
@@ -856,33 +894,7 @@ class Handler(BaseHTTPRequestHandler):
                 if sub == 'token' and method == 'POST':
                     return self.send({'ok': True, 'agentToken': d.get('agentToken')})
                 if sub == 'action' and method == 'POST':
-                    drv = REGISTRY.get(d.get('driver'))
-                    try:
-                        msg = drv.action(d, body.get('action'), body.get('params') or {})
-                    except Exception as e:
-                        st.add_event(did, d.get('name'), 'warning', f"действие не выполнено: {e}")
-                        raise
-                    act = next((a for a in drv.actions if a['id'] == body.get('action')), {})
-                    if isinstance(msg, dict):
-                        # measurements (cable test): keep the result next to the port, nothing to re-poll
-                        res = msg
-                        if res.get('cable') is not None:
-                            st.set_cable(did, res.get('port'), res['cable'])
-                        if res.get('speedtest'):                # iperf3: kept with the browser tests
-                            res['speedtest'] = APP.speed.add(dict(res['speedtest'], kind='iperf', device=did, deviceName=d.get('name')))
-                        level = 'info' if res.get('speedtest') else {'ok': 'info', 'empty': 'info'}.get((res.get('cable') or {}).get('verdict'), 'warning')
-                        st.add_event(did, d.get('name'), level, res.get('message', ''))
-                        return self.send({'ok': True, 'message': res.get('message'), 'cable': res.get('cable'), 'port': res.get('port'),
-                                          'speedtest': res.get('speedtest')})
-                    if act.get('instant'):
-                        # quick actions (switches): re-read the device right away and hand the fresh state back
-                        if act.get('scope') != 'entity':
-                            st.add_event(did, d.get('name'), 'info', f"{msg}")
-                        state = APP.poll_device(d)
-                        return self.send({'ok': True, 'message': msg, 'state': json.loads(json.dumps(state))})
-                    st.add_event(did, d.get('name'), 'info', f"{msg}")
-                    threading.Thread(target=lambda: (time.sleep(3), APP.poll_device(d)), daemon=True).start()
-                    return self.send({'ok': True, 'message': msg})
+                    return self.send(APP.run_action(d, body.get('action'), body.get('params') or {}))
             if path in ('/api/ai', '/api/ai/test') and method in ('PUT', 'POST'):
                 cur =assistant.merged(st.cfg.get('ai'))
                 new = assistant.merged(dict(cur, **{k: v for k, v in body.items() if k in assistant.DEFAULT and k != 'key'}))
@@ -909,6 +921,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'ok': True})
             if m and method == 'PUT':
                 return self.send({'ok': bool(APP.ai.rename_chat(m.group(1), body.get('title')))})
+            if path == '/api/ai/models' and method == 'POST':
+                try:
+                    return self.send(dict(APP.ai.models(), ok=True))
+                except assistant.AiError as e:
+                    return self.err(str(e))
+            if path == '/api/ai/act' and method == 'POST':     # run / drop an action Frank proposed — only by this press
+                try:
+                    p = APP.ai.act(str(body.get('chat') or ''), str(body.get('proposal') or ''), bool(body.get('run')))
+                except assistant.AiError as e:
+                    return self.err(str(e))
+                return self.send({'ok': True, 'proposal': p, 'chat': APP.ai.chat_view(str(body.get('chat') or ''))})
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
