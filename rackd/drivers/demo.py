@@ -3,7 +3,7 @@ and is used for the screenshots. Hidden from the "Add device" picker."""
 import math, random, secrets, time
 
 from . import Driver
-from .. import cable
+from .. import cable, plugins, vps
 
 T0 = time.time()
 MAC = lambda n: 'aa:00:00:00:%02x:%02x' % (n // 256, n % 256)
@@ -65,12 +65,92 @@ class DemoRouter(DemoBase):
                           {'n': 3, 'name': 'Gi0/2', 'kind': 'rj45', 'link': False, 'speed': 0, 'vlansU': [1], 'vlansT': [], 'label': '', 'peers': []},
                           {'n': 4, 'name': 'Gi0/3', 'kind': 'rj45', 'link': False, 'speed': 0, 'vlansU': [1], 'vlansT': [], 'label': '', 'peers': []},
                           {'n': 5, 'name': 'WAN', 'kind': 'wan', 'link': True, 'speed': 1000, 'vlansU': [], 'vlansT': [], 'label': 'WAN · оптика', 'peers': [], 'ip': '203.0.113.24'}],
-                'clients': clients,
+                'clients': clients, 'security': self._security(),
                 'children': [{'key': k, 'name': n, 'kind': 'ap', 'model': 'Keenetic Orbiter Pro', 'ip': ip, 'mac': m, 'status': 'online',
                               'clients': sum(1 for w in WIFI if w[2] == k), 'uptime': int(t - T0 + 864_000), 'uplink': 1000, 'fw': '4.3.6'} for k, n, ip, m in APS],
                 'vpn': self._vpn(t),
                 'sections': [{'title': 'Сегменты', 'rows': [[k, f'{v} устр.'] for k, v in sorted(by.items(), key=lambda kv: -kv[1])]},
                              {'title': 'Интернет', 'rows': [['WAN IP', '203.0.113.24'], ['Провайдер', 'Оптика 1 Гбит/с']]}]}
+
+    # security facts (see rackd/security.py): a few classic mistakes of a small office
+    _closed = set()
+
+    def _security(self):
+        fw = [('tcp', '3389', MAC(41), 'RDP бухгалтерии'), ('tcp', '22', MAC(5), 'NAS SSH'), ('tcpudp', '32400', MAC(5), 'Plex')]
+        return {'forwards': [{'proto': p, 'iface': 'GigabitEthernet1', 'port': port, 'target': t, 'toPort': port, 'name': n,
+                              'rule': f'{p} GigabitEthernet1 {port} {t} {port}'} for p, port, t, n in fw if port not in self._closed],
+                'remote': {'telnet': {'on': True, 'level': 'private' if 'telnet' in self._closed else 'public', 'port': 23},
+                           'ssh': {'on': True, 'level': 'private', 'port': 22}, 'http': {'level': 'private'}},
+                'upnp': True, 'update': {'available': True, 'title': '4.3.7', 'channel': 'stable'}}
+
+    def action(self, cfg, action_id, params):
+        if action_id == 'sec_fix':
+            self._closed.add(params.get('service') or str(params.get('rule', '')).split()[2])
+            return 'Исправлено (демо)'
+        return super().action(cfg, action_id, params)
+
+    # plugins: same catalog as Keenetic, simulated
+    _tunnels = []
+
+    def plugins(self, cfg):
+        out = []
+        for p in plugins.for_driver('keenetic'):
+            if p['id'] == 'entware':
+                p.update(checks=[{'label': 'Компонент «Поддержка открытых пакетов» (OPKG)', 'ok': True},
+                                 {'label': 'Компонент «Модули ядра подсистемы Netfilter» (нужен HydraRoute)', 'ok': False, 'optional': True},
+                                 {'label': 'Выбран накопитель для Entware', 'ok': True, 'hint': 'USB-флешка, ext4'},
+                                 {'label': 'Entware установлен', 'ok': False}], installed=False, arch='aarch64',
+                         installer=plugins.ENTWARE_INSTALLER['aarch64'])
+            elif p['id'] == 'awg':
+                p.update(checks=[{'label': 'Компонент «WireGuard VPN»', 'ok': True}], installed=bool(cfg.get('rlTunnels')), fw='4.3.6',
+                         tunnels=[{'iface': 'Wireguard0', 'name': 'Офисный VPN', 'managed': False, 'groups': 0, 'domains': 0}] +
+                                 [dict(t, managed=True, groups=1 if t.get('domains') else 0) for t in cfg.get('rlTunnels') or []])
+            else:
+                inst = plugins.INSTALLERS[p['id']]
+                p.update(checks=[{'label': 'Entware установлен', 'ok': True}, {'label': 'Rack Live может зайти в Entware по SSH', 'ok': True}],
+                         ssh={'set': True, 'ok': True, 'port': 222, 'user': 'root'}, url=f"http://10.0.0.1:{inst['port']}", login=inst['login'],
+                         installed=p['id'] in self._installed, version=self._installed.get(p['id']))
+            out.append(p)
+        return {'model': 'Keenetic Ultra (KN-1811)', 'fw': '4.3.6', 'arch': 'aarch64', 'plugins': out}
+
+    _installed = {}
+
+    def plugin(self, cfg, pid, op, params):
+        if pid in plugins.INSTALLERS:
+            meta = next(p for p in plugins.CATALOG if p['id'] == pid)
+            if op == 'ssh':
+                return {'ok': True, 'message': 'SSH в Entware работает (aarch64, демо)'}
+            time.sleep(1)
+            if op == 'remove':
+                self._installed.pop(pid, None)
+                return {'ok': True, 'log': [], 'message': f"{meta['title']} удалён (демо)"}
+            self._installed[pid] = '1.0.0-demo'
+            url = f"http://10.0.0.1:{plugins.INSTALLERS[pid]['port']}"
+            return {'ok': True, 'log': [{'cmd': 'opkg install …', 'ok': True, 'msg': ''}], 'version': '1.0.0-demo', 'url': url,
+                    'message': f"{meta['title']} 1.0.0-demo установлен (демо). Панель: {url}"}
+        if pid != 'awg':
+            raise ValueError('этот плагин пока в разработке')
+        if op == 'preview':
+            c = plugins.parse_conf(params.get('conf'))
+            doms, skipped = plugins.parse_domains(params.get('domains') or '')
+            return {'ok': True, 'preview': plugins.conf_preview(c), 'domains': len(doms), 'skipped': skipped[:20]}
+        if op == 'remove':
+            return {'ok': True, 'log': [{'cmd': f"no interface {params.get('iface')}", 'ok': True, 'msg': 'removed (демо)'}],
+                    'removed': params.get('iface'), 'message': f"Подключение {params.get('iface')} удалено (демо)"}
+        if op == 'domains':
+            doms, skipped = plugins.parse_domains(params.get('domains') or '')
+            return {'ok': True, 'log': [], 'iface': params.get('iface'), 'domains': len(doms), 'skipped': skipped, 'message': f'Списки обновлены: {len(doms)} (демо)'}
+        c = plugins.parse_conf(params.get('conf'))
+        doms, skipped = plugins.parse_domains(params.get('domains') or '') if params.get('routing') else ([], [])
+        time.sleep(1)
+        iface = f"Wireguard{len(cfg.get('rlTunnels') or []) + 1}"
+        name = params.get('name') or 'AmneziaWG'
+        log = [{'cmd': f'interface {iface}', 'ok': True, 'msg': 'interface created (демо)'},
+               {'cmd': f"interface {iface} wireguard peer … endpoint {c['peer']['endpoint']}", 'ok': True, 'msg': 'ok'}]
+        if doms:
+            log.append({'cmd': f'object-group fqdn rl_{iface.lower()}_1: +{len(doms)} сайтов', 'ok': True, 'msg': ''})
+        return {'ok': True, 'log': log, 'iface': iface, 'name': name, 'domains': len(doms), 'skipped': skipped, 'up': True,
+                'message': f'Подключение «{name}» ({iface}) создано (демо)'}
 
     def _vpn(self, t):
         gw = [('Ноутбук · Директор', '10.20.0.2', True, 40), ('iPhone · Директор', '10.20.0.3', True, 120),
@@ -89,6 +169,51 @@ class DemoRouter(DemoBase):
             {'id': 'ovpn', 'name': 'Бухгалтерия · банк', 'kind': 'openvpn', 'role': 'client', 'up': False, 'address': None,
              'routing': False, 'endpoint': 'vpn.bank.example:1194', 'listenPort': None, 'peers': [],
              'rx': None, 'tx': None, 'handshake': int(t - 7200)}]
+
+
+class DemoOpenWrt(DemoBase):
+    """Guest-network router on OpenWrt with an LTE modem: shows the OpenWrt plugins."""
+    id, title, kind = 'demo_openwrt', 'Демо: OpenWrt', 'router'
+    _installed = {'hilink'}
+    _pkgs = {}
+
+    def poll(self, cfg):
+        t = time.time()
+        return {'status': 'online', 'summary': {'model': 'Cudy WR3000', 'fw': 'OpenWrt 25.12.1', 'uptime': int(t - T0 + 400_000), 'cpu': 4, 'mem': 31, 'ip': '10.0.0.3'},
+                'sections': [{'title': 'Интерфейсы', 'rows': [['lan', '▲ 10.0.40.1'], ['wwan', '▲ 192.168.0.100 · usb0 (LTE-модем)']]}]}
+
+    def plugins(self, cfg):
+        out = []
+        for p in plugins.for_driver('openwrt'):
+            p.update(pm='apk', fw='25.12.1')
+            if p['id'] in plugins.OWRT_INSTALLERS:
+                inst = plugins.OWRT_INSTALLERS[p['id']]
+                p.update(installed=p['id'] in self._pkgs, version=self._pkgs.get(p['id']), ssh={'ok': True, 'native': True},
+                         url=f"http://10.0.0.3/cgi-bin/luci/{inst['luci']}", login='логин и пароль от OpenWrt (LuCI)',
+                         checks=[{'label': 'OpenWrt 24.10 или новее (у вас 25.12.1)', 'ok': True}, {'label': f"Свободно на флеше от {inst['freeMB']} МБ (сейчас 84 МБ)", 'ok': True},
+                                 {'label': f"Не установлен {inst['conflict'].capitalize()} — они конфликтуют", 'ok': inst['conflict'] not in self._pkgs}])
+                if p['id'] == 'forkop':
+                    p['options'] = [{'id': 'extended', 'label': 'sing-box extended — поддержка XHTTP', 'on': True, 'hint': 'Без него XHTTP-ссылки не заработают.'}]
+            else:
+                p.update(usb=['12d1:14dc Huawei E3372h'], drivers=['cdc_ether'], devs=[], suggest='hilink', installed=bool(self._installed),
+                         checks=[{'label': 'Модем подключён к USB: 12d1:14dc Huawei E3372h', 'ok': True}],
+                         profiles=[dict(m, installed=m['id'] in self._installed, suggested=m['id'] == 'hilink') for m in plugins.MODEM_PROFILES])
+            out.append(p)
+        return {'fw': '25.12.1', 'pm': 'apk', 'plugins': out}
+
+    def plugin(self, cfg, pid, op, params):
+        time.sleep(.8)
+        if pid == 'modem':
+            (self._installed.add if op == 'install' else self._installed.discard)(params.get('profile'))
+            return {'ok': True, 'log': [], 'message': f"{'Установлено' if op == 'install' else 'Удалено'} (демо)"}
+        if op == 'remove':
+            self._pkgs.pop(pid, None)
+            return {'ok': True, 'log': [], 'message': f'{pid} удалён (демо)'}
+        if plugins.OWRT_INSTALLERS[pid]['conflict'] in self._pkgs:
+            raise ValueError('сначала удалите второй менеджер маршрутизации')
+        self._pkgs[pid] = '0.7.9-r1'
+        return {'ok': True, 'log': [{'cmd': 'apk add …', 'ok': True, 'msg': ''}], 'version': '0.7.9-r1',
+                'url': f"http://10.0.0.3/cgi-bin/luci/{plugins.OWRT_INSTALLERS[pid]['luci']}", 'message': f'{pid} 0.7.9-r1 установлен (демо)'}
 
 
 class DemoSwitch(DemoBase):
@@ -142,6 +267,10 @@ class DemoSwitch(DemoBase):
                 age = t - T0
                 p['rxBytes'] = int(9e12 + age * base * (.3 + .7 * wave(t)) / 8)
                 p['txBytes'] = int(4e12 + age * base * .35 * (.3 + .7 * wave(t, phase=1)) / 8)
+            if p['kind'] == 'rj45':
+                # port 11 has a cable that links at 1 Gbit but keeps producing CRC errors; port 10 had a few once
+                crc = int(1200 + (t - T0) / 60 * 2.5) if p['n'] == 11 else 3 if p['n'] == 10 else 0
+                p.update(inErrors=crc, outErrors=0, crc=crc)
         poe = sum(p['poeW'] for p in ports)
         return {'status': 'online',
                 'summary': {'model': 'JetStream 24-Port Gigabit L2+ PoE+ Switch', 'fw': '4.0.5', 'uptime': int(t - T0 + 2_592_000), 'ip': '10.0.0.2', 'mac': MAC(2)},
@@ -191,6 +320,57 @@ class DemoHA(DemoBase):
 
 class DemoServer(DemoBase):
     id, title, kind = 'demo_server', 'Демо: удалённый сервер', 'server'
+    actions = [{'id': 'iperf', 'label': 'Тест скорости (iperf3)', 'scope': 'device', 'kind': 'speed',
+                'confirm': 'Измерить скорость до сервера в обе стороны? (демо)'}]
+
+    # VPS panels, simulated: the same stages as the real installer
+    async_ops = ('install', 'remove')
+    _panels = {}
+
+    def plugins(self, cfg):
+        out = []
+        for p in vps.CATALOG:
+            p = dict(p, installed=p['id'] in self._panels, ip='198.51.100.40', info=(cfg.get('panelInfo') or {}).get(p['id']),
+                     checks=[{'label': 'Ubuntu или Debian (у вас Ubuntu 24.04 LTS)', 'ok': True}, {'label': 'Вход под root', 'ok': True},
+                             {'label': 'Память от 400 МБ (у вас 1987 МБ)', 'ok': True}, {'label': 'Внешний IP определён: 198.51.100.40', 'ok': True},
+                             {'label': 'Порты 80 и 443 свободны (или заняты nginx)', 'ok': True},
+                             {'label': 'Не установлена вторая панель — две панели на одном сервере конфликтуют', 'ok': not (set(self._panels) - {p['id']})}])
+            out.append(p)
+        return {'os': 'Ubuntu 24.04 LTS', 'ip': '198.51.100.40', 'plugins': out}
+
+    def plugin(self, cfg, pid, op, params):
+        progress = params.get('_progress') or (lambda s: None)
+        if op == 'dns':
+            dom = vps.clean_domain(params.get('domain'))
+            ok = dom.endswith('example.com')
+            return {'ok': True, 'domain': dom, 'ip': '198.51.100.40', 'records': ['198.51.100.40'] if ok else [], 'match': ok}
+        if op == 'remove':
+            progress('Удаление (демо)'); time.sleep(.5)
+            self._panels.pop(pid, None)
+            return {'ok': True, 'log': [], 'removed': pid, 'message': f'{pid} удалён (демо)'}
+        if (set(self._panels) - {pid}):
+            raise ValueError('на сервере уже стоит другая панель — сначала удалите её')
+        dom = vps.clean_domain(params.get('domain')) if params.get('withDomain') else ''
+        for s in (['Проверка DNS', "nginx, сайт-заглушка и сертификат Let's Encrypt"] if dom else []) + [f'Установка {pid} (демо)'] + \
+                (['Инбаунды VLESS TCP + XHTTP и тестовый пользователь'] if params.get('inbounds') and dom else []):
+            progress(s)
+            time.sleep(.6)
+        self._panels[pid] = '2.6.0'
+        uid = '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed'
+        links = [{'name': 'VLESS TCP TLS', 'url': f'vless://{uid}@{dom}:8443?type=tcp&security=tls&sni={dom}&fp=chrome&flow=xtls-rprx-vision#RL-TCP'},
+                 {'name': 'VLESS XHTTP TLS', 'url': f'vless://{uid}@{dom}:2053?type=xhttp&security=tls&sni={dom}&fp=chrome&path=/xh7k2m&mode=auto#RL-XHTTP'}] \
+            if params.get('inbounds') and dom else []
+        info = {'url': f'https://{dom}/k3v9q2m7x4p8w1z6/' if dom else 'https://198.51.100.40:41873/k3v9q2m7x4p8w1z6/', 'user': 'rq7m2k9x4p',
+                'password': 'Xk29fLq8Zr4Mn7Pw3Ty6', 'domain': dom or None, 'links': links, 't': int(time.time())}
+        return {'ok': True, 'log': [{'cmd': '— демо-установка', 'ok': True, 'msg': ''}], 'info': info, 'message': f'{pid} установлен (демо)'}
+
+    def action(self, cfg, action_id, params):
+        if action_id != 'iperf':
+            return super().action(cfg, action_id, params)
+        time.sleep(2)
+        down, up = round(random.uniform(280, 320), 1), round(random.uniform(85, 95), 1)
+        return {'message': f'iperf3 до 198.51.100.40: к устройству {up} Мбит/с, от устройства {down} Мбит/с',
+                'speedtest': {'down': down, 'up': up, 'retr': random.randint(0, 40), 'host': '198.51.100.40'}}
 
     def poll(self, cfg):
         t = time.time()
@@ -219,6 +399,7 @@ def seed(store):
     s = D(name='Коммутатор ядра', driver='demo_switch', kind='switch', host='10.0.0.2')
     n = D(name='Хранилище', driver='demo_nas', kind='nas', host='10.0.0.5')
     h = D(name='Home Assistant', driver='demo_ha', kind='server', host='10.0.0.6')
+    D(name='Гостевой роутер · LTE', driver='demo_openwrt', kind='router', host='10.0.0.3')
     D(name='VPS · Франкфурт', driver='demo_server', kind='server', host='198.51.100.40', location='remote', site='Облако')
     D(name='Сайт компании', driver='demo_site', kind='web', host='https://example.com', location='remote', site='Облако')
     ups = D(name='ИБП 1500 ВА', driver='ups', kind='ups', mode='manual', powerW='900', batteryV='12', batteryAh='9', batteryCount='2',
@@ -278,6 +459,19 @@ def seed(store):
             jitter = 1 + .06 * math.sin(i / 3.0 + port) + random.uniform(-.03, .03)
             store.history.setdefault(f'{s}:p{port}', []).append({'t': tt, 't0': tt, 'rx': int(base * (.3 + .7 * wave(tt)) * jitter),
                                                                  'tx': int(base * .35 * (.3 + .7 * wave(tt, phase=1)) * jitter)})
+        store.history.setdefault(f'{s}:p11', []).append({'t': tt, 't0': tt, 'err': random.randint(8, 16)})
+    # Wi-Fi coverage: browser speed tests pinned on the plan
+    tests = [('f1', 120, 40, 612, 540, 3, 'ap1', '5 ГГц', -45, 'iPhone · Анна'), ('f1', 380, 60, 421, 377, 4, 'ap2', '5 ГГц', -55, 'MacBook · Офис'),
+             ('f1', 450, 200, 158, 117, 6, 'ap2', '5 ГГц', -68, 'iPhone · Дмитрий'), ('f1b', 100, 100, 236, 198, 5, 'ap2', '5 ГГц', -63, 'iPad · Переговорная'),
+             ('f1b', 430, 180, 54, 38, 11, 'ap2', '2.4 ГГц', -74, 'Pixel · Ольга'), ('yard', 60, 40, 88, 64, 9, 'ap3', '2.4 ГГц', -70, 'Galaxy · Сергей'),
+             ('yard', 260, 170, 11.5, 5.8, 24, 'ap3', '2.4 ГГц', -82, 'Galaxy · Сергей')]
+    ap_name = {k: n for k, n, _, _ in APS}
+    store._dump('speedtests.json', [{'id': 's' + secrets.token_hex(4), 't': now - (len(tests) - i) * 5400, 'kind': 'browser',
+                                     'down': dn, 'up': upl, 'ping': png, 'jitter': round(png / 3, 1), 'note': '',
+                                     'where': {'b': 'b1', 'f': f, 'x': x, 'y': y},
+                                     'client': {'ip': '10.0.0.' + str(100 + i), 'name': who, 'wifi': True, 'apName': ap_name[ap], 'band': band, 'rssi': rssi,
+                                                'rate': 866 if band.startswith('5') else 144}}
+                                    for i, (f, x, y, dn, upl, png, ap, band, rssi, who) in enumerate(tests)])
     store.add_event(None, 'Камера · Склад', 'offline', 'нет связи: не отвечает')
     store.add_event(s, 'Коммутатор ядра', 'info', 'PoE на порту 3 перезапущено')
     store.add_event(None, 'Камера · Склад', 'online', 'снова в сети')

@@ -4,7 +4,7 @@
   • answer /start with the user's Telegram ID and how to connect.
 Codes are random, single-use and expire in 10 minutes; a login must be confirmed by the same allowed account.
 """
-import re, secrets, threading, time, traceback
+import json, os, re, secrets, threading, time, traceback, urllib.error, urllib.request
 
 from . import alerts
 
@@ -125,6 +125,42 @@ class TgBot:
                 traceback.print_exc()
                 time.sleep(15)
 
+    def send_avatar(self, chats):
+        """The bot's picture as a photo with instructions: forward it to @BotFather (/setuserpic) — the Bot API can't set it itself."""
+        web = os.environ.get('RL_WEB', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'web'))
+        with open(os.path.join(web, 'icon-512.png'), 'rb') as f:
+            img = f.read()
+        t = self.tg()
+        api = (t.get('api') or 'https://api.telegram.org').rstrip('/')
+        caption = (f'🖼 Аватар для бота @{self.username}\n\nКак поставить:\n1. Откройте @BotFather\n2. Отправьте /setuserpic\n'
+                   f'3. Выберите @{self.username}\n4. Перешлите ему эту картинку')
+        for chat in chats:
+            b = '----rl' + secrets.token_hex(8)
+            body = b''.join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in (('chat_id', chat), ('caption', caption)))
+            body += (f'--{b}\r\nContent-Disposition: form-data; name="photo"; filename="rack-live-bot.png"\r\n'
+                     'Content-Type: image/png\r\n\r\n').encode() + img + f'\r\n--{b}--\r\n'.encode()
+            req = urllib.request.Request(f"{api}/bot{t['token']}/sendPhoto", data=body, headers={'Content-Type': f'multipart/form-data; boundary={b}'})
+            try:
+                urllib.request.urlopen(req, timeout=30).read()
+            except urllib.error.HTTPError as e:
+                raise ValueError('Telegram не принял картинку: ' + (json.loads(e.read() or b'{}').get('description') or f'HTTP {e.code}'))
+            except urllib.error.URLError as e:
+                raise ValueError(f'Telegram недоступен ({e.reason})')
+
+    def avatar_once(self, chat):
+        """After the first link of each bot: send the avatar once (remembered per bot username)."""
+        n = alerts.merged(self.store.cfg.get('notify'))
+        if n['telegram'].get('avatarSent') == self.username:
+            return
+        try:
+            self.send_avatar([chat])
+        except (ValueError, OSError):
+            traceback.print_exc()
+            return
+        n['telegram']['avatarSent'] = self.username
+        self.store.cfg['notify'] = n
+        self.store.save()
+
     def say(self, chat, text, buttons=None):
         p = {'chat_id': chat, 'text': text, 'disable_web_page_preview': True}
         if buttons:
@@ -170,6 +206,7 @@ class TgBot:
                         self.codes[m.group(2)].update(status='ok', user=user)
                 self.store.add_event(None, 'Telegram', 'info', f'привязан аккаунт {user.get("first_name", "")} (id {user.get("id")})')
                 self.say(chat, f'✅ Telegram привязан к Rack Live «{title}».\nСюда будут приходить уведомления, а войти в панель можно кнопкой «Войти через Telegram».')
+                self.avatar_once(chat)
                 return
             if str(user.get('id')) not in alerts.tg_allowed(self.tg()):
                 with self.lock:

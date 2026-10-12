@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
-# ping for the "availability" driver, ssh + sshpass for the SSH driver; everything else is the Python standard library
-RUN apk add --no-cache iputils tzdata openssh-client sshpass
+# ping for the "availability" driver, ssh + sshpass for the SSH driver, iperf3 for speed tests; everything else is the Python standard library
+RUN apk add --no-cache iputils tzdata openssh-client sshpass iperf3
 WORKDIR /app
 COPY rackd ./rackd
 COPY web/index.html web/styles.css web/app.js web/agent.py web/icon.svg web/icon-512.png web/icon-192.png web/apple-touch-icon.png web/manifest.json ./web/
@@ -8,5 +8,5 @@ COPY web/vendor ./web/vendor
 ENV RL_DATA=/data RL_WEB=/app/web RL_PORT=8080 PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8080
-HEALTHCHECK --interval=60s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/api/state >/dev/null || exit 1
+HEALTHCHECK --interval=60s --timeout=5s CMD wget -qO- http://127.0.0.1:${RL_PORT}/api/state >/dev/null || exit 1
 CMD ["python", "-m", "rackd"]

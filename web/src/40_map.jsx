@@ -219,13 +219,16 @@ function MapView() {
     const W = wrap.current.clientWidth, H = wrap.current.clientHeight; cx = cx == null ? W / 2 : cx; cy = cy == null ? H / 2 : cy;
     const k = clampK(v.k * factor); return { k, x: cx - (cx - v.x) * k / v.k, y: cy - (cy - v.y) * k / v.k };
   });
+  // panels over the map (analysis, node info, rack list) scroll on their own — gestures there are not map gestures
+  const inPanel = e => e.target && e.target.closest && e.target.closest('.health-panel, .node-info, .rack-jump');
   const onWheel = e => {
+    if (inPanel(e)) return;
     e.preventDefault(); const r = wrap.current.getBoundingClientRect();
     zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0025)), e.clientX - r.left, e.clientY - r.top);
   };
   useEffect(() => {
     const el = wrap.current; if (!el) return;
-    const stop = ev => ev.preventDefault();                  // block Safari page zoom gestures on the map
+    const stop = ev => { if (!inPanel(ev)) ev.preventDefault(); };     // block Safari page zoom gestures on the map
     el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('gesturestart', stop); el.addEventListener('gesturechange', stop);
     el.addEventListener('touchmove', stop, { passive: false });

@@ -7,6 +7,26 @@ const TABS = [
   { id: 'events', label: 'События', icon: 'bell' },
   { id: 'settings', label: 'Настройки', icon: 'settings', admin: true },
 ];
+/* one hint per tab (and a different one while editing) — shown above the page until dismissed */
+const TAB_HINTS = {
+  rack: ['Здесь шкафы, щитки и комнаты с оборудованием. Нажмите на устройство — откроется карточка: порты, графики, действия. ' +
+    'Чтобы добавить или переставить оборудование, включите «Редактирование» вверху.',
+    'Перетаскивайте оборудование мышью или пальцем. «+ Шкаф» добавит ещё одно место: стойку, щиток или комнату. ' +
+    'Нажмите на юнит, чтобы переименовать его или привязать к устройству — тогда на нём появятся живые данные.'],
+  map: ['Карта строится сама по данным роутера и коммутатора: кто к какому порту подключён. Цвет линии — скорость: зелёный — 1 Гбит, ' +
+    'жёлтый — 100 Мбит. Кнопка «Анализ» покажет слабые места сети: точки отказа, медленные кабели, ошибки.',
+    'Перетаскивайте узлы, чтобы разложить карту по-своему — положение запоминается. Связь, которую Rack Live не видит сам ' +
+    '(например, через неуправляемый коммутатор), можно добавить вручную.'],
+  plan: ['План показывает, где физически стоит оборудование. Цветные пятна — замеры скорости Wi-Fi: пройдитесь с телефоном по дому, ' +
+    'нажмите кнопку-спидометр вверху, сделайте тест и отметьте место — получится карта покрытия.',
+    'Сначала нарисуйте комнаты инструментом «Комната», потом «Оборудование» → выберите устройство и нажмите на план. ' +
+    'Дома и столбы на территории соединяются инструментом «Магистраль».'],
+  devices: ['Устройства — то, с чего Rack Live собирает данные. «Добавить» → выберите тип (роутер, коммутатор, NAS, сервер по SSH…), ' +
+    'введите адрес и пароль и нажмите «Проверить» — сразу будет видно, подключается ли.'],
+  events: ['Журнал: сбои, восстановления, входы и действия. Чтобы узнавать о сбоях сразу, подключите Telegram-бота в «Настройках» → «Уведомления».'],
+  settings: ['Начните с уведомлений: подключите Telegram-бота, и Rack Live сам напишет, если что-то сломается. ' +
+    'Подсказки вроде этой выключаются переключателем «Подсказки» в карточке «Общие».'],
+};
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
 
@@ -34,8 +54,10 @@ function App() {
   const [tab, setTab] = useState(() => (location.hash.slice(1) || lsGet('rl_tab', 'rack')));
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
-  const [editor, setEditor] = useState(undefined);
+  const [editor, setEditor] = useState(() => new URLSearchParams(location.search).get('add') === '1' ? null : undefined);    // ?add=1 → «Новое устройство»
   const [login, setLogin] = useState(false);
+  const [speed, setSpeed] = useState(() => new URLSearchParams(location.search).get('speedtest'));      // '1' open · 'run' open and start
+  const [pinTest, setPinTest] = useState(null);             // speed test id waiting for a tap on the plan
   const [theme, setTheme] = useTheme();
   const toast = useToast();
   // opened from the Telegram bot: log in with the signed launch data, no password
@@ -89,6 +111,7 @@ function App() {
   const logout = async () => { await api('/api/logout', { method: 'POST' }); ssSet('rl_tok', null); setMode('view'); refresh(); };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
   const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
+    pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d) };
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
@@ -116,6 +139,7 @@ function App() {
       <div className="grow" />
       {admin ? <Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
         { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
+      <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
       <Btn size="sm" icon={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} title={'Тема: ' + ({ auto: 'как в системе', dark: 'тёмная', light: 'светлая' })[theme]}
         onClick={() => setTheme(theme === 'auto' ? 'dark' : theme === 'dark' ? 'light' : 'auto')} />
     </header>
@@ -124,6 +148,8 @@ function App() {
         <div className="grow"><div className="page-title">{tabs.find(t => t.id === cur).label}</div><div className="page-sub" style={{ marginBottom: 0 }}>{subtitle}</div></div>
         {edit ? <span className="badge warning"><Icon name="edit" size={12} />Режим редактирования</span> : null}
       </div>
+      {TAB_HINTS[cur] ? (edit && TAB_HINTS[cur][1] ? <Hint key={cur + '-edit'} id={cur + '-edit'}>{TAB_HINTS[cur][1]}</Hint>
+        : <Hint key={cur} id={cur}>{TAB_HINTS[cur][0]}</Hint>) : null}
       {cur === 'rack' ? <RackView /> : null}
       {cur === 'map' ? <MapView /> : null}
       {cur === 'plan' ? <PlanView /> : null}
@@ -135,6 +161,7 @@ function App() {
       <Icon name={t.icon} size={24} />{t.id === 'map' ? 'Карта' : t.label}{t.id === 'events' && problems ? <span className="count">{problems}</span> : null}</button>)}</nav>
     {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={() => setSheet(null)} /> : null}
     {editor !== undefined ? <DeviceEditor device={editor} onClose={() => setEditor(undefined)} /> : null}
+    {speed ? <SpeedTestModal autoRun={speed === 'run'} onClose={() => setSpeed(null)} /> : null}
   </AppCtx.Provider>;
 }
 

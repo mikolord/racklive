@@ -3,6 +3,8 @@ const RULES = [
   ['offline', 'Устройство пропало', 'нет связи дольше', [['minutes', 'мин']]],
   ['ups', 'ИБП', 'перешёл на батарею, разряжается, просит замену батареи', []],
   ['speed', 'Упала скорость порта', '1 Гбит → 100 Мбит дольше (обычно кабель)', [['minutes', 'мин']]],
+  ['errors', 'Ошибки на порту', 'повреждённых кадров (CRC) за час больше', [['count', 'шт']]],
+  ['security', 'Безопасность', 'появилась критичная проблема: открытый опасный порт, пароль по умолчанию…', []],
   ['disk', 'Заканчивается место', 'том заполнен на', [['pct', '%']]],
   ['temp', 'Перегрев', 'устройство, °C · диск, °C', [['c', '°C'], ['disk', '°C']]],
   ['vpn', 'VPN не работает', 'маршрутный туннель не поднят дольше', [['minutes', 'мин']]],
@@ -54,6 +56,7 @@ function NotifyCard() {
   const bot = data.tgBot || {};
   const syncTg = t => setN(x => ({ ...x, telegram: { ...x.telegram, chat: t.chat, allowed: t.allowed, linked: t.linked, enabled: true } }));
   const unlink = async id => { try { const r = await api('/api/tglink/remove', { method: 'POST', body: { id } }); syncTg(r.telegram); toast('Аккаунт отвязан'); refresh(); } catch (e) { toast(e.message, true); } };
+  const sendAvatar = async () => { try { await api('/api/tgbot/avatar', { method: 'POST', body: {} }); toast('Картинка отправлена в Telegram — перешлите её @BotFather'); } catch (e) { toast(e.message, true); } };
   const ch = (c, k, v) => setN(x => ({ ...x, [c]: { ...x[c], [k]: v } }));
   const rule = (r, k, v) => setN(x => ({ ...x, rules: { ...x.rules, [r]: { ...x.rules[r], [k]: v } } }));
   const save = async () => { try { const r = await api('/api/notify', { method: 'PUT', body: n });
@@ -78,7 +81,7 @@ function NotifyCard() {
             <li>В Telegram откройте <b>@BotFather</b> → <code>/newbot</code> → придумайте имя → он пришлёт <b>токен</b> вида <code>123456:ABC…</code>. Вставьте его ниже и нажмите <b>«Сохранить»</b>.</li>
             <li>Нажмите <b>«Привязать Telegram»</b> → откроется ваш бот → <b>Start</b>. Готово: ID впишется сам, уведомления пойдут вам, а на странице входа появится «Войти через Telegram».</li>
             <li>Нажмите <b>«Отправить тест»</b> — в боте должно прийти сообщение.</li>
-            <li>Красивая аватарка боту: скачайте её кнопкой ниже → <b>@BotFather</b> → <code>/setuserpic</code> → выберите бота → отправьте картинку.</li>
+            <li>Аватарка боту: после привязки бот сам пришлёт картинку (повторно — кнопка <b>«Аватар для бота»</b>). Перешлите её <b>@BotFather</b> после команды <code>/setuserpic</code> и выбора бота.</li>
           </ol></details>
           {inp('telegram', 'token', 'Токен бота', { secret: true, hint: 'От @BotFather' })}
           <div className="tg-linked">
@@ -93,7 +96,8 @@ function NotifyCard() {
               : bot.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>Бот: {bot.error}</div>
               : !bot.username ? <div className="dim3" style={{ fontSize: 12.5 }}>Подключаюсь к боту… (до 15 секунд после сохранения)</div>
               : <div className="row wrap"><Btn icon="send" kind="primary" onClick={() => setLinking(true)}>Привязать Telegram</Btn>
-                <a className="btn" href="/icon-512.png" download="rack-live-bot.png"><Icon name="download" size={16} />Аватар для бота</a></div>}
+                {(n.telegram.linked || []).length ? <Btn icon="send" onClick={sendAvatar} title="Бот пришлёт картинку и инструкцию, как поставить её через @BotFather">Аватар для бота</Btn>
+                  : <a className="btn" href="/icon-512.png" download="rack-live-bot.png"><Icon name="download" size={16} />Аватар для бота</a>}</div>}
           </div>
           {inp('telegram', 'chat', 'Chat ID (заполняется привязкой)', { ph: '123456789', hint: 'Можно вручную: ваш ID (бот пришлёт его на /start) или ID группы, начинается с минуса. Несколько — через запятую' })}
           <details className="guide"><summary>Открывать Rack Live прямо в Telegram (мини-приложение)</summary>
@@ -144,7 +148,10 @@ function SettingsView() {
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
   const fileRef = useRef(null);
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
-  const save = async () => { try { await api('/api/settings', { method: 'PUT', body: { title: s.title, poll: +s.poll, publicView: s.publicView, showClients: s.showClients, vlans: s.vlans } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
+  const save = async () => { try { await api('/api/settings', { method: 'PUT', body: { title: s.title, poll: +s.poll, publicView: s.publicView, showClients: s.showClients, hints: s.hints !== false, vlans: s.vlans } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
+  const [hiddenN, setHiddenN] = useState(() => hiddenHints().length);
+  const [vlanOpen, setVlanOpen] = useState(() => lsGet('rl_vlan_open', '') === '1');      // collapsed by default
+  const toggleVlan = v => { setVlanOpen(v); lsSet('rl_vlan_open', v ? '1' : ''); };
   const changePw = async () => {
     if (pw.n1 !== pw.n2) return toast('Пароли не совпадают', true);
     try { await api('/api/settings', { method: 'PUT', body: { oldPassword: pw.old, newPassword: pw.n1 } }); toast('Пароль изменён'); setPw({ old: '', n1: '', n2: '' }); } catch (e) { toast(e.message, true); }
@@ -167,17 +174,26 @@ function SettingsView() {
           <div className="dim3" style={{ fontSize: 12.5 }}>Схему и статусы видно всем, кто откроет адрес. Управление — только после входа.</div></div></div>
         <div className="row"><Switch on={s.showClients !== false} onChange={v => set('showClients', v)} /><div className="grow"><div>Клиенты на карте</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Показывать телефоны, камеры и другие устройства, а не только оборудование</div></div></div>
+        <div className="row"><Switch on={s.hints !== false} onChange={v => set('hints', v)} /><div className="grow"><div>Подсказки</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Короткие пояснения на каждой вкладке и в карточках — для тех, кто открыл Rack Live впервые. Действует для всех, кто открывает панель.</div>
+          {hiddenN ? <button type="button" className="linkbtn" onClick={() => { setHiddenHints([]); setHiddenN(0); toast('Скрытые подсказки снова видны'); }}>
+            Вернуть скрытые подсказки ({hiddenN}) — в этом браузере</button> : null}</div></div>
         <Btn kind="primary" onClick={save}>Сохранить</Btn>
       </div>
     </Card>
-    <Card title="VLAN" right={<Btn size="sm" icon="plus" onClick={() => set('vlans', [...vl, { vid: (vl.length ? Math.max(...vl.map(v => +v.vid)) + 1 : 1), name: '', color: '#8e8e93' }])} />}>
-      <div className="dim" style={{ fontSize: 13, marginBottom: 10 }}>Названия и цвета VLAN для портов и карты</div>
+    <Card title={<button type="button" className="card-toggle" onClick={() => toggleVlan(!vlanOpen)}>
+        <Icon name="chevron" size={15} style={{ transform: vlanOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }} />VLAN · {vl.length}</button>}
+      right={vlanOpen ? <Btn size="sm" icon="plus" onClick={() => set('vlans', [...vl, { vid: (vl.length ? Math.max(...vl.map(v => +v.vid)) + 1 : 1), name: '', color: '#8e8e93' }])} /> : null}>
+      {!vlanOpen ? <div className="legend" style={{ cursor: 'pointer' }} onClick={() => toggleVlan(true)}>
+        {vl.map((v, i) => <span key={i}><i style={{ background: v.color }} />{v.name || 'VLAN ' + v.vid}</span>)}
+        {!vl.length ? <span>Названия и цвета VLAN для портов и карты</span> : null}</div> : <>
+      <div className="dim" style={{ fontSize: 13, marginBottom: 10 }}>Только подписи и цвета для портов и карты — сами VLAN настраиваются на роутере и коммутаторе</div>
       <div className="col">{vl.map((v, i) => <div className="row" key={i}>
         <input className="input mono" style={{ width: 70 }} value={v.vid} onChange={e => set('vlans', vl.map((x, j) => j === i ? { ...x, vid: +e.target.value || '' } : x))} />
         <input className="input" value={v.name} placeholder="Название" onChange={e => set('vlans', vl.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
         <input type="color" value={v.color} onChange={e => set('vlans', vl.map((x, j) => j === i ? { ...x, color: e.target.value } : x))} style={{ width: 40, height: 38, border: 0, background: 'none', padding: 0 }} />
         <Btn size="sm" icon="trash" onClick={() => set('vlans', vl.filter((_, j) => j !== i))} /></div>)}</div>
-      <Btn style={{ marginTop: 12 }} onClick={save}>Сохранить VLAN</Btn>
+      <Btn style={{ marginTop: 12 }} onClick={save}>Сохранить VLAN</Btn></>}
     </Card>
     {data.notify ? <NotifyCard /> : null}
     <Card title="Пароль администратора">

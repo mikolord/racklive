@@ -210,6 +210,16 @@ def analyze(topo, devices, states, cable_tests):
             add('warn' if c['verdict'] == 'warn' else 'bad', f"Кабель на порту {port}{' · ' + lbl if lbl else ''} неисправен",
                 c.get('text', '') + ' ' + '. '.join(x[:1].upper() + x[1:] for x in c.get('details') or []) + '.', deviceId=did, port=int(port))
 
+    for d in devices:
+        for p in (states.get(d['id']) or {}).get('ports') or []:
+            n = p.get('errDay') or 0
+            if n >= 10 and (d['id'], p.get('n')) not in bad_cable:
+                lbl = p.get('label') or ''
+                add('bad' if (p.get('errHour') or 0) >= 10 else 'warn', f"Ошибки на порту {p['n']}{' · ' + lbl if lbl else ''}: {n} за сутки",
+                    'Коммутатор получает повреждённые кадры (CRC) — их приходится передавать заново, скорость падает. '
+                    'Обычно виноват обжим, перегиб кабеля или силовой кабель рядом. Проверьте кабель в карточке порта.',
+                    deviceId=d['id'], port=p['n'])
+
     for e in edges:
         t = nodes[e['target']]
         sp = e.get('speed') or 0

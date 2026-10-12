@@ -121,7 +121,7 @@ const ICON_PATHS = {
   eraser: 'M4 15l7-7 6 6-5 5H8zM20 20H9', cursor: 'M5 3l6 16 2-7 7-2z', tag: 'M4 4h8l8 8-8 8-8-8zM8 8h.01', tree: 'M12 2a6 6 0 0 1 4 10l-1 1v3h-6v-3l-1-1A6 6 0 0 1 12 2M12 15v7',
   shield: 'M12 2l8 3v6c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V5z', globe2: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   pulse: 'M2 12h4l3-8 4 16 3-8h6', cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2', alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
-  copy: 'M9 9h11v11H9zM5 15H4V4h11v1', toggle: 'M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7M7 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
+  copy: 'M9 9h11v11H9zM5 15H4V4h11v1', gauge: 'M3.5 17a9 9 0 1 1 17 0M12 14l4.5-5M12 14h.01', bulb: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3', pin: 'M12 22s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12M12 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6', toggle: 'M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7M7 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
 };
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {
   const d = ICON_PATHS[name] || ICON_PATHS.other;

@@ -84,6 +84,21 @@ function SearchBox({ value, onChange, placeholder = 'Поиск' }) {
   return <div className="search"><Icon name="search" size={15} /><input className="input" value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} /></div>;
 }
 
+/* Hints for newcomers: on unless switched off in Settings; each can be dismissed in this browser («Понятно») */
+const HINTS_KEY = 'rl_hints_hidden';
+const hiddenHints = () => { try { return JSON.parse(localStorage.getItem(HINTS_KEY) || '[]'); } catch (e) { return []; } };
+const setHiddenHints = list => { try { list.length ? localStorage.setItem(HINTS_KEY, JSON.stringify(list)) : localStorage.removeItem(HINTS_KEY); } catch (e) { } };
+function Hint({ id, title, children, style }) {
+  const { data } = useApp();
+  const [hidden, setHidden] = useState(() => hiddenHints().includes(id));
+  if (hidden || (data.settings || {}).hints === false) return null;
+  return <div className="hint-box" style={style}>
+    <div className="hint-ico"><Icon name="bulb" size={17} /></div>
+    <div className="grow">{title ? <b>{title}</b> : null}<div>{children}</div></div>
+    <button type="button" className="hint-close" onClick={() => { setHiddenHints([...new Set([...hiddenHints(), id])]); setHidden(true); }}>Понятно</button>
+  </div>;
+}
+
 /* Promise-based confirm dialog */
 const ConfirmCtx = createContext(null);
 function ConfirmHost({ children }) {

@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, auth, tgbot, topology
+from . import alerts, analysis, auth, detect, security, speedtest, tgbot, topology
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.1.0'
+VERSION = '2.3.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -17,6 +17,14 @@ DEMO = os.environ.get('RL_DEMO', '').lower() in ('1', 'true', 'yes')     # demo 
 
 def log(*a):
     print(time.strftime('%Y-%m-%d %H:%M:%S'), *a, flush=True)
+
+
+def port_errors(p):
+    """Total error counter of a port: received errors (CRC/FCS are part of them) + transmit errors; None if not reported."""
+    i, c, o = p.get('inErrors'), p.get('crc'), p.get('outErrors')
+    if i is None and c is None:
+        return None
+    return max(i or 0, c or 0) + (o or 0)
 
 
 class App:
@@ -30,6 +38,8 @@ class App:
         self.retried = set()
         self._view_cache = {}
         self.alerter = alerts.Alerter(self.store)
+        self.speed = speedtest.SpeedTests(self.store)
+        self.jobs = {}
         self.tgbot = tgbot.TgBot(self)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
@@ -62,17 +72,27 @@ class App:
             if st.get('status') == 'offline' and old.get('status') not in (None, 'offline') and old.get('summary'):
                 keep = {k: old[k] for k in ('summary', 'ports', 'children', 'storage', 'sections') if k in old}
                 st = dict(keep, **st)              # keep the last known data, but show the device as offline
-            # per-port throughput from octet counters
+            # per-port throughput from octet counters, error counters → errors in the last hour / day
             dt = (st.get('updated') or 0) - (old.get('updated') or 0)
-            if st.get('status') != 'offline' and 0 < dt < 3600:
-                oldp = {p.get('n'): p for p in old.get('ports') or []}
-                for p in st.get('ports') or []:
-                    o = oldp.get(p.get('n'))
-                    if o and p.get('rxBytes') is not None and o.get('rxBytes') is not None and p.get('txBytes') is not None and o.get('txBytes') is not None:
-                        drx, dtx = p['rxBytes'] - o['rxBytes'], p['txBytes'] - o['txBytes']
-                        if drx >= 0 and dtx >= 0:
-                            p['rxBps'], p['txBps'] = round(drx * 8 / dt), round(dtx * 8 / dt)
-                            self.store.add_point(f"{d['id']}:p{p['n']}", {'t': int(st['updated']), 'rx': p['rxBps'], 'tx': p['txBps']}, avg=True)
+            fresh = st.get('status') != 'offline' and 0 < dt < 3600
+            oldp = {p.get('n'): p for p in old.get('ports') or []}
+            for p in (st.get('ports') or []) if st.get('status') != 'offline' else []:
+                o = oldp.get(p.get('n')) or {}
+                key, point = f"{d['id']}:p{p['n']}", {'t': int(st['updated'])}
+                if fresh and all(x.get(k) is not None for x in (p, o) for k in ('rxBytes', 'txBytes')):
+                    drx, dtx = p['rxBytes'] - o['rxBytes'], p['txBytes'] - o['txBytes']
+                    if drx >= 0 and dtx >= 0:
+                        p['rxBps'], p['txBps'] = round(drx * 8 / dt), round(dtx * 8 / dt)
+                        point.update(rx=p['rxBps'], tx=p['txBps'])
+                e, eo = port_errors(p), port_errors(o)
+                if fresh and e is not None and eo is not None and e >= eo:     # e < eo: counters reset (reboot)
+                    point['err'] = e - eo
+                if len(point) > 1:
+                    self.store.add_point(key, point, avg=True, sums=('err',))
+                if e is not None:
+                    h = self.store.history.get(key) or []
+                    p['errHour'] = sum(x.get('err', 0) for x in h if x['t'] >= st['updated'] - 3600)
+                    p['errDay'] = sum(x.get('err', 0) for x in h)
             self.states[d['id']] = st
             self.store.bump()
             prev, cur = old.get('status'), st.get('status')
@@ -132,6 +152,31 @@ class App:
                 traceback.print_exc()
             time.sleep(3)
 
+    # ───────── background plugin jobs (panel installs take minutes) ─────────
+    def start_plugin_job(self, d, drv, pid, op, body):
+        job = {'id': secrets.token_hex(6), 'device': d['id'], 'plugin': pid, 'op': op, 't': time.time(), 'stage': 'Подключаюсь к серверу…', 'done': False}
+        self.jobs = {k: v for k, v in self.jobs.items() if time.time() - v['t'] < 6 * 3600}
+        self.jobs[job['id']] = job
+
+        def run():
+            try:
+                res = drv.plugin(d, pid, op, dict(body, _progress=lambda s: job.update(stage=s)))
+                if res.get('info'):                                     # panel credentials: kept on the device (a secret field)
+                    d.setdefault('panelInfo', {})[pid] = res['info']
+                if res.get('removed'):
+                    (d.get('panelInfo') or {}).pop(pid, None)
+                self.store.save()
+                self.store.add_event(d['id'], d.get('name'), 'info', res.get('message') or f'{pid}: {op}')
+                job['result'] = res
+            except Exception as e:
+                job['error'] = str(e)
+                self.store.add_event(d['id'], d.get('name'), 'warning', f'плагин {pid}: {e}')
+            finally:
+                job['done'], job['dur'] = True, round(time.time() - job['t'])
+        threading.Thread(target=run, daemon=True).start()
+        self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: {'установка' if op == 'install' else 'удаление'} начата")
+        return job
+
     # ───────── view model ─────────
     def peer_index(self):
         idx = {}
@@ -186,13 +231,19 @@ class App:
         except Exception:
             traceback.print_exc()
             health = None
-        return {'notify': alerts.public(cfg.get('notify')) if authed else None,
+        try:                                                # security findings name ports and devices — only for the admin
+            sec = security.audit(cfg['devices'], self.states, idx, (cfg.get('security') or {}).get('ignored')) if authed else None
+        except Exception:
+            traceback.print_exc()
+            sec = None
+        return {'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
                 'tgBot': {'username': self.tgbot.username, 'error': self.tgbot.error} if authed else None,
                 'tgLogin': self.tgbot.login_available(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
+                'speedtests': self.speed.public(),
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
 
 
@@ -254,6 +305,52 @@ class Handler(BaseHTTPRequestHandler):
         secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
         return f'rl_session={tok}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}'
 
+    def can_view(self):
+        cfg = APP.store.cfg
+        return self.authed() or bool(cfg.get('auth') and cfg['settings'].get('publicView'))
+
+    def query(self):
+        return dict(x.split('=', 1) for x in self.path.split('?', 1)[1].split('&') if '=' in x) if '?' in self.path else {}
+
+    # ── speed test streams (no gzip, no JSON) ──
+    def speed_down(self):
+        n = self.query().get('bytes', '')
+        n = max(1, min(speedtest.MAX_BYTES, int(n) if n.isdigit() else 25 << 20))
+        if not APP.speed.slots.acquire(blocking=False):
+            return self.err('сейчас идёт другой тест скорости — попробуйте через минуту', 429)
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Length', str(n))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            chunk, left = memoryview(speedtest.CHUNK), n
+            while left > 0:
+                k = min(left, len(chunk))
+                self.wfile.write(chunk[:k])
+                left -= k
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass                                            # the page stops a stream when its time is up
+        finally:
+            APP.speed.slots.release()
+
+    def speed_up(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        if n > speedtest.MAX_BYTES:
+            return self.err('слишком большой блок', 413)
+        if not APP.speed.slots.acquire(blocking=False):
+            return self.err('сейчас идёт другой тест скорости — попробуйте через минуту', 429)
+        t, left = time.time(), n
+        try:
+            while left > 0:
+                b = self.rfile.read(min(left, 1 << 20))
+                if not b:
+                    break
+                left -= len(b)
+        finally:
+            APP.speed.slots.release()
+        return self.send({'bytes': n - left, 'ms': round((time.time() - t) * 1000)})
+
     def need_admin(self):
         if not self.authed():
             self.err('нужен вход администратора', 401)
@@ -297,11 +394,21 @@ class Handler(BaseHTTPRequestHandler):
                                       'settings': {'title': cfg['settings'].get('title')}, 'version': VERSION,
                                       'tgLogin': APP.tgbot.login_available()})
                 return self.send(APP.view(a))
+            if path.startswith('/api/speedtest/'):
+                if not self.can_view():
+                    return self.err('нужен вход', 401)
+                if path == '/api/speedtest/down':
+                    return self.speed_down()
+                if path == '/api/speedtest/ping':
+                    return self.send({'t': time.time()})
+                if path == '/api/speedtest/who':
+                    ip = self.client_ip()
+                    return self.send(speedtest.who(APP.store.cfg['devices'], APP.states, ip))
             m = re.match(r'/api/history/(\w+)$', path)
             if m:
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
                     return self.err('нужен вход', 401)
-                q = dict(x.split('=', 1) for x in self.path.split('?', 1)[1].split('&') if '=' in x) if '?' in self.path else {}
+                q = self.query()
                 key = m.group(1) + (f":p{int(q['port'])}" if q.get('port', '').isdigit() else '')
                 return self.send(APP.store.history.get(key, []))
             if path == '/api/export':
@@ -334,6 +441,10 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         st = APP.store
         try:
+            if path == '/api/speedtest/up' and method == 'POST':     # raw bytes, read before any JSON parsing
+                if not self.can_view():
+                    return self.err('нужен вход', 401)
+                return self.speed_up()
             body = self.body()
             # ── auth ──
             if path == '/api/setup' and method == 'POST':
@@ -421,7 +532,7 @@ class Handler(BaseHTTPRequestHandler):
             # ── admin API ──
             if path == '/api/settings' and method == 'PUT':
                 s = st.cfg['settings']
-                for k in ('title', 'poll', 'publicView', 'showClients', 'vlans'):
+                for k in ('title', 'poll', 'publicView', 'showClients', 'hints', 'vlans'):
                     if k in body:
                         s[k] = body[k]
                 if body.get('newPassword'):
@@ -466,6 +577,15 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.err(str(e), 400)
                 return self.send({'ok': True, 'code': code, 'url': url})
+            if path == '/api/tgbot/avatar' and method == 'POST':
+                ids = [str(x.get('id')) for x in alerts.merged(st.cfg.get('notify'))['telegram'].get('linked') or []]
+                if not APP.tgbot.username or not ids:
+                    return self.err('сначала привяжите Telegram — картинка придёт в бота')
+                try:
+                    APP.tgbot.send_avatar(ids)
+                except (ValueError, OSError) as e:
+                    return self.err(str(e))
+                return self.send({'ok': True, 'sent': len(ids)})
             if path == '/api/tglink/remove' and method == 'POST':
                 APP.tgbot.unlink(body.get('id'))
                 st.add_event(None, 'Telegram', 'info', f"отвязан аккаунт {body.get('id')}")
@@ -479,6 +599,7 @@ class Handler(BaseHTTPRequestHandler):
                         new[ch][key] = cur[ch][key]
                     new[ch].pop(key + 'Set', None)
                 new['telegram']['linked'] = cur['telegram'].get('linked') or []      # changed only by link / unlink
+                new['telegram']['avatarSent'] = cur['telegram'].get('avatarSent') or ''
                 menu = APP.alerter.setup_menu(new)                   # bot menu button → mini app (None if Telegram is off)
                 if path == '/api/notify/test':
                     res = APP.alerter.send(['✅ Проверка уведомлений Rack Live — если вы это видите, всё настроено.'], cfg=new) or {}
@@ -495,6 +616,19 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['plan'] = {'buildings': b, 'links': body.get('links') if isinstance(body.get('links'), list) else [],
                                   'poles': body.get('poles') if isinstance(body.get('poles'), list) else []}
                 st.save()
+                return self.send({'ok': True})
+            if path == '/api/speedtest' and method == 'POST':
+                num = lambda k: round(float(body[k]), 2) if isinstance(body.get(k), (int, float)) else None
+                rec = {'kind': 'browser', 'down': num('down'), 'up': num('up'), 'ping': num('ping'), 'jitter': num('jitter'),
+                       'note': str(body.get('note') or '')[:80], 'where': body.get('where') if isinstance(body.get('where'), dict) else None,
+                       'client': speedtest.who(st.cfg['devices'], APP.states, self.client_ip())}
+                return self.send({'ok': True, 'test': APP.speed.add(rec)})
+            m = re.match(r'/api/speedtest/(\w+)$', path)
+            if m and method == 'PUT':
+                r = APP.speed.update(m.group(1), body)
+                return self.send({'ok': True, 'test': r}) if r else self.err('замер не найден', 404)
+            if m and method == 'DELETE':
+                APP.speed.delete(m.group(1))
                 return self.send({'ok': True})
             if path == '/api/import' and method == 'POST':
                 data = body.get('data') or {}
@@ -530,6 +664,49 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send({'ok': True})
                 if sub == 'poll' and method == 'POST':
                     return self.send({'ok': True, 'state': APP.poll_device(d)})
+                if sub == 'plugins' and method == 'POST':
+                    drv = REGISTRY.get(d.get('driver'))
+                    if not hasattr(drv, 'plugins'):
+                        return self.err('у этого устройства нет плагинов')
+                    if body.get('op') == 'status':
+                        return self.send(dict(drv.plugins(d), ok=True))
+                    pid, op = str(body.get('plugin') or ''), str(body.get('op') or '')
+                    if op == 'job':                             # progress of a background install
+                        j = APP.jobs.get(str(body.get('job') or ''))
+                        return self.send({k: v for k, v in j.items() if k != 'device'} if j and j['device'] == did else {'done': True, 'error': 'задача не найдена'})
+                    if op in getattr(drv, 'async_ops', ()):
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
+                    try:
+                        res = drv.plugin(d, pid, op, body)
+                    except ValueError as e:                     # bad .conf / domains: a readable reason
+                        return self.err(str(e))
+                    except DriverError as e:
+                        if op not in ('preview',):
+                            st.add_event(did, d.get('name'), 'warning', f'плагин {pid}: {e}')
+                        raise
+                    if res.get('sshSave'):                      # Entware login checked → keep it (password is a secret)
+                        d.update(res.pop('sshSave'))
+                        st.save()
+                        return self.send(res)
+                    if pid != 'awg':
+                        if op in ('install', 'remove') and res.get('ok'):
+                            st.add_event(did, d.get('name'), 'info', res.get('message'))
+                        elif op == 'install':
+                            st.add_event(did, d.get('name'), 'warning', res.get('message'))
+                        return self.send(res)
+                    tun = [t for t in d.get('rlTunnels') or [] if t.get('iface') != res.get('iface') and t.get('iface') != res.get('removed')]
+                    if op == 'install':
+                        d['rlTunnels'] = tun + [{'iface': res['iface'], 'name': res['name'], 'domains': res['domains'], 't': int(time.time())}]
+                    elif op == 'domains':
+                        old = next((t for t in d.get('rlTunnels') or [] if t.get('iface') == res['iface']), {})
+                        d['rlTunnels'] = tun + [dict(old, domains=res['domains'])]
+                    elif op == 'remove':
+                        d['rlTunnels'] = tun
+                    if op in ('install', 'domains', 'remove', 'component'):
+                        st.save()
+                        st.add_event(did, d.get('name'), 'info', res.get('message') or f'плагин {pid}: {op}')
+                        APP.last_start.pop(did, None)               # re-poll soon: the VPN tab shows the new tunnel
+                    return self.send(res)
                 if sub == 'token' and method == 'POST':
                     return self.send({'ok': True, 'agentToken': d.get('agentToken')})
                 if sub == 'action' and method == 'POST':
@@ -545,9 +722,12 @@ class Handler(BaseHTTPRequestHandler):
                         res = msg
                         if res.get('cable') is not None:
                             st.set_cable(did, res.get('port'), res['cable'])
-                        level = {'ok': 'info', 'empty': 'info'}.get((res.get('cable') or {}).get('verdict'), 'warning')
+                        if res.get('speedtest'):                # iperf3: kept with the browser tests
+                            res['speedtest'] = APP.speed.add(dict(res['speedtest'], kind='iperf', device=did, deviceName=d.get('name')))
+                        level = 'info' if res.get('speedtest') else {'ok': 'info', 'empty': 'info'}.get((res.get('cable') or {}).get('verdict'), 'warning')
                         st.add_event(did, d.get('name'), level, res.get('message', ''))
-                        return self.send({'ok': True, 'message': res.get('message'), 'cable': res.get('cable'), 'port': res.get('port')})
+                        return self.send({'ok': True, 'message': res.get('message'), 'cable': res.get('cable'), 'port': res.get('port'),
+                                          'speedtest': res.get('speedtest')})
                     if act.get('instant'):
                         # quick actions (switches): re-read the device right away and hand the fresh state back
                         if act.get('scope') != 'entity':
@@ -557,6 +737,16 @@ class Handler(BaseHTTPRequestHandler):
                     st.add_event(did, d.get('name'), 'info', f"{msg}")
                     threading.Thread(target=lambda: (time.sleep(3), APP.poll_device(d)), daemon=True).start()
                     return self.send({'ok': True, 'message': msg})
+            if path == '/api/security/ignore' and method == 'POST':
+                sec = st.cfg.setdefault('security', {})
+                ign = [x for x in sec.get('ignored') or [] if x != body.get('id')]
+                if body.get('ignore'):
+                    ign.append(str(body.get('id')))
+                sec['ignored'] = ign
+                st.save()
+                return self.send({'ok': True})
+            if path == '/api/detect' and method == 'POST':
+                return self.send({'ok': True, 'found': detect.detect(body.get('host'))})
             if path == '/api/test' and method == 'POST':
                 drv = REGISTRY.get(body.get('driver'))
                 if not drv:
@@ -591,6 +781,7 @@ def main():
     if DEMO:
         from .drivers import demo
         demo.seed(APP.store)
+        APP.speed.items = APP.store._load('speedtests.json', [])
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
         log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()

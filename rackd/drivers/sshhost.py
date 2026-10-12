@@ -4,9 +4,10 @@ so it works on Debian, Ubuntu, Alpine, CentOS, OpenWrt/BusyBox and Synology alik
 Transport: paramiko when it is installed (dev machines), otherwise the system ssh client
 (+ sshpass for passwords) — the Docker image ships openssh-client and sshpass.
 """
-import os, re, shlex, shutil, subprocess, tempfile
+import json, os, random, re, secrets, shlex, shutil, subprocess, tempfile, time
 
 from . import Driver, FIELD_PASS
+from .. import speedtest, vps
 from ..util import DriverError
 
 SCRIPT = r'''
@@ -50,6 +51,9 @@ class SSHHost(Driver):
               {'name': 'privateKey', 'label': 'Приватный ключ (вместо пароля)', 'type': 'textarea', 'secret': True,
                'hint': 'Содержимое файла id_ed25519 / id_rsa целиком. Надёжнее пароля.'}]
     actions = [{'id': 'container_restart', 'label': 'Перезапустить контейнер', 'scope': 'service', 'confirm': 'Перезапустить контейнер {name}?'},
+               {'id': 'iperf', 'label': 'Тест скорости (iperf3)', 'scope': 'device', 'kind': 'speed',
+                'confirm': 'Rack Live измерит скорость сети до этого устройства в обе стороны (около 15 секунд). '
+                           'На время теста канал будет загружен. На устройстве нужен iperf3. Продолжить?'},
                {'id': 'reboot', 'label': 'Перезагрузить сервер', 'scope': 'device', 'confirm': 'Сервер перезагрузится, всё на нём будет недоступно 1–3 минуты. Продолжить?'}]
 
     # ── transport ──
@@ -200,4 +204,131 @@ class SSHHost(Driver):
         if action_id == 'reboot':
             self._run(cfg, '(sleep 1; reboot || sudo -n reboot) >/dev/null 2>&1 &\necho ok', timeout=20)
             return 'Сервер перезагружается'
+        if action_id == 'iperf':
+            return self.iperf(cfg)
         return super().action(cfg, action_id, params)
+
+    # ───────── plugins: 3x-ui / Remnawave (see rackd/vps.py) ─────────
+    async_ops = ('install', 'remove')                  # minutes long → the server runs them as background jobs
+
+    def plugins(self, cfg):
+        st = vps.parse_status(self._run(cfg, vps.STATUS, 40))
+        info = cfg.get('panelInfo') or {}
+        mem, root = int(st.get('mem') or 0), st.get('uid') == '0'
+        out = []
+        for p in vps.CATALOG:
+            p = dict(p)
+            mine, other = ('xui', 'rw') if p['id'] == '3xui' else ('rw', 'xui')
+            p['installed'] = bool(st.get(mine))
+            p['version'] = st.get(mine) or None
+            p['ip'], p['info'] = st.get('ip'), info.get(p['id'])
+            web = {k: v for k, v in st['ports'].items() if k in (80, 443) and 'nginx' not in v}
+            need = 1500 if p['id'] == 'remnawave' else 400
+            p['checks'] = [{'label': f"Ubuntu или Debian (у вас {st.get('os') or '?'})", 'ok': st.get('id') in ('ubuntu', 'debian')},
+                           {'label': 'Вход под root', 'ok': root},
+                           {'label': f'Память от {need} МБ (у вас {mem} МБ)', 'ok': mem >= need},
+                           {'label': f"Внешний IP определён{': ' + st['ip'] if st.get('ip') else ''}", 'ok': bool(st.get('ip'))},
+                           {'label': 'Порты 80 и 443 свободны (или заняты nginx)' + (f" — занято: {', '.join(f'{k} ({v})' for k, v in web.items())}" if web else ''),
+                            'ok': not web or p['installed']},
+                           {'label': f"Не установлен {'Remnawave' if other == 'rw' else '3x-ui'} — две панели на одном сервере конфликтуют", 'ok': not st.get(other)}]
+            out.append(p)
+        return {'os': st.get('os'), 'ip': st.get('ip'), 'plugins': out}
+
+    def plugin(self, cfg, pid, op, params):
+        meta = next((p for p in vps.CATALOG if p['id'] == pid), None)
+        if not meta:
+            raise DriverError('неизвестный плагин')
+        progress = params.get('_progress') or (lambda s: None)
+        log = []
+
+        def stage(title, script, timeout=900):
+            progress(title)
+            out = self._run(cfg, script, timeout=timeout)
+            body = re.sub(r'\x1b\[[0-9;]*m', '', out)
+            log.append({'cmd': f'— {title}', 'ok': True, 'msg': ''})
+            log.extend({'cmd': l[:220], 'ok': not re.search(r'@@fail|\berror\b|failed', l, re.I), 'msg': ''}
+                       for l in body.splitlines() if l.strip() and not l.startswith(('@@ok', '@@link', '@@url', '@@a ')))
+            if '@@fail' in body:
+                raise DriverError(f"{title}: " + body.split('@@fail', 1)[1].splitlines()[0].strip())
+            return body
+
+        if op == 'dns':
+            domain = vps.clean_domain(params.get('domain'))
+            if not domain:
+                raise DriverError('неверное имя домена')
+            ip = params.get('ip') or vps.parse_status(self._run(cfg, vps.STATUS, 40)).get('ip')
+            recs = sorted({l[4:].strip() for l in self._run(cfg, vps.dns_script(domain), 20).splitlines() if l.startswith('@@a ')})
+            return {'ok': True, 'domain': domain, 'ip': ip, 'records': recs, 'match': bool(ip) and ip in recs}
+        if op == 'remove':
+            stage(f'Удаление {meta["title"]}', vps.xui_remove() if pid == '3xui' else vps.rw_remove(), 600)
+            return {'ok': True, 'log': log, 'removed': pid, 'message': f"{meta['title']} удалён" + ('' if pid == '3xui' else ' (вместе с базой данных)')}
+        if op != 'install':
+            raise DriverError('неизвестное действие')
+
+        domain = vps.clean_domain(params.get('domain')) if params.get('withDomain') else ''
+        if params.get('withDomain') and not domain:
+            raise DriverError('укажите домен')
+        if meta['needsDomain'] and not domain:
+            raise DriverError(f"для {meta['title']} нужен домен")
+        inbounds = bool(params.get('inbounds')) and bool(domain)
+        st = vps.parse_status(self._run(cfg, vps.STATUS, 40))
+        if st.get('uid') != '0':
+            raise DriverError('нужен вход под root')
+        if st.get('rw' if pid == '3xui' else 'xui'):
+            raise DriverError('на сервере уже стоит другая панель — сначала удалите её')
+        if domain:
+            progress(f'Проверка DNS: {domain} → {st.get("ip")}')
+            recs = {l[4:].strip() for l in self._run(cfg, vps.dns_script(domain), 20).splitlines() if l.startswith('@@a ')}
+            if st.get('ip') not in recs:
+                raise DriverError(f"домен {domain} пока не указывает на {st.get('ip')} — создайте A-запись и подождите")
+            stage('nginx, сайт-заглушка и сертификат Let\'s Encrypt', vps.stage_cert(domain), 600)
+        links = []
+        if pid == '3xui':
+            user, pw = vps.rnd(10, 'abcdefghijkmnpqrstuvwxyz23456789'), vps.strong_password(20)
+            port, path = 20000 + secrets.randbelow(40000), vps.rnd(16, 'abcdefghijkmnpqrstuvwxyz23456789')
+            body = stage('Установка 3x-ui', vps.xui_install(domain, user, pw, port, path), 1200)
+            url = f'https://{domain}/{path}/' if domain else next((l[6:].strip().strip("'\"") for l in body.splitlines() if l.startswith('@@url ')),
+                                                                     f"https://{st.get('ip')}:{port}/{path}/")
+            if inbounds:
+                body = stage('Инбаунды VLESS TCP + XHTTP и тестовый пользователь', vps.xui_inbounds(domain, user, pw, port, path, '/' + vps.rnd(12).lower()), 300)
+                links = [json.loads(l[7:]) for l in body.splitlines() if l.startswith('@@link ')]
+            info = {'url': url, 'user': user, 'password': pw, 'domain': domain or None, 'links': links, 't': int(time.time())}
+        else:
+            admin, pw, key = 'rl' + vps.rnd(8, 'abcdefghijkmnpqrstuvwxyz23456789'), vps.strong_password(32), vps.rnd(24)
+            stage('Docker и панель Remnawave (скачивание образов — несколько минут)', vps.rw_install(domain, key), 1800)
+            body = stage('Администратор, нода' + (', инбаунды и тестовый пользователь' if inbounds else ''),
+                         vps.rw_setup(domain, admin, pw, inbounds, '/' + vps.rnd(12).lower()), 600)
+            links = [json.loads(l[7:]) for l in body.splitlines() if l.startswith('@@link ')]
+            info = {'url': f'https://{domain}/?rlkey={key}', 'user': admin, 'password': pw, 'domain': domain, 'links': links,
+                    'note': 'Без этой ссылки домен показывает сайт-заглушку — откройте её один раз в каждом браузере.', 't': int(time.time())}
+        return {'ok': True, 'log': log, 'info': info, 'message': f"{meta['title']} установлен" + (f' на {domain}' if domain else '')}
+
+    def iperf(self, cfg):
+        """iperf3 server on the device (one-off, started over SSH), client in Rack Live: both directions."""
+        host, port = cfg['host'].strip(), random.randint(5300, 5399)
+        start = (f'command -v iperf3 >/dev/null 2>&1 || {{ echo @@none; exit 0; }}\n'
+                 f'iperf3 -s -1 -D -p {port} >/dev/null 2>&1 && echo @@ok\nsleep 1\n')
+        res = {}
+        try:
+            for direction, reverse in (('down', True), ('up', False)):      # down = device → Rack Live
+                out = self._run(cfg, start, timeout=20)
+                if '@@none' in out:
+                    raise DriverError('на устройстве нет iperf3. Установите: apt install iperf3 · opkg install iperf3 (OpenWrt, Entware) · apk add iperf3')
+                if '@@ok' not in out:
+                    raise DriverError('iperf3 на устройстве не запустился')
+                try:
+                    res[direction] = speedtest.iperf_client(host, port, reverse)
+                except RuntimeError as e:
+                    msg = str(e)
+                    if 'connect' in msg.lower() or 'refused' in msg.lower():
+                        msg = f'не удалось подключиться к iperf3 на {host}:{port} — проверьте firewall устройства'
+                    raise DriverError(msg)
+        finally:
+            try:
+                self._run(cfg, f'pkill -f "iperf3 -s -1 -D -p {port}" 2>/dev/null; echo', timeout=15)
+            except DriverError:
+                pass
+        mbit = lambda k: round(res[k]['bps'] / 1e6, 1)
+        retr = sum(r.get('retr') or 0 for r in res.values())
+        return {'message': f"iperf3 до {host}: к устройству {mbit('up')} Мбит/с, от устройства {mbit('down')} Мбит/с",
+                'speedtest': {'down': mbit('down'), 'up': mbit('up'), 'retr': retr, 'host': host}}

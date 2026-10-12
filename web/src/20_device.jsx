@@ -11,7 +11,7 @@ function useAction() {
       const r = await api(`/api/devices/${device.id}/action`, { method: 'POST', body: { action: action.id, params } });
       if (r.state) applyState(device.id, r.state);            // instant actions return the fresh device state
       if (!action.instant) toast('✓ ' + (r.message || 'Готово'));
-      refresh(); if (!action.instant && !r.cable) { setTimeout(refresh, 8000); setTimeout(refresh, 25000); setTimeout(refresh, 50000); }
+      refresh(); if (!action.instant && !r.cable && !r.speedtest) { setTimeout(refresh, 8000); setTimeout(refresh, 25000); setTimeout(refresh, 50000); }
       return r;
     } catch (e) { toast(e.message, true); return false; }
   };
@@ -43,6 +43,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
   if ((st.vpn || []).length) tabs.push({ id: 'vpn', label: `VPN · ${st.vpn.filter(t => t.up).length}` });
   if (st.storage) tabs.push({ id: 'storage', label: 'Хранилище' });
   if ((st.services || []).length || (st.entities || []).length) tabs.push({ id: 'services', label: st.entities ? 'Управление' : `Сервисы · ${st.services.length}` });
+  if (admin && drv && drv.plugins) tabs.push({ id: 'plugins', label: 'Плагины' });
   const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : 'overview');
   return <Sheet onClose={onClose} tab={tab} setTab={setTab} tabs={tabs}
     head={<div className="col" style={{ gap: 10 }}>
@@ -57,6 +58,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
     {tab === 'vpn' ? <VpnTab vpn={st.vpn} /> : null}
     {tab === 'storage' ? <StorageTab storage={st.storage} /> : null}
     {tab === 'services' ? <ServicesTab device={device} drv={drv} /> : null}
+    {tab === 'plugins' ? <PluginsTab device={device} /> : null}
   </Sheet>;
 }
 
@@ -80,7 +82,8 @@ function Overview({ device, drv }) {
   if (s.uptime != null) stats.push(<Stat key="up" k="Аптайм" v={fmt.uptime(s.uptime)} />);
   (st.ups ? [] : st.metrics || []).forEach((m, i) => stats.push(<Stat key={'m' + i} k={m.label} v={m.value} unit={m.unit} level={m.level}
     spark={m.label === 'Задержка' || m.label === 'PoE' ? hist : null} sparkField={m.label === 'Задержка' ? 'ms' : 'poe'} color="var(--green)" />));
-  const devActions = (drv?.actions || []).filter(a => a.scope === 'device');
+  const devActions = (drv?.actions || []).filter(a => a.scope === 'device' && a.kind !== 'speed');
+  const speedAction = (drv?.actions || []).find(a => a.kind === 'speed');
   return <>
     {st.error ? <div className="card pad" style={{ borderColor: 'var(--red)', color: 'var(--red)' }}><b>Нет связи:</b> {st.error}
       {st.updated && st.summary ? <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>Показаны последние известные данные</div> : null}</div> : null}
@@ -93,6 +96,7 @@ function Overview({ device, drv }) {
         ...(device.site ? [['Площадка', device.site]] : [])]} />
     </Card>
     {(st.sections || []).filter(x => x.rows && x.rows.length).map((sec, i) => <Card key={i} title={sec.title}><KV rows={sec.rows} /></Card>)}
+    {speedAction ? <SpeedCard device={device} action={speedAction} /> : null}
     {device.notes ? <Card title="Заметки"><div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }}>{device.notes}</div></Card> : null}
     {admin && devActions.length ? <Card title="Действия"><div className="row wrap">{devActions.map(a =>
       <Btn key={a.id} kind="danger" icon="power" onClick={() => runAction(device, a)}>{a.label}</Btn>)}</div></Card> : null}
@@ -184,6 +188,10 @@ function CableResult({ c, now }) {
   </div>;
 }
 
+/* CRC/transmit errors: a healthy cable has none; a handful a day is noise, a steady stream is a bad cable */
+const errLevel = p => (p.errHour || 0) >= 10 ? 'bad' : (p.errDay || 0) >= 10 ? 'warn' : (p.errDay || 0) > 0 ? 'low' : 'ok';
+const ERR_COLOR = { bad: 'var(--red)', warn: 'var(--orange)', low: 'var(--text2)', ok: 'var(--text3)' };
+
 function PortsTab({ device, drv, initialPort }) {
   const { data, admin } = useApp();
   const ports = device.state.ports || [];
@@ -192,6 +200,7 @@ function PortsTab({ device, drv, initialPort }) {
   const p = ports.find(x => x.n === sel);
   const runAction = useAction();
   const hasTraffic = ports.some(x => x.rxBytes != null);
+  const hasErr = ports.some(x => x.errDay != null);
   const [restarted, setRestarted] = useState({});          // port -> timestamp of a successful restart
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 5000); return () => clearInterval(t); }, []);
@@ -209,6 +218,8 @@ function PortsTab({ device, drv, initialPort }) {
   const used = [...new Set(ports.flatMap(x => [...(x.vlansU || []), ...(x.vlansT || [])]))].sort((a, b) => a - b);
   const totalPoe = ports.reduce((a, x) => a + (x.poeW || 0), 0);
   return <>
+    <Hint id="ports">Нажмите на порт: скорость, VLAN, кто подключён, трафик. Зелёный — 1 Гбит, жёлтый — 100 Мбит (у гигабитных устройств это часто плохой кабель),
+      серый — ничего не подключено. Колонка «Ошибки» — повреждённые кадры: у исправного кабеля их нет.</Hint>
     <Faceplate ports={ports} sel={sel} onSel={setSel} vlans={vlans} />
     <div className="legend">
       <span><i style={{ background: 'var(--green)' }} />1 Гбит+</span><span><i style={{ background: '#ffd60a' }} />100 Мбит</span>
@@ -222,8 +233,12 @@ function PortsTab({ device, drv, initialPort }) {
         ['VLAN (untagged)', (p.vlansU || []).map(v => vlanName(v, vlans)).join(', ')],
         ['VLAN (tagged)', (p.vlansT || []).map(v => vlanName(v, vlans)).join(', ')], ...(p.ip ? [['IP', p.ip]] : []), ['Интерфейс', p.name],
         ...(p.lldp ? [['Сосед (LLDP)', p.lldp]] : []),
+        ...(p.errDay != null ? [['Ошибки (CRC)', <span style={{ color: ERR_COLOR[errLevel(p)] }}>{p.errHour} за час · {p.errDay} за сутки</span>]] : []),
         ...patchesFor(data, device.id, p.n).map(x => [x.unit.type === 'cross' ? 'Оптический кросс' : 'Патч-панель',
           `${x.unit.name}, порт ${x.n}${x.m.label ? ' → ' + x.m.label : ''}${x.m.color ? ' · ' + x.m.color : ''}`]), ...(p.rxBytes != null ? [['Всего передано', `↓ ${fmt.bytes(p.txBytes)} · ↑ ${fmt.bytes(p.rxBytes)}`]] : [])]} />
+      {['warn', 'bad'].includes(errLevel(p)) ? <div className="err-note">
+        <b>Порт получает повреждённые кадры.</b> Их приходится передавать заново, поэтому скорость падает, а видео и звонки могут подтормаживать.
+        Обычно виноваты обжим разъёма, перегиб или пережатый кабель, силовой провод рядом, реже — сам порт. {admin && cableAction && p.kind !== 'sfp' ? 'Начните с «Проверить кабель» ниже.' : 'Начните с проверки кабеля.'}</div> : null}
       {p.rxBytes != null ? <div style={{ marginTop: 14 }}><div className="card-title" style={{ marginBottom: 8 }}>Трафик за сутки</div><TrafficChart points={traffic} /></div> : null}
       {(p.peers || []).length ? <div style={{ marginTop: 12 }}>
         <div className="card-title" style={{ marginBottom: 4 }}>Подключено ({p.peers.length})</div>
@@ -245,10 +260,11 @@ function PortsTab({ device, drv, initialPort }) {
         <Btn key={a.id} kind="danger" size="sm" icon={a.id === 'poe_cycle' ? 'bolt' : 'refresh'} onClick={() => doPortAction(a, p.n)}>{a.label}</Btn>)}</div> : null}
       {admin && portActions.length ? <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Перезапуск PoE занимает ~20 секунд, затем устройству нужно 1–2 минуты, чтобы загрузиться.</div> : null}
     </Card> : null}
-    <Card title="Все порты" pad={false}><div style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>#</th><th>Подпись</th><th>Линк</th>{hasTraffic ? <th>Трафик ↓/↑</th> : null}<th>PoE</th><th>VLAN</th><th>Устройства</th></tr></thead>
+    <Card title="Все порты" pad={false}><div style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>#</th><th>Подпись</th><th>Линк</th>{hasTraffic ? <th>Трафик ↓/↑</th> : null}{hasErr ? <th title="Повреждённые кадры (CRC) за сутки">Ошибки</th> : null}<th>PoE</th><th>VLAN</th><th>Устройства</th></tr></thead>
       <tbody>{ports.map(x => <tr key={x.n} onClick={() => setSel(x.n)} style={{ cursor: 'pointer' }}>
-        <td className="mono">{x.n}</td><td>{x.label}{x.cable && ['warn', 'bad'].includes(x.cable.verdict) ? <span title={x.cable.text} style={{ marginLeft: 6, color: 'var(--orange)' }}><Icon name="alert" size={13} /></span> : null}</td><td>{x.link ? <span className="row" style={{ gap: 6 }}><span className={'dot ' + (x.speed >= 1000 ? 'online' : 'warning')} />{fmt.speedShort(x.speed)}</span> : <span className="dim3">—</span>}</td>
+        <td className="mono">{x.n}</td><td>{x.label}{(x.cable && ['warn', 'bad'].includes(x.cable.verdict)) || ['warn', 'bad'].includes(errLevel(x)) ? <span title={x.cable ? x.cable.text : 'Ошибки передачи — проверьте кабель'} style={{ marginLeft: 6, color: 'var(--orange)' }}><Icon name="alert" size={13} /></span> : null}</td><td>{x.link ? <span className="row" style={{ gap: 6 }}><span className={'dot ' + (x.speed >= 1000 ? 'online' : 'warning')} />{fmt.speedShort(x.speed)}</span> : <span className="dim3">—</span>}</td>
         {hasTraffic ? <td className="mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{x.txBps != null ? `${fmt.bps(x.txBps)} / ${fmt.bps(x.rxBps)}` : ''}</td> : null}
+        {hasErr ? <td className="mono" style={{ fontSize: 12, color: ERR_COLOR[errLevel(x)] }}>{x.errDay ? x.errDay : ''}</td> : null}
         <td>{x.poeW ? x.poeW + ' Вт' : ''}</td><td>{[...(x.vlansU || []), ...(x.vlansT || []).map(v => v + 't')].join(', ')}</td>
         <td className="ellipsis" style={{ maxWidth: 200 }}>{(x.peers || []).length > 2 ? `${x.peers.length} устр.` : (x.peers || []).map(y => y.name || y.mac).join(', ')}</td></tr>)}</tbody></table></div></Card>
   </>;

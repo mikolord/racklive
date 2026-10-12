@@ -54,8 +54,14 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
   useEffect(() => { if (drv && !device) { setF(x => { const n = { ...x, kind: x.kind || drv.kind }; drv.fields.forEach(fl => { if (fl.default && !n[fl.name]) n[fl.name] = fl.default; }); return n; }); } }, [drvId]);
 
+  const pick = c => {                                          // a detected candidate → driver + prefilled address
+    const d = data.drivers.find(x => x.id === c.driver); if (!d) return;
+    setF(x => ({ ...x, host: c.host, kind: d.kind, name: x.name || c.what.split(/[(:]/)[0].trim().slice(0, 40), ...(c.mode ? { mode: c.mode } : {}) }));
+    setDrvId(c.driver);
+  };
   if (!drvId) return <Modal title="Новое устройство" wide onClose={onClose}>
-    <div className="dim" style={{ fontSize: 14 }}>Как подключиться к устройству?</div>
+    <DetectBox onPick={pick} />
+    <div className="dim" style={{ fontSize: 14 }}>…или выберите вручную, как подключиться к устройству:</div>
     <div className="driver-pick">{data.drivers.filter(d => !d.hidden).map(d => <button key={d.id} onClick={() => setDrvId(d.id)}>
       <KindIcon kind={d.kind} size={38} /><div><b>{d.title}</b><small>{d.description}</small></div></button>)}</div>
   </Modal>;
@@ -128,6 +134,35 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
           {test.ports ? ` · портов: ${test.ports}` : ''}{test.clients ? ` · клиентов: ${test.clients}` : ''}</div></>
         : <div style={{ color: 'var(--red)' }}><b>Не получилось:</b> {test.error}</div>}</div> : null}
   </Modal>;
+}
+
+/* «Определить автоматически»: the server knocks on the address (no login, nothing changed) and suggests the type */
+function DetectBox({ onPick }) {
+  const { data } = useApp();
+  const [host, setHost] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState(null);
+  const [err, setErr] = useState('');
+  const run = async e => {
+    if (e) e.preventDefault(); if (!host.trim()) return;
+    setBusy(true); setErr(''); setFound(null);
+    try { setFound((await api('/api/detect', { method: 'POST', body: { host } })).found); } catch (er) { setErr(er.message); } finally { setBusy(false); }
+  };
+  const title = id => (data.drivers.find(d => d.id === id) || {}).title || id;
+  return <form className="detect" onSubmit={run}>
+    <div className="row" style={{ gap: 8 }}><Icon name="search" size={18} color="var(--accent)" /><b>Определить автоматически</b></div>
+    <div className="row wrap" style={{ gap: 8 }}>
+      <input className="input grow" style={{ minWidth: 180 }} value={host} onChange={e => setHost(e.target.value)} placeholder="Адрес устройства, например 192.168.1.1" />
+      <Btn kind="primary" type="submit" busy={busy}>{busy ? 'Опрашиваю…' : 'Определить'}</Btn></div>
+    <div className="dim3" style={{ fontSize: 12.5 }}>Rack Live постучится по адресу (веб-интерфейс, SNMP, telnet, SSH) и подскажет тип. Ничего не меняет и пароли не нужны.</div>
+    {err ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{err}</div> : null}
+    {found ? <div className="list">{found.map((c, i) => { const best = i === 0 && c.score >= 60;
+      return <button type="button" key={c.driver} className={'li detect-hit' + (best ? ' best' : '')} onClick={() => onPick(c)}>
+        <KindIcon kind={(data.drivers.find(d => d.id === c.driver) || {}).kind || 'other'} size={34} round={9} />
+        <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b style={{ fontSize: 14 }}>{c.what}</b>
+          <div className="dim" style={{ fontSize: 12 }}>Подключение: {title(c.driver)}{best ? ' · скорее всего это оно' : ''}</div></div>
+        <Icon name="chevron" size={16} /></button>; })}</div> : null}
+  </form>;
 }
 
 function agentCommand(token) {

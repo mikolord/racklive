@@ -43,7 +43,8 @@ class Driver:
     @classmethod
     def schema(cls):
         return {'id': cls.id, 'title': cls.title, 'kind': cls.kind, 'description': cls.description,
-                'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden}
+                'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden,
+                'plugins': callable(getattr(cls, 'plugins', None))}      # driver has a «Плагины» tab (see rackd/plugins.py)
 
 
 REGISTRY = {}

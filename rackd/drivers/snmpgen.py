@@ -44,7 +44,17 @@ def interfaces(s, physical_only=True):
         m = re.search(r'(\d+)$', p['name'])
         p['n'] = i + 1
         p['label'] = p['label'] if p['label'] != p['name'] else ''
+    for idx, e in error_counters(s).items():
+        if idx in ports:
+            ports[idx].update(e)
     return ports
+
+
+def error_counters(s):
+    """{ifIndex: {inErrors, outErrors, crc}} — damaged frames per port (IF-MIB + EtherLike-MIB FCS errors)."""
+    ie, oe = s.table(IF + '.14', optional=True), s.table(IF + '.20', optional=True)
+    fcs = s.table('1.3.6.1.2.1.10.7.2.1.3', optional=True)          # dot3StatsFCSErrors = CRC
+    return {idx: {'inErrors': ie.get(idx), 'outErrors': oe.get(idx), 'crc': fcs.get(idx)} for idx in set(ie) | set(fcs)}
 
 
 def bridge(s, ports):

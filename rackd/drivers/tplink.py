@@ -4,6 +4,7 @@ import re, threading, time
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
 from .. import cable
 from ..snmp import Snmp, SnmpError, text
+from .snmpgen import error_counters
 from ..util import DriverError, parse_ranges, telnet_session, uptime_seconds
 
 
@@ -112,10 +113,11 @@ class TPLinkJetStream(Driver):
                 s = Snmp(cfg['host'], cfg['snmpCommunity'], timeout=2, retries=1)
                 descr = s.table('1.3.6.1.2.1.2.2.1.2')
                 hin, hout = s.table('1.3.6.1.2.1.31.1.1.1.6'), s.table('1.3.6.1.2.1.31.1.1.1.10')
+                errs = error_counters(s)
                 for idx, d in descr.items():
                     m = re.search(r'1/0/(\d+)$', text(d))
                     if m and int(m.group(1)) in ports:
-                        ports[int(m.group(1))].update(rxBytes=hin.get(idx), txBytes=hout.get(idx))
+                        ports[int(m.group(1))].update(rxBytes=hin.get(idx), txBytes=hout.get(idx), **errs.get(idx, {}))
             except SnmpError:
                 pass
         up = sum(1 for p in plist if p['link'])

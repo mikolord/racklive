@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 
 DEFAULT_NOTIFY = {
     # webapp: public https address of Rack Live → bot menu button + «Открыть» under alerts; allowed: who may log in from Telegram
-    'telegram': {'enabled': False, 'token': '', 'chat': '', 'api': '', 'webapp': '', 'allowed': '', 'linked': []},
+    'telegram': {'enabled': False, 'token': '', 'chat': '', 'api': '', 'webapp': '', 'allowed': '', 'linked': [], 'avatarSent': ''},
     'email': {'enabled': False, 'host': '', 'port': '587', 'user': '', 'password': '', 'from': '', 'to': '', 'tls': True},
     'webhook': {'enabled': False, 'url': ''},
     'url': '',
@@ -23,6 +23,8 @@ DEFAULT_NOTIFY = {
         'cert': {'on': True, 'days': 14},
         'vpn': {'on': True, 'minutes': 3},
         'speed': {'on': True, 'minutes': 5},
+        'errors': {'on': True, 'count': 50},
+        'security': {'on': True},
     },
 }
 SECRETS = (('telegram', 'token'), ('email', 'password'))
@@ -156,6 +158,13 @@ class Alerter:
                     if t.get('role') == 'client' and t.get('routing') and not t.get('up'):
                         out[f"{did}:vpn:{t['id']}"] = (r['vpn']['minutes'] * 60, f"🛡 {name}: VPN «{t['name']}» не поднят — трафик идёт в обход",
                                                        f"✅ {name}: VPN «{t['name']}» снова работает", did)
+            if r['errors']['on']:
+                for p in st.get('ports') or []:
+                    if (p.get('errHour') or 0) >= max(1, r['errors']['count']):
+                        lbl = f" ({p['label']})" if p.get('label') else ''
+                        out[f"{did}:err:{p['n']}"] = (0, f"⚠️ {name}: порт {p['n']}{lbl} — {p['errHour']} ошибок передачи за час. "
+                                                          f"Обычно это кабель, разъём или помехи — проверьте кабель",
+                                                       f"✅ {name}: порт {p['n']}{lbl} — ошибки прекратились", did)
             if r['speed']['on']:
                 for p in st.get('ports') or []:
                     if not p.get('link') or not p.get('speed') or p.get('kind') == 'wan':
@@ -177,6 +186,15 @@ class Alerter:
                                                         f"✅ {name}: порт {p['n']}{lbl} снова на {best} Мбит/с", did)
         return out
 
+    def security_conditions(self, devices, states):
+        """Critical security findings (an open telnet, a dangerous forwarded port…) — once when they appear."""
+        from . import security
+        if not self.cfg()['rules']['security']['on']:
+            return {}
+        res = security.audit(devices, states, None, (self.store.cfg.get('security') or {}).get('ignored'))
+        return {f"sec:{f['id']}": (0, f"🛡 Безопасность: {f['title']}", f"✅ Исправлено: {f['title']}", f.get('deviceId'))
+                for f in res['findings'] if f['level'] == 'bad'}
+
     def evaluate(self, devices, states):
         if time.time() - self.started < 60:                  # let every device be polled once after a start
             return
@@ -184,6 +202,10 @@ class Alerter:
             now, msgs, devs, changed = time.time(), [], [], False
             self.base_dirty = False
             cur = self.conditions(devices, states)
+            try:
+                cur.update(self.security_conditions(devices, states))
+            except Exception:
+                pass
             changed = self.base_dirty
             for key, (hold, on, off, did) in cur.items():
                 a = self.active.get(key)

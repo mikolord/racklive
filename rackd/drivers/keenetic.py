@@ -1,7 +1,8 @@
 """Keenetic / Netcraze routers via the RCI HTTP API (KeeneticOS 3.x–5.x)."""
-import codecs, hashlib, http.cookiejar, json, re, ssl, time, urllib.error, urllib.request
+import codecs, hashlib, http.cookiejar, ipaddress, json, re, secrets, ssl, time, urllib.error, urllib.request
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
+from .. import plugins
 from ..util import DriverError, uptime_seconds, guess_kind
 
 
@@ -14,7 +15,8 @@ class Keenetic(Driver):
                    'https://дом.рф:ПОРТ (проброшенный порт роутера). Облачный KeenDNS не подойдёт.'),
               dict(FIELD_USER, default='admin'), FIELD_PASS]
     actions = [{'id': 'reboot', 'label': 'Перезагрузить роутер', 'scope': 'device', 'confirm': 'Интернет пропадёт на 2–3 минуты. Перезагрузить?'},
-               {'id': 'reboot_child', 'label': 'Перезагрузить точку', 'scope': 'child', 'confirm': 'Wi-Fi этой точки пропадёт на пару минут. Перезагрузить?'}]
+               {'id': 'reboot_child', 'label': 'Перезагрузить точку', 'scope': 'child', 'confirm': 'Wi-Fi этой точки пропадёт на пару минут. Перезагрузить?'},
+               {'id': 'sec_fix', 'label': 'Исправить', 'scope': 'security'}]
 
     def _session(self, cfg, host=None):
         jar = http.cookiejar.CookieJar()
@@ -202,13 +204,361 @@ class Keenetic(Driver):
             ddns = ''
         sections = [{'title': 'Сегменты', 'rows': [[k, f'{v} устр.'] for k, v in sorted(by_seg.items(), key=lambda kv: -kv[1])]},
                     {'title': 'Интернет', 'rows': [['WAN IP', wan_ip or '—'], ['KeenDNS', ddns or '—']]}]
-        return {'status': 'online',
+        sec = self._security(rc, cli, cfg)
+        return {'status': 'online', 'security': sec,
                 'summary': {'model': ver.get('model'), 'fw': ver.get('title'), 'uptime': uptime_seconds(sysi.get('uptime')),
                             'cpu': sysi.get('cpuload'), 'mem': round(int(mem[0]) * 100 / max(1, int(mem[1]))),
                             'ip': cfg['host'], 'mac': lanmac},
                 'ports': ports, 'clients': clients, 'children': children, 'sections': sections, 'vpn': self._vpn(get, rc)}
 
+    # ───────── security facts for the advisor (rackd/security.py) ─────────
+    _updates = {}                                           # host -> (checked_at, info); the update check goes online, so 6 h cache
+
+    def _security(self, rc, cli, cfg):
+        forwards, remote, cur = [], {}, None
+        for l in rc:
+            m = re.match(r'ip static (tcp|udp|tcpudp) (\S+) (\d+(?:-\d+)?) (\S+)(?: (\d+(?:-\d+)?))?(?: !(.*))?$', l)
+            if m:
+                forwards.append({'proto': m.group(1), 'iface': m.group(2), 'port': m.group(3), 'target': m.group(4),
+                                 'toPort': m.group(5) or m.group(3), 'name': (m.group(6) or '').strip(),
+                                 'rule': l.split(' !', 1)[0][len('ip static '):]})
+                continue
+            if not l.startswith(' '):
+                cur = {'ip http': 'http', 'ip telnet': 'telnet', 'ip ssh': 'ssh'}.get(l.strip())
+                m = re.match(r'ip http (port|ssl port) (\d+)', l)
+                if m:
+                    remote.setdefault('http', {})['sslPort' if 'ssl' in m.group(1) else 'port'] = int(m.group(2))
+                if l.startswith('ip http security-level '):
+                    remote.setdefault('http', {})['level'] = l.split()[-1]
+                if cur:
+                    remote.setdefault(cur, {})
+                continue
+            s = l.strip()
+            if cur and s.startswith('security-level '):
+                remote[cur]['level'] = s.split()[-1]
+            elif cur and s.startswith('port '):
+                remote[cur]['port'] = int(s.split()[-1])
+        services = {l.split()[1] for l in rc if l.startswith('service ')}
+        for k in ('telnet', 'ssh', 'http'):
+            if k in remote:
+                remote[k]['on'] = k in services
+        host = cfg['host']
+        t, upd = self._updates.get(host, (0, None))
+        if time.time() - t > 6 * 3600:
+            try:
+                r = cli(['components check-update'])[0]['parse']
+                upd = {'available': bool(r.get('update-available')), 'title': r.get('title'), 'channel': r.get('sandbox')}
+            except Exception:
+                upd = None
+            self._updates[host] = (time.time(), upd)
+        return {'forwards': forwards, 'remote': remote, 'upnp': 'upnp' in services, 'update': upd}
+
+    def _sec_fix(self, cfg, params):
+        """Safe one-click fixes: remove a port forward, close telnet/SSH of the router to the internet."""
+        get, cli = self._session(cfg)
+        log, kind = [], params.get('kind')
+        if kind == 'forward':
+            rule = str(params.get('rule') or '')
+            rc = self._rc(cli)
+            if not any(l.split(' !', 1)[0] == 'ip static ' + rule for l in rc):
+                raise DriverError('такого проброса уже нет')
+            self._run(cli, ['no ip static ' + rule, 'system configuration save'], log)
+            return f"Проброс {params.get('label') or rule} закрыт"
+        if kind == 'remote' and params.get('service') in ('telnet', 'ssh'):
+            self._run(cli, [f"ip {params['service']} security-level private", 'system configuration save'], log)
+            return f"{'Telnet' if params['service'] == 'telnet' else 'SSH'} роутера теперь доступен только из домашней сети"
+        raise DriverError('это нельзя исправить автоматически')
+
+    # ───────── plugins ─────────
+    def _rc(self, cli):
+        return cli(['show running-config'])[0]['parse']['message']
+
+    @staticmethod
+    def _run(cli, cmds, log):
+        """Run CLI commands one batch; every result goes to the log, the first error stops with a readable message."""
+        hide = lambda c: re.sub(r'(private-key|preshared-key) \S+', r'\1 •••', c)
+        out = cli(cmds)
+        for c, o in zip(cmds, out):
+            st = (o.get('parse') or {}).get('status') or []
+            err = next((s for s in st if s.get('status') == 'error'), None)
+            log.append({'cmd': hide(c), 'ok': not err, 'msg': '; '.join(s.get('message', '') for s in st)[:200]})
+            if err:
+                raise DriverError(f"роутер не выполнил «{hide(c)[:80]}»: {err.get('message')}")
+        return out
+
+    def plugins(self, cfg):
+        get, cli = self._session(cfg)
+        v = get('/rci/show/version')
+        comps = set(((v.get('ndw') or {}).get('components') or '').split(','))
+        rc = self._rc(cli)
+        disk = next((l.split(' ', 2)[2] for l in rc if l.startswith('opkg disk ')), None)
+        entware = disk is not None and any(l.startswith('opkg initrc') for l in rc)
+        wg, cur = [], None
+        for l in rc:
+            m = re.match(r'interface (Wireguard\d+)$', l)
+            if m:
+                cur = {'iface': m.group(1), 'name': m.group(1)}
+                wg.append(cur)
+            elif not l.startswith(' '):
+                cur = None
+            elif cur and l.strip().startswith('description '):
+                d = l.strip()[12:].strip('"')                # the router keeps non-ASCII as \xd0\xbf…
+                cur['name'] = codecs.escape_decode(d.encode())[0].decode('utf-8', 'ignore') if '\\x' in d else d
+        mine = {t.get('iface'): t for t in cfg.get('rlTunnels') or []}
+        groups = {}
+        for l in rc:
+            m = re.match(r'\s+route object-group (rl_\w+) (Wireguard\d+)', l)
+            if m:
+                groups.setdefault(m.group(2), []).append(m.group(1))
+        tunnels = [dict(t, managed=t['iface'] in mine, groups=len(groups.get(t['iface'], [])),
+                        domains=(mine.get(t['iface']) or {}).get('domains', 0)) for t in wg]
+        arch = v.get('arch') or ''
+        ssh, pkgs = {'set': bool(cfg.get('entwarePassword')), 'port': cfg.get('entwarePort') or 222, 'user': cfg.get('entwareUser') or 'root'}, None
+        if ssh['set'] and entware:
+            try:
+                pkgs = plugins.parse_pkgs(self._ssh(cfg, plugins.PKG_CHECK, 20))
+                ssh['ok'] = True
+            except DriverError as e:
+                ssh['error'] = str(e)
+        netf = any('netfilter' in c or 'xtables' in c for c in comps)
+        host = self._hostname(cfg)
+        out = []
+        for p in plugins.for_driver(self.id):
+            if p['id'] in plugins.INSTALLERS:
+                inst = plugins.INSTALLERS[p['id']]
+                p['ssh'], p['url'], p['login'] = ssh, f"http://{host}:{inst['port']}", inst['login']
+                if pkgs is not None:
+                    p['installed'] = inst['packages'][0] in pkgs
+                    p['version'] = pkgs.get(inst['packages'][0])
+            if p['id'] == 'entware':
+                p['checks'] = [{'label': 'Компонент «Поддержка открытых пакетов» (OPKG)', 'ok': 'opkg' in comps},
+                               {'label': 'Компонент «Модули ядра подсистемы Netfilter» (нужен HydraRoute)', 'ok': 'opkg-kmod-netfilter' in comps, 'optional': True},
+                               {'label': 'Выбран накопитель для Entware', 'ok': disk is not None, 'hint': disk or ''},
+                               {'label': 'Entware установлен', 'ok': entware}]
+                p['installed'] = entware
+                p['arch'], p['installer'] = arch, next((u for a, u in plugins.ENTWARE_INSTALLER.items() if arch.startswith(a)), '')
+            elif p['id'] == 'awg':
+                p['checks'] = [{'label': 'Компонент «WireGuard VPN»', 'ok': 'wireguard' in comps}]
+                p['installed'] = any(t['managed'] for t in tunnels)
+                p['tunnels'] = tunnels
+                p['fw'] = v.get('title')
+            elif p['id'] == 'hydraroute':
+                fw = ([int(x) for x in re.findall(r'\d+', v.get('title') or '0')[:3]] + [0, 0, 0])[:3]
+                p['checks'] = [{'label': f"Прошивка новее 4.3.6 (у вас {v.get('title')})", 'ok': fw > [4, 3, 6]},
+                               {'label': 'Entware установлен', 'ok': entware},
+                               {'label': 'Компонент «Модули ядра Netfilter» / «Xtables-addons»', 'ok': netf},
+                               {'label': 'Rack Live может зайти в Entware по SSH', 'ok': bool(ssh.get('ok'))}]
+                if pkgs is None:
+                    p['installed'] = any(l.startswith('ip policy HydraRoute') for l in rc)
+            elif p['id'] == 'awgmanager':
+                p['checks'] = [{'label': 'Entware установлен', 'ok': entware},
+                               {'label': 'Компонент «WireGuard VPN»', 'ok': 'wireguard' in comps},
+                               {'label': 'Rack Live может зайти в Entware по SSH', 'ok': bool(ssh.get('ok'))}]
+                if pkgs is None:
+                    p['installed'] = None                   # unknown until SSH works
+            out.append(p)
+        return {'model': v.get('model'), 'fw': v.get('title'), 'arch': arch, 'plugins': out}
+
+    # ── Entware over SSH (installers) ──
+    @staticmethod
+    def _hostname(cfg):
+        return re.sub(r'^\w+://', '', cfg['host'].strip()).split('/')[0].split(':')[0]
+
+    def _ssh_cfg(self, cfg, params=None):
+        p = params or {}
+        pw = p.get('password') or cfg.get('entwarePassword')
+        if not pw:
+            raise DriverError('укажите пароль SSH от Entware (пользователь root, порт 222)')
+        return {'host': self._hostname(cfg), 'sshPort': p.get('port') or cfg.get('entwarePort') or 222,
+                'username': p.get('user') or cfg.get('entwareUser') or 'root', 'password': pw}
+
+    def _ssh(self, cfg, script, timeout=30, params=None):
+        from .sshhost import SSHHost
+        return SSHHost()._run(self._ssh_cfg(cfg, params), script, timeout=timeout)
+
+    def _installer(self, cfg, pid, op, params, get, cli):
+        inst, meta = plugins.INSTALLERS[pid], next(p for p in plugins.CATALOG if p['id'] == pid)
+        host = self._hostname(cfg)
+        if op == 'ssh':                                     # check and remember the Entware login
+            out = self._ssh(cfg, 'echo @@ok; uname -m', 20, params)
+            if '@@ok' not in out:
+                raise DriverError('Entware ответил не так, как ожидалось')
+            s = self._ssh_cfg(cfg, params)
+            return {'ok': True, 'message': f"SSH в Entware работает ({out.split('@@ok', 1)[1].strip()})",
+                    'sshSave': {'entwarePort': int(s['sshPort']), 'entwareUser': s['username'], 'entwarePassword': s['password']}}
+        if op not in ('install', 'remove'):
+            raise DriverError('неизвестное действие')
+        log = []
+        if op == 'install':                                 # prerequisites, the same the card shows
+            v = get('/rci/show/version')
+            comps = set(((v.get('ndw') or {}).get('components') or '').split(','))
+            if 'opkg' not in comps:
+                raise DriverError('нет компонента OPKG — сначала установите Entware (плагин «Entware»)')
+            if pid == 'hydraroute':
+                fw = [int(x) for x in re.findall(r'\d+', v.get('title') or '0')[:3]] + [0, 0, 0]
+                if fw[:3] <= [4, 3, 6]:
+                    raise DriverError(f"HydraRoute Neo нужна прошивка новее 4.3.6 (у вас {v.get('title')})")
+                if not any('netfilter' in c or 'xtables' in c for c in comps):
+                    raise DriverError('нет компонента «Модули ядра подсистемы Netfilter» / «Xtables-addons» — добавьте его в «Изменить набор компонентов»')
+            if pid == 'awgmanager' and 'wireguard' not in comps:
+                raise DriverError('нет компонента «WireGuard VPN» — добавьте его в «Изменить набор компонентов»')
+        out = self._ssh(cfg, inst[op] + '\n' + plugins.PKG_CHECK, timeout=900)
+        body = out.split('@@pkgs', 1)[0]
+        log = [{'cmd': l[:200], 'ok': '@@fail' not in l and not re.search(r'\berror\b|ошибка', l, re.I), 'msg': ''}
+               for l in body.splitlines() if l.strip()][-60:]
+        if '@@fail' in body:
+            raise DriverError(body.split('@@fail', 1)[1].splitlines()[0].strip())
+        pkgs = plugins.parse_pkgs(out)
+        main = inst['packages'][0]
+        url = f"http://{host}:{inst['port']}"
+        if op == 'install':
+            if main not in pkgs:
+                return {'ok': False, 'log': log, 'error': f"{meta['title']} не установился — посмотрите журнал ниже",
+                        'message': f"{meta['title']} не установился"}
+            return {'ok': True, 'log': log, 'version': pkgs[main], 'url': url,
+                    'message': f"{meta['title']} {pkgs[main]} установлен. Панель: {url} — вход: {inst['login']}"}
+        if main in pkgs:
+            raise DriverError(f"{meta['title']} не удалился: {body.strip().splitlines()[-1] if body.strip() else 'нет ответа'}")
+        return {'ok': True, 'log': log, 'message': f"{meta['title']} удалён"}
+
+    def plugin(self, cfg, pid, op, params):
+        get, cli = self._session(cfg)
+        if pid in plugins.INSTALLERS:
+            return self._installer(cfg, pid, op, params, get, cli)
+        if pid != 'awg':
+            raise DriverError('этот плагин пока в разработке')
+        if op == 'preview':
+            c = plugins.parse_conf(params.get('conf'))
+            doms, skipped = plugins.parse_domains(params.get('domains') or '')
+            return {'ok': True, 'preview': plugins.conf_preview(c), 'domains': len(doms), 'skipped': skipped[:20]}
+        if op == 'component':
+            log = []
+            self._run(cli, ['components install wireguard', 'components commit'], log)
+            return {'ok': True, 'log': log, 'message': 'Компонент WireGuard устанавливается — роутер скачает его и перезагрузится (2–5 минут)'}
+        if op == 'remove':
+            iface = str(params.get('iface') or '')
+            if iface not in {t.get('iface') for t in cfg.get('rlTunnels') or []}:
+                raise DriverError('удалить можно только подключение, созданное Rack Live')
+            log = []
+            self._unroute(cli, iface, log)
+            self._run(cli, [f'no interface {iface}', 'system configuration save'], log)
+            return {'ok': True, 'log': log, 'removed': iface, 'message': f'Подключение {iface} удалено'}
+        if op == 'domains':
+            iface = str(params.get('iface') or '')
+            if iface not in {t.get('iface') for t in cfg.get('rlTunnels') or []}:
+                raise DriverError('списки сайтов меняются только у подключений, созданных Rack Live')
+            doms, skipped = plugins.parse_domains(params.get('domains') or '')
+            log = []
+            # new lists first (new names), then the old ones go — the router deletes routes asynchronously by rule number,
+            # so removing first and re-adding under the same name could lose the new route
+            new = self._route(cli, iface, params.get('name') or iface, doms, log) if doms else []
+            self._unroute(cli, iface, log, keep=new)
+            if new:
+                self._ensure_routes(cli, iface, new, log)
+            self._run(cli, ['system configuration save'], log)
+            return {'ok': True, 'log': log, 'iface': iface, 'domains': len(doms), 'skipped': skipped[:20],
+                    'message': f'Через {iface} теперь идут {len(doms)} сайтов и подсетей' if doms else f'Маршрутизация через {iface} выключена'}
+        if op != 'install':
+            raise DriverError('неизвестное действие')
+        c = plugins.parse_conf(params.get('conf'))
+        doms, skipped = plugins.parse_domains(params.get('domains') or '') if params.get('routing') else ([], [])
+        if params.get('routing') and not doms:
+            raise DriverError('включена маршрутизация, но список сайтов пуст — вставьте домены или выключите маршрутизацию')
+        rc = self._rc(cli)
+        used = {int(m.group(1)) for l in rc for m in [re.match(r'interface Wireguard(\d+)$', l)] if m}
+        iface = f'Wireguard{next(i for i in range(0, 64) if i not in used)}'
+        name = re.sub(r'["\\]', '', str(params.get('name') or 'AmneziaWG'))[:40] or 'AmneziaWG'
+        q = lambda s: '"' + str(s).replace('"', '') + '"'
+        a, p = c['awg'], c['peer']
+        log = []
+        try:
+            self._run(cli, [f'interface {iface}', f'interface {iface} description {q(name)}', f'interface {iface} security-level public',
+                            f"interface {iface} ip address {c['address']} {c['mask']}", f"interface {iface} ip mtu {c['mtu']}",
+                            f'interface {iface} ip tcp adjust-mss pmtu', f"interface {iface} wireguard private-key {c['privateKey']}"], log)
+            if c['isAwg']:
+                base = f"interface {iface} wireguard asc {a['jc']} {a['jmin']} {a['jmax']} {a['s1']} {a['s2']} {a['h1']} {a['h2']} {a['h3']} {a['h4']}"
+                try:
+                    self._run(cli, [base + f" {a['s3']} {a['s4']} " + ' '.join(q(a[k]) for k in ('i1', 'i2', 'i3', 'i4', 'i5'))], log)
+                except DriverError:
+                    if c['awg2']:
+                        raise DriverError('прошивка роутера не поддерживает AmneziaWG 2.0 — обновите KeeneticOS или возьмите конфиг AWG 1.0')
+                    log.pop()
+                    self._run(cli, [base], log)                 # older firmware: AWG 1.0 form only
+            peer = f"interface {iface} wireguard peer {p['publicKey']}"
+            cmds = [peer, f"{peer} endpoint {p['endpoint']}", f"{peer} keepalive-interval {p['keepalive']}"]
+            for net in p['allowed']:
+                n = ipaddress.ip_network(net, strict=False)
+                cmds.append(f'{peer} allow-ips {n.network_address} {n.netmask if n.version == 4 else n.prefixlen}')
+            if p['psk']:
+                cmds.append(f"{peer} preshared-key {p['psk']}")
+            cmds += [f'{peer} connect', f'interface {iface} up']
+            self._run(cli, cmds, log)
+            if doms:
+                self._route(cli, iface, name, doms, log)
+            self._run(cli, ['system configuration save'], log)
+        except Exception:
+            try:                                            # leave nothing half-made behind
+                self._unroute(cli, iface, [])
+                cli([f'no interface {iface}'])
+            except Exception:
+                pass
+            raise
+        state = self._handshake(get, iface)
+        msg = f'Подключение «{name}» ({iface}) создано' + (', сервер ответил — туннель работает' if state else
+                                                            ', но сервер пока не ответил: проверьте конфиг и что сервер доступен')
+        msg += f'. Через туннель идут {len(doms)} сайтов и подсетей.' if doms else '. Трафик в туннель сам не идёт — направьте нужные сайты (например, HydraRoute Neo).'
+        return {'ok': True, 'log': log, 'iface': iface, 'name': name, 'domains': len(doms), 'skipped': skipped[:20], 'up': state, 'message': msg}
+
+    def _route(self, cli, iface, name, doms, log):
+        """Sites → fqdn groups of ≤300 (the router's limit) → DNS-based route through the tunnel."""
+        q = lambda s: '"' + str(s).replace('"', '') + '"'
+        chunks = [doms[i:i + 290] for i in range(0, len(doms), 290)]
+        tag, names = secrets.token_hex(2), []
+        for k, part in enumerate(chunks, 1):
+            g = f'rl_{iface.lower()}_{tag}{k}'
+            names.append(g)
+            self._run(cli, [f'object-group fqdn {g}', f'object-group fqdn {g} description {q(f"{name} · Rack Live {k}/{len(chunks)}")}']
+                      + [f'object-group fqdn {g} include {d}' for d in part] + [f'dns-proxy route object-group {g} {iface} auto'], log)
+            log[:] = [x for x in log if not x['cmd'].startswith(f'object-group fqdn {g} include')] + \
+                [{'cmd': f'object-group fqdn {g}: +{len(part)} сайтов', 'ok': True, 'msg': ''}]
+        self._ensure_routes(cli, iface, names, log)
+        return names
+
+    def _ensure_routes(self, cli, iface, names, log):
+        """The router applies route changes asynchronously: check that every route is really there, re-add if not."""
+        for _ in range(4):
+            time.sleep(1)
+            have = {m.group(1) for l in self._rc(cli) for m in [re.match(rf'\s+route object-group (\S+) {iface}\b', l)] if m}
+            missing = [g for g in names if g not in have]
+            if not missing:
+                return
+            self._run(cli, [f'dns-proxy route object-group {g} {iface} auto' for g in missing], log)
+        raise DriverError('роутер не сохранил маршрут для списка сайтов — попробуйте ещё раз')
+
+    def _unroute(self, cli, iface, log, keep=()):
+        """Remove this tunnel's DNS routes and Rack Live's site lists for it (also half-made ones after a failure)."""
+        rc, pre = self._rc(cli), f'rl_{iface.lower()}_'
+        routes = [m.group(1) for l in rc for m in [re.match(rf'\s+route object-group ({pre}\w+) {iface}\b', l)] if m and m.group(1) not in keep]
+        groups = [l.split()[2] for l in rc if l.startswith(f'object-group fqdn {pre}') and l.split()[2] not in keep]
+        cmds = [f'no dns-proxy route object-group {g} {iface}' for g in routes] + [f'no object-group fqdn {g}' for g in groups]
+        if cmds:
+            self._run(cli, cmds, log)
+
+    def _handshake(self, get, iface, wait=12):
+        t = time.time()
+        while time.time() - t < wait:
+            time.sleep(2)
+            try:
+                peers = ((get(f'/rci/show/interface/{iface}') or {}).get('wireguard') or {}).get('peer') or []
+                if any(p.get('online') or (p.get('last-handshake') or 2147483647) < 2147483647 for p in peers):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def action(self, cfg, action_id, params):
+        if action_id == 'sec_fix':
+            return self._sec_fix(cfg, params)
         if action_id == 'reboot':
             _, cli = self._session(cfg)
             cli(['system configuration save', 'system reboot'])

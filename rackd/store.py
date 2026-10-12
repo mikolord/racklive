@@ -7,7 +7,7 @@ DEFAULT_VLANS = [
 
 DEFAULT = {
     'version': 2,
-    'settings': {'title': 'Серверный шкаф', 'poll': 60, 'publicView': False, 'showClients': True, 'vlans': DEFAULT_VLANS},
+    'settings': {'title': 'Серверный шкаф', 'poll': 60, 'publicView': False, 'showClients': True, 'hints': True, 'vlans': DEFAULT_VLANS},
     'auth': None,
     'devices': [],
     'racks': [{'id': 'rack0', 'name': 'Серверный шкаф', 'totalU': 18, 'units': []}],
@@ -16,7 +16,7 @@ DEFAULT = {
     'plan': {'buildings': [], 'links': [], 'poles': []},
 }
 
-SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey')
+SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo')
 
 
 class Store:
@@ -137,15 +137,18 @@ class Store:
             except OSError:
                 pass
 
-    def add_point(self, key, point, avg=False):
-        """~5-minute buckets for 24 hours. avg=True averages samples inside a bucket (traffic), else keeps the last."""
+    def add_point(self, key, point, avg=False, sums=()):
+        """~5-minute buckets for 24 hours. avg=True averages samples inside a bucket (traffic), else keeps the last.
+        Fields in `sums` (error increments) are added up inside a bucket instead."""
         with self.lock:
             h = self.history.setdefault(key, [])
             if h and point['t'] - h[-1].get('t0', h[-1]['t']) < 290:
                 if avg:
                     n = h[-1].get('n', 1)
                     for k, v in point.items():
-                        if k != 't' and isinstance(v, (int, float)):
+                        if k in sums:
+                            h[-1][k] = h[-1].get(k, 0) + v
+                        elif k != 't' and isinstance(v, (int, float)):
                             h[-1][k] = round((h[-1].get(k, v) * n + v) / (n + 1))
                     h[-1]['n'] = n + 1
                     h[-1]['t'] = point['t']

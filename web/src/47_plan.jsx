@@ -108,10 +108,29 @@ function PlanView() {
   const [bid, setBid] = useState((deep && buildings.find(b => b.id === deep) && deep) || (buildings[0] && buildings[0].id));
   useEffect(() => { if (level === 'building' && !buildings.find(x => x.id === bid)) setLevel('territory'); }, [buildings.length]);
 
+  const { pinTest, setPinTest } = useApp();
+  const banner = pinTest ? <div className="pin-banner"><Icon name="pin" size={17} />
+    <span className="grow">{level === 'building' ? 'Нажмите на план там, где вы делали замер' : 'Выберите дом, затем нажмите место замера на плане'}</span>
+    <Btn size="sm" onClick={() => setPinTest(null)}>Отмена</Btn></div> : null;
   if (!buildings.length) return <Territory plan={plan} enter={() => {}} />;
   if (level === 'building') { const b = buildings.find(x => x.id === bid) || buildings[0];
-    return <BuildingPlan building={b} plan={plan} back={() => setLevel('territory')} />; }
-  return <Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} />;
+    return <>{banner}<BuildingPlan building={b} plan={plan} back={() => setLevel('territory')} /></>; }
+  return <>{banner}<Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} /></>;
+}
+
+/* Wi-Fi coverage: speed tests pinned on a floor, drawn as soft colour spots */
+function CoverageLayer({ tests, sel, onSel }) {
+  return <g className="coverage">
+    <defs>{SPEED_LEVELS.map(([, c], i) => <radialGradient key={i} id={'cov' + i}>
+      <stop offset="0%" stopColor={c} stopOpacity=".45" /><stop offset="60%" stopColor={c} stopOpacity=".18" /><stop offset="100%" stopColor={c} stopOpacity="0" /></radialGradient>)}</defs>
+    {tests.map(t => <circle key={'b' + t.id} cx={t.where.x} cy={t.where.y} r={95} fill={`url(#cov${SPEED_LEVELS.indexOf(speedLevel(t.down))})`} style={{ pointerEvents: 'none' }} />)}
+    {tests.map(t => { const [, c] = speedLevel(t.down); const label = mbpsText(t.down);
+      return <g key={t.id} className={'cov-pin' + (sel === t.id ? ' sel' : '')} transform={`translate(${t.where.x},${t.where.y})`}
+        onPointerDown={e => { e.stopPropagation(); onSel(sel === t.id ? null : t.id); }}>
+        <rect x={-(label.length * 4 + 11)} y={-11} width={label.length * 8 + 22} height={22} rx={11} fill={c} />
+        <text y={4.5} textAnchor="middle" className="cov-txt">{label}</text>
+      </g>; })}
+  </g>;
 }
 
 /* ───────── territory: buildings + backbone links ───────── */
@@ -280,9 +299,11 @@ function LinkEditor({ link, isNew, title, onSave, onDelete, onClose }) {
 
 /* ───────── one building: floors with walls, rooms, equipment ───────── */
 function BuildingPlan({ building, plan, back }) {
-  const { data, edit, savePlan, openDevice, setTab } = useApp();
+  const { data, edit, admin, savePlan, openDevice, setTab, refresh, pinTest, setPinTest } = useApp();
   const toast = useToast(); const confirm = useConfirm();
   const buildings = plan.buildings; const links = plan.links || [];
+  const [cov, setCov] = useState(true);
+  const [selTest, setSelTest] = useState(null);
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   const [fid, setFid] = useState(building.floors[0] && building.floors[0].id);
   const floor = building.floors.find(f => f.id === fid) || building.floors[0];
@@ -313,7 +334,13 @@ function BuildingPlan({ building, plan, back }) {
     const it = (floor.items || []).find(i => Math.hypot(i.x - w.x, i.y - w.y) < 24);
     if (it) mutate(f => ({ ...f, items: f.items.filter(x => x.id !== it.id) }));
   };
+  const tests = (data.speedtests || []).filter(t => t.where && t.where.b === building.id && t.where.f === floor.id);
+  const pinAt = async (id, where) => {
+    try { await api('/api/speedtest/' + id, { method: 'PUT', body: { where } }); toast(where ? 'Замер отмечен на плане' : 'Отметка убрана'); refresh(); }
+    catch (e) { toast(e.message, true); }
+  };
   const onTap = w => {
+    if (pinTest) { pinAt(pinTest, { b: building.id, f: floor.id, x: Math.round(w.x), y: Math.round(w.y) }); setPinTest(null); setCov(true); return; }
     if (tool === 'wall') { const p = { x: snap(w.x), y: snap(w.y) }; if (wallPt) mutate(f => ({ ...f, walls: [...(f.walls || []), { x1: wallPt.x, y1: wallPt.y, x2: p.x, y2: p.y }] })); setWallPt(p); return; }
     if (tool === 'place' && pending) { mutate(f => ({ ...f, items: [...f.items, { id: uid('i'), kind: pending.kind, ref: pending.ref, x: snap(w.x), y: snap(w.y) }] })); setPending(null); setTool('select'); return; }
     if (tool === 'erase') { eraseAt(w); return; }
@@ -341,6 +368,7 @@ function BuildingPlan({ building, plan, back }) {
   useEffect(() => { const t = setTimeout(fitFloor, 30); return () => clearTimeout(t); }, [fid, building.id]);
 
   const dragItem = (it, e) => {
+    if (pinTest) return;                                     // the tap goes to the canvas → pins the speed test here
     if (tool === 'erase') { mutate(f => ({ ...f, items: f.items.filter(x => x.id !== it.id) })); return; }
     if (!edit) { if (it.kind === 'device') { const d = devById[it.ref]; if (d) openDevice(d); } else if (it.kind === 'place') setTab('rack'); return; }
     if (tool !== 'select') return;
@@ -378,6 +406,8 @@ function BuildingPlan({ building, plan, back }) {
       {edit ? <><Btn size="sm" icon="plus" onClick={() => addFloor(false)}>Этаж</Btn>
         {!building.floors.some(f => f.outdoor) ? <Btn size="sm" icon="tree" onClick={() => addFloor(true)}>Двор</Btn> : null}
         {building.floors.length > 1 ? <Btn size="sm" kind="danger" icon="trash" onClick={delFloor} title="Удалить этаж" /> : null}</> : null}
+      <div className="grow" />
+      {tests.length ? <button className={'chip' + (cov ? ' on' : '')} onClick={() => { setCov(!cov); setSelTest(null); }}><Icon name="wifi" size={13} />Покрытие · {tests.length}</button> : null}
     </div>
     {edit ? <div className="plan-tools">
       <Seg value={tool} onChange={v => { setTool(v); setWallPt(null); setPending(null); }} options={[
@@ -392,7 +422,7 @@ function BuildingPlan({ building, plan, back }) {
         {!palette.length ? <span className="dim" style={{ fontSize: 13 }}>Всё уже размещено. Нет нужного? Добавьте устройство на вкладке «Устройства» (можно «Пинг»/«Агент» как заглушку).</span> : null}</div>
     </div> : null}
 
-    <div className={'plan-canvas' + (tool !== 'select' ? ' crosshair' : '')} ref={wrap} {...bind}>
+    <div className={'plan-canvas' + (tool !== 'select' || pinTest ? ' crosshair' : '')} ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridB" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
@@ -412,6 +442,7 @@ function BuildingPlan({ building, plan, back }) {
           {(floor.walls || []).map((w, i) => <line key={i} className="plan-wall" x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
             onClick={() => tool === 'erase' && eraseWall(i)} style={{ cursor: tool === 'erase' ? 'pointer' : 'default' }} />)}
           {draft ? <rect x={draft.x} y={draft.y} width={draft.w} height={draft.h} rx={6} className={tool === 'erase' ? 'plan-erase-draft' : 'plan-room-draft'} /> : null}
+          {cov && tests.length ? <CoverageLayer tests={tests} sel={selTest} onSel={setSelTest} /> : null}
           {(floor.items || []).map(it => <PlanItem key={it.id} it={it} devById={devById} racks={data.racks} sel={sel === it.id} edit={edit} onDown={e => dragItem(it, e)} />)}
           {edit ? <PlanCursor wrap={wrap} view={view} tool={tool} wallPt={wallPt} /> : null}
         </g>
@@ -420,6 +451,15 @@ function BuildingPlan({ building, plan, back }) {
         tool === 'place' ? 'Выберите в палитре и нажмите на план' : tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Тащите устройства · два пальца / колесо — зум'}</div> : null}
       <ZoomBtns setView={setView} onFit={fitFloor} />
     </div>
+    {cov && tests.length ? <div className="legend" style={{ marginTop: 8 }}><span className="dim">Скорость Wi-Fi, Мбит/с:</span>
+      {SPEED_LEVELS.map(([v, c, t]) => <span key={v}><i style={{ background: c }} />{t} {v ? 'от ' + v : 'до 15'}</span>)}</div> : null}
+    {cov && selTest && tests.find(t => t.id === selTest) ? (() => { const t = tests.find(x => x.id === selTest);
+      return <Card style={{ marginTop: 10 }} title={t.note || 'Замер скорости'} right={<Btn size="sm" icon="x" onClick={() => setSelTest(null)} />}>
+        <div className="list"><SpeedRow t={t} now={data.now} /></div>
+        {admin ? <div className="row wrap" style={{ marginTop: 8 }}>
+          <Btn size="sm" icon="pin" onClick={() => { setPinTest(t.id); setSelTest(null); }}>Переставить</Btn>
+          <Btn size="sm" kind="danger" icon="trash" onClick={() => { pinAt(t.id, null); setSelTest(null); }}>Убрать с плана</Btn></div> : null}
+      </Card>; })() : null}
   </div>;
 }
 
