@@ -91,8 +91,8 @@ function Card({ title, right, children, pad = true, className = '', style }) {
   return <div className={'card ' + (pad ? 'pad ' : '') + className} style={style}>
     {title ? <div className="card-title"><span className="grow">{title}</span>{right}</div> : null}{children}</div>;
 }
-function SearchBox({ value, onChange, placeholder = 'Поиск' }) {
-  return <div className="search"><Icon name="search" size={15} /><input className="input" value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} /></div>;
+function SearchBox({ value, onChange, placeholder = 'Поиск', autoFocus }) {
+  return <div className="search"><Icon name="search" size={15} /><input className="input" value={value} placeholder={placeholder} autoFocus={autoFocus} onChange={e => onChange(e.target.value)} /></div>;
 }
 
 /* Hints for newcomers: on unless switched off in Settings; each can be dismissed in this browser («Понятно») */

@@ -156,8 +156,10 @@ def analyze(topo, devices, states, cable_tests):
     else:
         tid = 'single'
     traits = []
+    wired = 0
     if mesh_aps:
-        wired = sum(1 for i in mesh_aps if parent.get(i, {}).get('kind') == 'wire')
+        # the router tells the backhaul itself (Ethernet / air); without it — whether the point hangs on a cable on the map
+        wired = sum(1 for i in mesh_aps if nodes[i].get('backhaul') == 'wire' or (nodes[i].get('backhaul') is None and parent.get(i, {}).get('kind') == 'wire'))
         traits.append(f"Wi-Fi mesh: {len(mesh_aps)} {_plural(len(mesh_aps), 'точка', 'точки', 'точек')}" +
                       (', связь с роутером по кабелю' if wired == len(mesh_aps) else ', часть по воздуху' if wired else ', связь по воздуху'))
     remote = [n for n in nodes.values() if n.get('remote')]
@@ -169,7 +171,9 @@ def analyze(topo, devices, states, cable_tests):
         traits.append('есть неуправляемые коммутаторы')
     name, what, note = TYPES[tid]
     hybrid = bool(mesh_aps or (tid in ('tree', 'star') and cycles))
-    ttype = {'id': tid, 'name': name + (' + беспроводной mesh' if mesh_aps and tid != 'mesh' else ''), 'what': what, 'note': note,
+    mesh_name = '' if not mesh_aps or tid == 'mesh' else (' + Wi-Fi mesh по кабелю' if wired == len(mesh_aps)
+                                                          else ' + Wi-Fi mesh (кабель и воздух)' if wired else ' + беспроводной mesh')
+    ttype = {'id': tid, 'name': name + mesh_name, 'what': what, 'note': note,
              'traits': traits, 'hybrid': hybrid, 'levels': len(levels), 'chain': chain, 'cycles': cycles,
              'all': [{'id': k, 'name': TYPES[k][0], 'what': TYPES[k][1], 'note': TYPES[k][2]} for k in TYPE_ORDER]}
 

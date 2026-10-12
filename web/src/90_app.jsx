@@ -139,7 +139,7 @@ function App() {
   return <AppCtx.Provider value={ctx}>
     <div className="app-bg" />
     <header className="topbar">
-      <div className="brand"><div className="brand-logo"><Icon name="rack" size={19} color="#fff" /></div>
+      <div className="brand"><AppIcon size={34} radius={10} style={{ boxShadow: '0 4px 14px rgba(0,60,200,.25)' }} />
         <div style={{ minWidth: 0 }}><div className="brand-title ellipsis">{data.settings.title}</div>
           <div className={'live' + (stale ? ' stale' : '')}><i />{stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)}</div></div></div>
       <nav className="tabs">{tabs.map(t => <button key={t.id} className={'tab' + (cur === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>

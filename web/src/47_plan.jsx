@@ -55,7 +55,8 @@ function usePanZoom(wrapRef, opts, initial) {
     return { pinch: true, dist: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, cx: (p[0].x + p[1].x) / 2 - r.left, cy: (p[0].y + p[1].y) / 2 - r.top, v: { ...vr.current } }; };
   const down = e => {
     // items handle their own drag; buttons/overlays must get their click (pointer capture would steal it)
-    if (e.target.closest('.plan-item, .plan-room, button, .zoom-btns, .plan-hint')) return;
+    if (e.target.closest('button, .zoom-btns, .plan-hint, .plan-open')) return;
+    if (e.target.closest('.plan-item, .plan-room') && !(or.current.panItems && or.current.panItems())) return;
     ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     if (Object.keys(ptrs.current).length >= 2) { mode.current = pinchBase(); return; }
@@ -157,9 +158,15 @@ function Territory({ plan, enter }) {
   const saveLink = l => save(null, linkEdit.isNew ? [...links, l] : links.map(x => x.id === l.id ? l : x));
   const onTap = w => {
     if (tool === 'pole') { save(null, null, [...poles, { id: uid('p'), name: `Столб ${poles.length + 1}`, x: snap(w.x), y: snap(w.y) }]); return; }
+    if (!edit) {                                               // viewing: 1st tap selects a house, 2nd tap (or «Открыть») goes inside
+      const b = buildings.find(x => { const p = pos(x); return w.x >= p.x && w.x <= p.x + BW && w.y >= p.y && w.y <= p.y + BH; });
+      if (b && sel === b.id) { enter(b.id); return; }
+      setSel(b ? b.id : null); return;
+    }
     setSel(null);
   };
-  const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap });
+  // viewing: a swipe that starts on a house pans the plan instead of opening it
+  const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap, panItems: () => !edit });
   // open centred on all buildings, poles and their yards — not on an empty corner of the grid
   const fitAll = () => { const xs = [], ys = [];
     buildings.forEach(b => { const p = pos(b); xs.push(p.x - 18, p.x + BW + 18); ys.push(p.y - 18, p.y + BH + 18); });
@@ -189,7 +196,7 @@ function Territory({ plan, enter }) {
   const dragB = (b, e) => {
     if (tool === 'link') { pickNode(b.id); return; }
     if (tool === 'pole') return;
-    if (!edit) { enter(b.id); return; }
+    if (!edit) return;                                         // handled by the pan/tap hook (onTap)
     e.stopPropagation(); const p = pos(b); const r = wrap.current.getBoundingClientRect();
     const sx = e.clientX, sy = e.clientY; let moved = false;
     const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 5) moved = true; if (moved) {
@@ -249,7 +256,7 @@ function Territory({ plan, enter }) {
               <text x={54} y={30} className="pb-name">{b.name.length > 20 ? b.name.slice(0, 19) + '…' : b.name}</text>
               <text x={54} y={50} className="pb-sub">{(b.floors || []).length} эт.{hasYard ? ' · двор' : ''} · {devs.length} устр.</text>
               <circle cx={BW - 20} cy={22} r={6} fill={statusColor(st)} />
-              <text x={18} y={BH - 18} className="pb-hint">{edit ? 'перетащите · нажмите — внутрь' : 'нажмите, чтобы зайти'}</text>
+              <text x={18} y={BH - 18} className="pb-hint">{edit ? 'перетащите · нажмите — выбрать' : sel === b.id ? 'нажмите ещё раз, чтобы зайти' : 'нажмите, чтобы выбрать'}</text>
             </g>; })}
           {poles.map(p => <g key={p.id} className={'plan-item plan-pole' + (sel === p.id || linkFrom === p.id ? ' sel' : '')} transform={`translate(${p.x},${p.y})`}
             onPointerDown={e => dragPole(p, e)} style={{ cursor: edit && tool === 'select' ? 'move' : 'pointer' }}>
@@ -259,6 +266,8 @@ function Territory({ plan, enter }) {
             <text y={30} textAnchor="middle" className="pi-label">{p.name.length > 16 ? p.name.slice(0, 15) + '…' : p.name}</text></g>)}
         </g>
       </svg>
+      {selB && tool === 'select' ? <button className="plan-open" onClick={() => enter(selB.id)}>
+        <Icon name="home" size={16} />Открыть «{selB.name.length > 18 ? selB.name.slice(0, 17) + '…' : selB.name}»<Icon name="chevron" size={15} /></button> : null}
       <ZoomBtns setView={setView} onFit={fitAll} />
     </div>
     {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}

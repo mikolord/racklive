@@ -364,7 +364,7 @@ function AiCard() {
           <b>Что уходит в сервис:</b> вопрос и данные, которые Frank посмотрел: имена и статусы устройств, порты, клиенты (имена, IP, MAC), журнал, замечания.
           Пароли, ключи, токены и SNMP-community вырезаются до отправки. Ответы стоят денег у провайдера: обычно доли цента (DeepSeek) — несколько центов (Claude, ChatGPT) за вопрос.</div>
         <div className="frank-install">
-          <FrankEye size={40} round={11} />
+          <AppIcon app="frank" size={40} radius={10} />
           <div className="grow" style={{ fontSize: 12.5, lineHeight: 1.45 }}><b style={{ fontSize: 13.5 }}>Frank отдельным приложением</b><br />
             Отдельный значок с глазом на экране телефона — чат с Frank сразу на весь экран. Установка с QR-кодом — в разделе <b>«Приложения»</b>.</div>
         </div>

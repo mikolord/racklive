@@ -189,7 +189,7 @@ function SettingsView() {
   useEffect(() => { const el = document.querySelector('.set-item.on'); if (el && innerWidth <= 900) el.scrollIntoView({ inline: 'center', block: 'nearest' }); }, [cur.id]);
   return <div className="set-layout">
     <nav className="set-nav">{secs.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
-      {x.id === 'frank' ? <FrankEye size={30} round={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
+      {x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
       <span className="set-txt"><b>{x.label}</b><small>{x.state ? x.state(data) : x.desc}</small></span>
       <Icon name="chevron" size={14} color="var(--text3)" /></button>)}</nav>
     <div className="set-body">
@@ -248,7 +248,12 @@ function SettingsView() {
         <input ref={fileRef} type="file" accept=".json,.html,application/json,text/html" style={{ display: 'none' }} onChange={importFile} />
       </div>
     </Card> : null}
-    {cur.id === 'about' ? <Card title="О программе"><KV rows={[['Версия', 'Rack Live ' + data.version], ['Драйверы', data.drivers.length], ['Устройств', data.devices.length]]} />
+    {cur.id === 'about' ? <Card title="О программе">
+      <div className="row" style={{ gap: 14, marginBottom: 12 }}><AppIcon size={56} radius={13} />
+        <div><div style={{ fontSize: 17, fontWeight: 700 }}>Rack Live</div><div className="dim" style={{ fontSize: 13 }}>версия {data.version}</div></div></div>
+      <div className="row" style={{ gap: 10, marginBottom: 12 }}><AppIcon app="frank" size={36} radius={9} /><AppIcon app="speed" size={36} radius={9} />
+        <span className="dim" style={{ fontSize: 13 }}>Frank и Тест скорости — отдельные приложения, раздел «Приложения»</span></div>
+      <KV rows={[['Версия', 'Rack Live ' + data.version], ['Драйверы', data.drivers.length], ['Устройств', data.devices.length]]} />
       <div className="dim3" style={{ fontSize: 12.5, marginTop: 12 }}>Исходный код и инструкции: <a href="https://github.com/mikolord/racklive" target="_blank" rel="noreferrer">github.com/mikolord/racklive</a></div></Card> : null}
     </div>
   </div>;
@@ -274,7 +279,7 @@ function AuthScreen({ setup, title, onDone, note, tgLogin }) {
     catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   return <div className="auth"><div className="app-bg" /><form className="card" onSubmit={submit}>
-    <div className="brand-logo" style={{ width: 64, height: 64, borderRadius: 18, margin: '0 auto' }}><Icon name="rack" size={34} color="#fff" /></div>
+    <AppIcon size={64} radius={16} style={{ margin: '0 auto', boxShadow: '0 8px 24px rgba(0,60,200,.3)' }} />
     <h1>{setup ? 'Добро пожаловать' : (title || 'Rack Live')}</h1>
     <div className="dim">{setup ? 'Задайте название и пароль администратора — с ним можно будет добавлять устройства и управлять ими.' : 'Войдите, чтобы продолжить'}</div>
     {note ? <div className="badge offline" style={{ whiteSpace: 'normal', lineHeight: 1.4, padding: '8px 12px', borderRadius: 12 }}>{note}</div> : null}

@@ -9,9 +9,9 @@
   "background_color": "#000000",
   "theme_color": "#000000",
   "icons": [
-    { "src": "/speed-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "/speed-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "/speed-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "/speed-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+    { "src": "/speed-icon.svg?v=27", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/speed-icon-192.png?v=27", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/speed-icon-512.png?v=27", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/speed-icon-512.png?v=27", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }

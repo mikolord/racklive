@@ -59,19 +59,31 @@ function runPhase(kind, onTick) {
   });
 }
 
+/* readings arrive every 150 ms — glide towards them every frame instead of jumping */
+function useGlide(target, tau = 260) {
+  const [v, setV] = useState(target); const st = useRef({ v: target, t: target }); st.current.t = target;
+  useEffect(() => { let raf, last = performance.now();
+    const step = now => { const s = st.current, dt = Math.min(100, now - last); last = now;
+      if (s.v !== s.t) { s.v += (s.t - s.v) * (1 - Math.exp(-dt / tau)); if (Math.abs(s.t - s.v) < Math.max(.01, Math.abs(s.t) * .002)) s.v = s.t; setV(s.v); }
+      raf = requestAnimationFrame(step); };
+    raf = requestAnimationFrame(step); return () => cancelAnimationFrame(raf); }, []);
+  return v;
+}
 function Gauge({ value, phase, progress }) {
-  const max = [100, 500, 1000, 2500, 10000].find(m => (value || 0) <= m) || 10000;      // the scale grows with the speed
-  const f = Math.min(1, (value || 0) / max), a = Math.PI * (1 - f);
+  const target = value || 0;
+  const scale = [100, 500, 1000, 2500, 10000].find(m => target <= m) || 10000;          // the scale grows with the speed
+  const shown = useGlide(target), max = useGlide(scale, 380);                             // the scale change glides too
+  const f = Math.max(0, Math.min(1, shown / max)), a = Math.PI * (1 - f);
   const R = 80, cx = 100, cy = 92, x = cx + R * Math.cos(a), y = cy - R * Math.sin(a);
-  const col = phase ? speedLevel(value)[1] : 'var(--text3)';
+  const col = phase ? speedLevel(shown)[1] : 'var(--text3)';
   return <div className="gauge">
     <svg viewBox="0 0 200 110">
       <path d={`M${cx - R},${cy} A${R},${R} 0 0 1 ${cx + R},${cy}`} fill="none" stroke="var(--fill2)" strokeWidth="12" strokeLinecap="round" />
-      {f > 0 ? <path d={`M${cx - R},${cy} A${R},${R} 0 0 1 ${x.toFixed(1)},${y.toFixed(1)}`} fill="none" stroke={col} strokeWidth="12" strokeLinecap="round" /> : null}
+      {f > .002 ? <path d={`M${cx - R},${cy} A${R},${R} 0 0 1 ${x.toFixed(2)},${y.toFixed(2)}`} fill="none" stroke={col} strokeWidth="12" strokeLinecap="round" style={{ transition: 'stroke .5s' }} /> : null}
       <text x={cx - R} y={cy + 16} textAnchor="middle" className="gauge-tick">0</text>
-      <text x={cx + R} y={cy + 16} textAnchor="middle" className="gauge-tick">{max}</text>
+      <text x={cx + R} y={cy + 16} textAnchor="middle" className="gauge-tick">{scale}</text>
     </svg>
-    <div className="gauge-val"><b>{phase ? mbpsText(value) : '—'}</b><span>Мбит/с</span></div>
+    <div className="gauge-val"><b>{phase ? mbpsText(shown) : '—'}</b><span>Мбит/с</span></div>
     <div className="gauge-phase">{phase || ' '}</div>
     {progress != null ? <div className="gauge-bar"><i style={{ width: progress * 100 + '%' }} /></div> : null}
   </div>;
@@ -170,7 +182,7 @@ function SpeedApp() {
   const { data, admin, who, run, res, saved, note, setNote, start, saveNote, del, list } = s;
   const [view, setView] = useState('test');                 // 'test' | 'list'
   const last = list.find(t => t.kind !== 'iperf');
-  const col = run ? speedLevel(run.value)[1] : res ? speedLevel(res.down)[1] : 'var(--text3)';
+  const col = run ? 'var(--accent)' : 'var(--text)';     // calm: no traffic-light colours (and no glow) behind the icon
   const sub = !who ? 'определяю подключение…' : who.proxy ? 'через доменное имя' : who.wifi ? `Wi-Fi · ${who.apName}${who.band ? ' · ' + who.band : ''}` : who.wired ? `кабель · порт ${who.port}` : 'домашняя сеть';
   return <div className="frank-app"><div className="ai-panel standalone speed-app">
     <div className="fr-blur" />

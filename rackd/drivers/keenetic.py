@@ -185,6 +185,9 @@ class Keenetic(Driver):
                              'ip': m.get('ip'), 'mac': m.get('mac'), 'status': 'online' if m.get('cloud-agent-state') or m.get('ip') else 'offline',
                              'clients': m.get('associations', 0), 'uptime': uptime_seconds((m.get('system') or {}).get('uptime')),
                              'uplink': (m.get('backhaul') or {}).get('speed'), 'fw': m.get('fw'),
+                             # how the point reaches the router: a cable (Ethernet backhaul) or over the air
+                             'backhaul': ('wire' if re.match(r'(Gigabit|Fast)?Ethernet', str((m.get('backhaul') or {}).get('uplink') or ''))
+                                          else 'wifi' if (m.get('backhaul') or {}).get('uplink') else None),
                              'fwUpdate': bool(m.get('fw-update-available')) and m.get('fw-available') != m.get('fw')})
 
         clients = []

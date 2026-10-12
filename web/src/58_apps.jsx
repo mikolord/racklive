@@ -2,10 +2,10 @@
    Settings card: an https address (made on the Keenetic as a KeenDNS name, or typed by hand), install window with a QR code;
    inside the apps: a banner with the install steps until the app runs from the home screen. */
 const APPS = [
-  { id: 'frank', path: '/frank', name: 'Frank', icon: '/frank-icon.svg', text: 'Помощник: вопросы о сети простыми словами, разговоры сохраняются' },
+  { id: 'frank', path: '/frank', name: 'Frank', icon: APP_ICONS.frank, text: 'Помощник: вопросы о сети простыми словами, разговоры сохраняются' },
   // the speed test measures the home network: it is installed by the LAN address — through the domain the traffic would go via the router's https proxy
-  { id: 'speed', path: '/speed', name: 'Тест скорости', icon: '/speed-icon.svg', text: 'Замер Wi-Fi и домашней сети с телефона — в каждой комнате', lan: true },
-  { id: 'rack', path: '/', name: 'Rack Live', icon: '/icon.svg', text: 'Вся панель: шкафы, карта, устройства, уведомления' },
+  { id: 'speed', path: '/speed', name: 'Тест скорости', icon: APP_ICONS.speed, text: 'Замер Wi-Fi и домашней сети с телефона — в каждой комнате', lan: true },
+  { id: 'rack', path: '/', name: 'Rack Live', icon: APP_ICONS.rack, text: 'Вся панель: шкафы, карта, устройства, уведомления' },
 ];
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isInstalled = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };

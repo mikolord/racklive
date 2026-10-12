@@ -64,7 +64,7 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
                 continue
             cid = add({'id': f"c:{d['id']}:{key}", 'label': ch.get('name') or 'Точка доступа', 'sub': ch.get('ip') or '',
                        'kind': ch.get('kind') or 'ap', 'status': ch.get('status') or 'online', 'childOf': d['id'], 'childKey': key,
-                       'model': ch.get('model'), 'clients': ch.get('clients')})
+                       'model': ch.get('model'), 'clients': ch.get('clients'), 'backhaul': ch.get('backhaul'), 'uplinkSpeed': ch.get('uplink')})
             ap_node[key] = cid
             if ch.get('mac'):
                 mac_idx[ch['mac'].lower()] = cid
@@ -161,7 +161,12 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
             edge(main_id, nid, extra_ok=bool(nid and nid.startswith('d:')), sourcePort=int(port), speed=mp.get('speed'), kind='wire')
     for key, cid in ap_node.items():
         if cid not in attached and main:
-            edge(main_id, cid, kind='mesh')
+            n = nodes.get(cid) or {}
+            if n.get('backhaul') == 'wire':                  # cabled to the router (Ethernet backhaul) — the switch port just isn't known
+                sp = n.get('uplinkSpeed')
+                edge(main_id, cid, kind='wire', speed=int(sp) if str(sp or '').isdigit() else None, label='кабель')
+            else:
+                edge(main_id, cid, kind='mesh')
     for mac, c in clients.items():
         ap = c.get('ap')
         if not ap:

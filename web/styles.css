@@ -226,7 +226,7 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .map-wrap > svg { touch-action: none; }      /* only the map canvas; panels over it must scroll */
 @media (max-width: 760px) { .map-wrap { height: calc(100dvh - 300px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 380px; } }
 .zoom-btns { position: absolute; right: 12px; bottom: 12px; z-index: 2; display: flex; flex-direction: column; gap: 6px; }
-.zoom-btns .btn { width: 44px; height: 44px; border-radius: 14px; background: var(--elev); border: .5px solid var(--line); box-shadow: var(--shadow); font-size: 22px; font-weight: 500; padding: 0; }
+.zoom-btns .btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 14px; background: var(--elev); border: .5px solid var(--line); box-shadow: var(--shadow); font-size: 22px; font-weight: 500; padding: 0; }
 @media (max-width: 760px) { .map-legend { display: none; } }
 .node-info { position: absolute; right: 68px; bottom: 12px; width: 320px; z-index: 3; max-height: calc(100% - 80px); overflow: auto; touch-action: pan-y; overscroll-behavior: contain; }
 @media (max-width: 760px) { .node-info { left: 10px; right: 64px; width: auto; } }
@@ -350,7 +350,11 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .plan-palette { margin-bottom: 10px; }
 .plan-canvas { position: relative; height: calc(100vh - 290px); min-height: 440px; border-radius: 16px; overflow: hidden; border: .5px solid var(--line); background: var(--bg2); touch-action: none; }
 .plan-canvas.crosshair { cursor: none; }                    /* PlanCursor draws a visible snap marker instead */
-.plan-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.plan-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.plan-open { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3; display: inline-flex; align-items: center; gap: 7px;
+  max-width: calc(100% - 140px); white-space: nowrap; padding: 11px 16px 11px 14px; border-radius: 999px; border: 0; background: var(--accent); color: #fff;
+  font: inherit; font-size: 15px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.28); cursor: pointer; animation: planOpenIn .18s ease-out; }
+@keyframes planOpenIn { from { opacity: 0; transform: translate(-50%, 8px); } }
 .plan-wall { stroke: var(--text2); stroke-width: 6; stroke-linecap: round; }
 .plan-wall.draft { stroke: var(--accent); stroke-dasharray: 6 6; opacity: .8; }
 .plan-item .pi-bg { stroke-width: 1.5; }
@@ -466,7 +470,7 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .gauge-val span { font-size: 12.5px; color: var(--text2); }
 .gauge-phase { text-align: center; font-size: 13px; font-weight: 600; color: var(--text2); min-height: 18px; }
 .gauge-bar { height: 3px; border-radius: 2px; background: var(--fill); margin: 8px auto 0; max-width: 220px; overflow: hidden; }
-.gauge-bar i { display: block; height: 100%; background: var(--accent); transition: width .15s linear; }
+.gauge-bar i { display: block; height: 100%; background: var(--accent); transition: width .2s linear; }
 .who { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; padding: 9px 12px; border-radius: 12px; background: var(--fill); line-height: 1.4; }
 .who svg { flex-shrink: 0; margin-top: 1px; color: var(--accent); }
 .who.warn svg { color: var(--orange); }
@@ -694,8 +698,8 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
 .speed-app .stats { grid-template-columns: repeat(2, 1fr); }
 .speed-app .sp-glass { background: var(--glass); border: .5px solid var(--glass-line); border-radius: 20px; padding: 6px; }
 .sp-note { border-radius: 16px; }
-.sp-ind { transition: color .4s; } .sp-ind.on { animation: sp-pulse 1.2s ease-in-out infinite; }
-@keyframes sp-pulse { 50% { box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 18px currentColor; } }
+.sp-ind { transition: color .4s; } .sp-ind.on svg { animation: sp-pulse 1.6s ease-in-out infinite; }
+@keyframes sp-pulse { 50% { opacity: .55; } }
 .sp-dock { padding: 8px; }
 .sp-start { width: 100%; height: 54px; border: 0; border-radius: 24px; background: var(--accent); color: #fff; font: inherit; font-size: 17px; font-weight: 700; cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 45%, transparent); transition: transform .15s, background .3s; }
@@ -722,7 +726,7 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
   .set-nav::-webkit-scrollbar { display: none; }
   .set-item { width: auto; flex-shrink: 0; padding: 7px 12px 7px 7px; gap: 8px; border-radius: 13px; }
   .set-item small, .set-item > svg:last-child { display: none; }
-  .set-ic, .set-item .frank { width: 26px !important; height: 26px !important; }
+  .set-ic, .set-item .frank, .set-item > img { width: 26px !important; height: 26px !important; }
 }
 
 /* actions Frank proposes (run only on the admin's press) */
@@ -839,3 +843,9 @@ button.hdr-row:active, button.hdr-row:hover { background: var(--fill); }
 .rackbox .u rect { fill: var(--map-unit); stroke: var(--map-unit-stroke); }
 .rackbox text { fill: var(--unit-text); } .rackbox .usub { fill: var(--unit-meta); }
 .rackbox .u-ic { color: var(--rack-icon); }
+
+/* map: compact tools — a magnifier that opens the search, a cabinet button with a dropdown list of places */
+.map-find { display: flex; align-items: center; gap: 6px; }
+.map-search { width: min(230px, 52vw); }
+.rack-jump { animation: pop .2s cubic-bezier(.2,1.2,.4,1); transform-origin: top left; min-width: 180px; }
+@media (max-width: 760px) { .rack-jump { max-width: 240px !important; } }

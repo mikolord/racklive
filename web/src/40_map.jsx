@@ -281,11 +281,19 @@ function MapView() {
 
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   const selNode = sel && L.nodes[sel];
+  const [findOpen, setFindOpen] = useState(false);
+  const [racksOpen, setRacksOpen] = useState(false);
   const anyCollapsedOpen = Object.values(collapsed).some(v => v === false);
   if (!view) return <div className="map-wrap" ref={wrap} />;
   return <div className="map-wrap" ref={wrap}>
     <div className="map-tools">
-      <div className="map-panel" style={{ width: 230 }}><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" /></div>
+      {/* compact: a magnifier that opens the search field, a cabinet button with the list of places */}
+      <div className="map-panel map-find">
+        {findOpen || q ? <><div className="map-search"><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" autoFocus /></div>
+          <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFindOpen(false); }} /></>
+          : <Btn size="sm" icon="search" title="Найти устройство" onClick={() => { setFindOpen(true); setRacksOpen(false); }} />}
+        {(L.racks || []).length > 1 ? <Btn size="sm" icon="rack" kind={racksOpen ? 'primary' : ''} title="Шкафы и места" onClick={() => setRacksOpen(!racksOpen)} /> : null}
+      </div>
       <div className="grow" />
       <div className="map-panel">
         {data.health ? <Btn size="sm" icon="pulse" kind={healthOpen ? 'primary' : ''} onClick={() => setHealthOpen(!healthOpen)} title="Анализ сети">Анализ</Btn> : null}
@@ -296,11 +304,11 @@ function MapView() {
           <Btn size="sm" icon="refresh" onClick={async () => { if (await confirm('Сбросить ручное расположение узлов?')) { setDragPos({}); saveMap({ positions: {} }); } }} title="Сбросить раскладку" /></> : null}
       </div>
     </div>
-    {(L.racks || []).length > 1 ? <div className="map-panel rack-jump">
-      <span className="rack-jump-title">Шкафы</span>
-      {L.racks.map(rk => <button key={rk.id} className="rack-jump-btn" onClick={() => focusRack(rk)} title={`Показать «${rk.name}»`}>
-        <Icon name="rack" size={13} />{rk.name}</button>)}
-      <button className="rack-jump-btn" onClick={fit}><Icon name="fit" size={13} />Все</button>
+    {racksOpen && (L.racks || []).length > 1 ? <div className="map-panel rack-jump">
+      <span className="rack-jump-title">Шкафы и места</span>
+      {L.racks.map(rk => <button key={rk.id} className="rack-jump-btn" onClick={() => { focusRack(rk); setRacksOpen(false); }} title={`Показать «${rk.name}»`}>
+        <Icon name="rack" size={13} /><span className="ellipsis">{rk.name}</span></button>)}
+      <button className="rack-jump-btn" onClick={() => { fit(); setRacksOpen(false); }}><Icon name="fit" size={13} />Все</button>
     </div> : null}
     {linking ? <div className="toast" style={{ position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }}>
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
