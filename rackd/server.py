@@ -191,13 +191,22 @@ class App:
                     finally:
                         self.backup_busy = False
                 self.pool.submit(job)
-        new = self.newdev.scan(self.store.cfg['devices'], self.states)
-        if new:
-            lines = [newdev.describe(r) for r in new]
-            for r, l in zip(new, lines):
-                self.store.add_event(None, 'Новое устройство', 'warning', l[2:].strip())
-            if self.alerter.cfg()['rules'].get('newdev', {}).get('on'):
-                threading.Thread(target=self.alerter.send, args=(lines[:10] + ([f'…и ещё {len(lines) - 10}'] if len(lines) > 10 else []),), daemon=True).start()
+        new, anomalies = self.newdev.scan(self.store.cfg['devices'], self.states)
+        lines = []
+        for r in new:                               # what to do depends on the network's role (newdev.py)
+            role = self.newdev.role_of(r); dec = newdev.decide(r, role)
+            if dec == 'quiet':
+                continue
+            text = newdev.describe(r, role)
+            self.store.add_event(None, 'Новое устройство', 'warning' if dec == 'ask' else 'info',
+                                 text[2:].strip() if dec == 'ask' else f"своё устройство подключилось: {r.get('name') or r['mac']} ({r.get('segment')})")
+            if dec == 'ask':
+                lines.append(text)
+        for a in anomalies:
+            self.store.add_event(None, 'Гостевая сеть', 'warning', a[2:].strip())
+        lines += anomalies
+        if lines and self.alerter.cfg()['rules'].get('newdev', {}).get('on'):
+            threading.Thread(target=self.alerter.send, args=(lines[:10] + ([f'…и ещё {len(lines) - 10}'] if len(lines) > 10 else []),), daemon=True).start()
 
     def poller(self):
         last_save = last_alert = time.time()
@@ -326,7 +335,7 @@ class App:
         except Exception:
             traceback.print_exc()
             sec = None
-        admin_extra = {'ai': self.ai.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(),
+        admin_extra = {'ai': self.ai.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
@@ -334,7 +343,7 @@ class App:
                 'tgLogin': self.tgbot.login_available(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
-                'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
+                'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
 
@@ -775,6 +784,19 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})
+            if path == '/api/dashboard' and method == 'PUT':     # «Главная»: widgets, their order and sizes
+                ws = body.get('widgets')
+                if not isinstance(ws, list) or len(ws) > 60:
+                    return self.err('неверный список виджетов')
+                clean = []
+                for w in ws:
+                    if isinstance(w, dict) and re.match(r'^[a-z]{2,20}$', str(w.get('type') or '')):
+                        clean.append({'id': str(w.get('id') or '')[:24], 'type': w['type'], 'w': max(1, min(4, int(w.get('w') or 1))),
+                                      'h': max(0, min(2000, int(w.get('h') or 0))), 'compact': bool(w.get('compact')), 'size': w.get('size') if w.get('size') in ('S', 'M', 'L') else None, 'title': str(w.get('title') or '')[:60],
+                                      'opts': w.get('opts') if isinstance(w.get('opts'), dict) and len(json.dumps(w.get('opts'))) < 4000 else {}})
+                st.cfg['dashboard'] = {'widgets': clean}
+                st.save()
+                return self.send({'ok': True})
             if path == '/api/map' and method == 'PUT':
                 for k in ('positions', 'links', 'collapsed', 'wan'):
                     if k in body:
@@ -993,6 +1015,36 @@ class Handler(BaseHTTPRequestHandler):
                 if not APP.extscan.scanner():
                     return self.err('нет внешнего сервера: добавьте любой VPS как «Сервер / VPS по SSH»')
                 return self.send({'ok': True, 'started': APP.extscan.start()})
+            if path == '/api/netroles' and method == 'PUT':         # «this network is the main one / guests / …»
+                key, role = str(body.get('key') or ''), body.get('role')
+                if not re.match(r'^\w+:\w+$', key) or (role and role not in newdev.ROLES):
+                    return self.err('неверная сеть или роль')
+                roles = st.cfg.setdefault('netroles', {})
+                if role:
+                    roles[key] = role
+                else:
+                    roles.pop(key, None)
+                st.save()
+                return self.send({'ok': True})
+            if path == '/api/clients' and method == 'POST':          # a client on the router: name, static IP, speed limit, policy
+                d = st.device(str(body.get('router') or ''))
+                drv = d and REGISTRY.get(d.get('driver'))
+                if not drv or not getattr(drv, 'client', None):
+                    return self.err('этот роутер не умеет настраивать клиентов')
+                if not re.match(r'^([0-9a-f]{2}:){5}[0-9a-f]{2}$', str(body.get('mac') or '').lower()):
+                    return self.err('неверный MAC-адрес')
+                mg = (APP.states.get(d['id']) or {}).get('clientMgmt')
+                if mg and not mg.get('ok'):
+                    return self.err('настройки клиентов на этом роутере отключены: ' + mg.get('reason', ''))
+                want = {k: body[k] for k in ('name', 'ip', 'limit', 'policy', 'forget') if k in body}
+                try:
+                    done = drv.client(d, str(body.get('mac') or ''), want)
+                except DriverError as e:
+                    return self.err(str(e))
+                if done:
+                    st.add_event(d['id'], d.get('name'), 'info', f"клиент {body.get('label') or body.get('mac')}: " + ', '.join(done))
+                state = APP.poll_device(d)
+                return self.send({'ok': True, 'done': done, 'state': json.loads(json.dumps(state))})
             if path == '/api/newdev/trust' and method == 'POST':
                 APP.newdev.trust(str(body.get('mac') or ''), bool(body.get('on', True)))
                 st.bump()

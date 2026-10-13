@@ -1,5 +1,5 @@
 /* Core: API client, formatting helpers, icons. Files in src/ are concatenated in name order. */
-const { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext, Fragment } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, createContext, useContext, Fragment } = React;
 
 /* Telegram mini app: Telegram puts signed launch data into the URL hash — grab it before the app uses the hash for tabs */
 const ssGet = k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
@@ -114,7 +114,8 @@ const ICON_PATHS = {
   link: 'M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1', fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
   lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4', logout: 'M15 4h4v16h-4M10 17l5-5-5-5M15 12H3', sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
   moon: 'M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z', chevron: 'M9 6l6 6-6 6', download: 'M12 3v12M7 10l5 5 5-5M4 21h16', upload: 'M12 21V9M7 14l5-5 5 5M4 3h16',
-  check: 'M5 12l5 5 9-11', terminal: 'M4 5h16v14H4zM8 10l3 2-3 2M13 15h3', wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0', globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
+  check: 'M5 12l5 5 9-11', sort: 'M4 7h16M7 12h10M10 17h4', clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2', minus: 'M5 12h14', grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01', resize: 'M21 13l-8 8M21 6L6 21',
+  plan: 'M3 4h18v16H3zM3 12h7M10 4v4M14 12v8M14 15h7', terminal: 'M4 5h16v14H4zM8 10l3 2-3 2M13 15h3', wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0', globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   box: 'M4 7h16v13H4zM4 7l2-4h12l2 4M9 11h6', home: 'M4 11l8-7 8 7M6 10v10h12V10M10 20v-6h4v6',
   pole: 'M12 2v20M7 6h10M8.5 10h7M9 22h6', send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
   wall: 'M3 5h18v14H3zM3 9.5h18M3 14.5h18M8 5v4.5M14 5v4.5M11 9.5V14.5M5 14.5V19M17 14.5V19',

@@ -1,5 +1,6 @@
 """Demo devices with realistic, made-up data (RL_DEMO=1). Lets people try Rack Live without hardware
 and is used for the screenshots. Hidden from the "Add device" picker."""
+from ..util import DriverError
 import math, random, secrets, time
 
 from . import Driver
@@ -51,6 +52,30 @@ class DemoRouter(DemoBase):
     actions = [{'id': 'reboot', 'label': 'Перезагрузить роутер', 'scope': 'device', 'confirm': 'Это демо — ничего не произойдёт. Продолжить?'},
                {'id': 'reboot_child', 'label': 'Перезагрузить точку', 'scope': 'child', 'confirm': 'Перезагрузить точку (демо)?'}]
 
+    OVR = {}                                     # demo: what «настроить клиента» changed, by MAC
+
+    def client(self, cfg, mac, want):
+        o = self.OVR.setdefault(str(mac).lower(), {})
+        if want.get('forget'):
+            self.OVR[str(mac).lower()] = {'registered': False}
+            return ['регистрация снята (демо)']
+        done = []
+        if want.get('name'):
+            o.update(name=want['name'], registered=True); done.append(f"имя «{want['name']}»")
+        if want.get('ip'):
+            cur = next((c for c in self.poll(cfg)['clients'] if c['mac'] == str(mac).lower()), {})
+            if cur.get('ip') and want['ip'].rsplit('.', 1)[0] != cur['ip'].rsplit('.', 1)[0]:
+                raise DriverError(f"адрес {want['ip']} не из сети этого устройства ({cur['ip'].rsplit('.', 1)[0]}.0/24)")
+            if want['ip'].endswith(('.0', '.1', '.255')):
+                raise DriverError(f"{want['ip']} — служебный адрес сети или адрес роутера, выберите другой")
+        if 'ip' in want:
+            o['ip'] = want['ip'] or None; done.append(f"постоянный адрес {want['ip']}" if want['ip'] else 'постоянный адрес снят')
+        if 'limit' in want:
+            o['limit'] = float(want['limit'] or 0); done.append(f"скорость до {o['limit']:g} Мбит/с" if o['limit'] else 'без ограничения')
+        if 'policy' in want:
+            o['policy'] = want['policy'] or None; done.append({'deny': 'интернет запрещён', '': 'политика по умолчанию'}.get(want['policy'] or '', f"политика {want['policy']}"))
+        return done
+
     def poll(self, cfg):
         t = time.time()
         clients = [{'mac': m, 'ip': ip, 'name': n, 'segment': 'Камеры' if v == 10 else 'Основная', 'ap': None, 'port': '1', 'online': True, 'kind': k}
@@ -63,10 +88,22 @@ class DemoRouter(DemoBase):
         # someone's own router behind ours (a guest house): shows up in «Роутеры в сети»
         clients.append({'mac': '80:af:ca:00:00:99', 'ip': '10.0.30.150', 'name': 'Гостевой домик', 'hostname': 'WR3000E', 'segment': 'Гости',
                         'ap': None, 'port': '1', 'online': True, 'kind': 'router'})
+        segid = {'Основная': 'Bridge0', 'Камеры': 'Bridge1', 'IoT': 'Bridge2', 'Гости': 'Bridge3'}
+        for c in clients:                       # registration / static IP / limit / policy, as the real driver reports them
+            o = self.OVR.get(c['mac'], {})
+            c.update(segId=segid.get(c['segment']), registered=o.get('registered', c['segment'] != 'Гости'), access='deny' if o.get('policy') == 'deny' else 'permit',
+                     policy=o.get('policy') if o.get('policy') not in (None, 'deny') else '', staticIp=o.get('ip'), limit=o.get('limit', 0))
+            if o.get('name'):
+                c['name'] = o['name']
         by = {}
         for c in clients:
             by[c['segment']] = by.get(c['segment'], 0) + 1
         return {'status': 'online',
+                'networks': [{'id': 'Bridge0', 'name': 'Основная', 'alias': 'Home', 'vlan': 1, 'ip': '10.0.0.1', 'mask': '255.255.255.0'},
+                             {'id': 'Bridge1', 'name': 'Камеры', 'alias': '', 'vlan': 10, 'ip': '10.0.10.1', 'mask': '255.255.255.0'},
+                             {'id': 'Bridge2', 'name': 'IoT', 'alias': '', 'vlan': 20, 'ip': '10.0.20.1', 'mask': '255.255.255.0'},
+                             {'id': 'Bridge3', 'name': 'Гости', 'alias': '', 'vlan': 30, 'ip': '10.0.30.1', 'mask': '255.255.255.0'}],
+                'policies': [{'id': 'Policy0', 'name': 'VPN'}, {'id': 'Policy1', 'name': 'Без VPN'}],
                 'summary': {'model': 'Keenetic Ultra (KN-1811)', 'fw': '4.3.6', 'uptime': int(t - T0 + 1_296_000), 'cpu': round(8 + 20 * wave(t)),
                             'mem': 38, 'ip': '10.0.0.1', 'mac': ROUTER_MAC},
                 'ports': [{'n': 1, 'name': 'Gi0/0', 'kind': 'rj45', 'link': True, 'speed': 1000, 'vlansU': [1], 'vlansT': [10, 20, 30], 'label': 'Коммутатор', 'peers': []},
@@ -198,7 +235,17 @@ class DemoOpenWrt(DemoBase):
     def poll(self, cfg):
         t = time.time()
         return {'status': 'online', 'summary': {'model': 'Cudy WR3000', 'fw': 'OpenWrt 25.12.1', 'uptime': int(t - T0 + 400_000), 'cpu': 4, 'mem': 31, 'ip': '10.0.0.3'},
-                'sections': [{'title': 'Интерфейсы', 'rows': [['lan', '▲ 10.0.40.1'], ['wwan', '▲ 192.168.0.100 · usb0 (LTE-модем)']]}]}
+                'sections': [{'title': 'Интерфейсы', 'rows': [['lan', '▲ 10.0.40.1'], ['wwan', '▲ 192.168.0.100 · usb0 (LTE-модем)']]}],
+                # a guest router with a captive portal: client settings are switched off here on purpose
+                'networks': [{'id': 'lan', 'name': 'lan', 'alias': 'br-lan', 'vlan': None, 'ip': '10.0.40.1', 'mask': '255.255.255.0'}],
+                'clients': [{'mac': 'ee:40:00:00:00:0' + str(i), 'ip': f'10.0.40.{10 + i}', 'name': n, 'segment': 'lan', 'segId': 'lan', 'registered': False,
+                             'access': 'permit', 'policy': '', 'limit': 0, 'online': True, 'kind': 'phone'} for i, n in enumerate(('Гость-1', 'Гость-2'))],
+                'clientMgmt': {'ok': False, 'reason': 'на роутере работает captive-портал OpenNDS — он сам управляет доступом клиентов; чтобы ничего не сломать, '
+                                                      'настройки клиентов из Rack Live на этом роутере отключены'},
+                'clientCaps': {'limit': False, 'policy': False, 'deny': True}}
+
+    def client(self, cfg, mac, want):
+        raise DriverError('на роутере captive-портал OpenNDS — настройки клиентов из Rack Live отключены (демо)')
 
     def plugins(self, cfg):
         out = []

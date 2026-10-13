@@ -143,32 +143,42 @@ function BackupsTab({ device }) {
 }
 
 /* routers among the clients (subscribers, relatives, guests): add one with a press → link + login + password in its card */
+const FOUND_KIND = { router: 'router', nas: 'nas', ha: 'server', proxmox: 'server', server: 'server', switch: 'switch', pc: 'pc', ups: 'ups' };
+const FOUND_TEXT = { router: 'роутер', nas: 'NAS', ha: 'Home Assistant', proxmox: 'Proxmox', server: 'сервер', switch: 'коммутатор', pc: 'Windows', ups: 'ИБП' };
 function RoutersCard() {
   const { data, refresh, newDevice } = useApp(); const toast = useToast();
   const rs = data.routerScan || {}; const list = rs.list || [];
   const [help, setHelp] = useState(null);
   useEffect(() => { if (!rs.running) return; const t = setInterval(refresh, 3000); return () => clearInterval(t); }, [rs.running]);
-  const scan = async () => { try { await api('/api/routers/scan', { method: 'POST', body: {} }); toast('Ищу роутеры в сети…'); setTimeout(refresh, 800); } catch (e) { toast(e.message, true); } };
+  const scan = async () => { try { await api('/api/routers/scan', { method: 'POST', body: {} }); toast('Ищу устройства в сети…'); setTimeout(refresh, 800); } catch (e) { toast(e.message, true); } };
   const dismiss = async (r, on) => { try { await api('/api/routers/dismiss', { method: 'POST', body: { mac: r.mac, on } }); refresh(); } catch (e) { toast(e.message, true); } };
   const add = r => {
     const w = r.web || {};
+    if ((r.type || 'router') !== 'router') {
+      newDevice({ driver: r.driver, kind: FOUND_KIND[r.type] || 'other', name: r.name,
+        fields: { host: r.hostPreset || r.ip, location: 'local', site: '', ...(r.webUrl ? { webUrl: r.webUrl } : {}), ...(r.mode ? { mode: r.mode } : {}),
+          notes: [r.what, r.hostname && r.hostname !== r.name ? r.hostname : ''].filter(Boolean).join(' · ') } });
+      return;
+    }
     newDevice({ driver: w.keenetic ? 'keenetic' : 'remote_web', kind: 'router', name: r.name,
       fields: { host: w.url || 'http://' + r.ip, location: 'local', username: 'admin', site: '',
         notes: [r.vendor, r.hostname, r.model].filter(Boolean).join(' · ') + (r.segment ? ` · сегмент ${r.segment}` : '') } });
   };
-  return <Card title={`Роутеры в сети${list.length ? ' · ' + list.filter(r => !r.dismissed).length : ''}`}
+  return <Card title={`Найдено в сети${list.length ? ' · ' + list.filter(r => !r.dismissed).length : ''}`}
     right={<Btn size="sm" icon="refresh" busy={rs.running} onClick={scan}>{rs.running ? 'Ищу…' : 'Проверить'}</Btn>}>
-    <div className="dim" style={{ fontSize: 13, lineHeight: 1.45, marginBottom: 10 }}>Роутеры абонентов, родных, гостей — те, что подключены к вашей сети. Добавьте любой:
-      в его карточке будут кнопка «Открыть», логин и пароль с «Скопировать». Rack Live сам в чужие роутеры не входит — пароль вписываете вы.</div>
-    {!list.length ? <div className="dim3" style={{ fontSize: 13 }}>{rs.last ? 'Роутеров среди клиентов не найдено.' : 'Ещё не искал — нажмите «Проверить».'}</div>
+    <div className="dim" style={{ fontSize: 13, lineHeight: 1.45, marginBottom: 10 }}>Устройства вашей сети, за которыми Rack Live может следить, но их ещё нет в списке:
+      роутеры абонентов и гостей, NAS, Home Assistant, Proxmox, серверы с SSH, управляемые коммутаторы, компьютеры с Windows. Rack Live только смотрит,
+      какие порты открыты, — никуда не входит; пароль при добавлении вписываете вы.</div>
+    {!list.length ? <div className="dim3" style={{ fontSize: 13 }}>{rs.last ? 'Новых устройств среди клиентов не найдено.' : 'Ещё не искал — нажмите «Проверить».'}</div>
       : <div className="list">{list.map(r => { const w = r.web || {};
         return <div className="li router-row" key={r.mac} style={{ opacity: r.dismissed ? .5 : 1 }}>
-          <KindIcon kind="router" size={34} round={10} />
+          <KindIcon kind={FOUND_KIND[r.type || 'router'] || 'other'} size={34} round={10} />
           <div className="grow" style={{ minWidth: 0 }}>
-            <b style={{ fontSize: 14 }}>{r.name}</b>
-            <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{[r.vendor, r.hostname && r.hostname !== r.name ? r.hostname : '', r.model].filter(Boolean).join(' · ') || 'роутер'}</div>
+            <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 14 }} className="ellipsis">{r.name}</b><span className="found-type">{FOUND_TEXT[r.type || 'router']}</span></div>
+            <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{(r.type || 'router') !== 'router' ? r.what
+              : [r.vendor, r.hostname && r.hostname !== r.name ? r.hostname : '', r.model].filter(Boolean).join(' · ') || 'роутер'}</div>
             <div className="dim3 mono ellipsis" style={{ fontSize: 11.5 }}>{[r.ip, r.segment, r.via && 'через ' + r.via].filter(Boolean).join(' · ')}</div>
-            {w.ok ? <div className="router-st ok"><Icon name="check" size={13} />{w.keenetic ? 'Keenetic отвечает — можно будет управлять' : 'Страница настроек открывается'}</div>
+            {(r.type || 'router') !== 'router' ? null : w.ok ? <div className="router-st ok"><Icon name="check" size={13} />{w.keenetic ? 'Keenetic отвечает — можно будет управлять' : 'Страница настроек открывается'}</div>
               : r.checked ? <div className="router-st warn"><Icon name="lock" size={13} />Вход в настройки закрыт с вашей стороны
                 <button type="button" className="link-btn" onClick={() => setHelp(help === r.mac ? null : r.mac)}>{help === r.mac ? 'скрыть' : 'почему?'}</button></div> : null}
             {help === r.mac && !w.ok ? <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45, marginTop: 4 }}>Для этого роутера ваша сеть — это «интернет», а заходить
@@ -184,19 +194,52 @@ function RoutersCard() {
   </Card>;
 }
 
-/* devices that showed up in the network recently */
+/* devices that showed up in the network recently — sorted by what the network's role says to do with them */
 function NewDevicesCard() {
   const { data, refresh } = useApp(); const toast = useToast();
-  const list = data.newDevices || [];
-  const fresh = list.filter(r => !r.trusted);
+  const list = (data.newDevices || []).filter(r => findClient(data, r.mac));      // only what is in the network right now
+  const ask = list.filter(r => r.decision === 'ask');
+  const todoNets = (data.networks || []).filter(n => !n.role).length;
   const trust = async (r, on) => { try { await api('/api/newdev/trust', { method: 'POST', body: { mac: r.mac, on } }); refresh(); } catch (e) { toast(e.message, true); } };
-  return <Card title={`Новые устройства в сети · за неделю${fresh.length ? ' · ' + fresh.length : ''}`}>
-    {!list.length ? <div className="dim3" style={{ fontSize: 13 }}>За неделю новых устройств не появлялось. Когда подключится незнакомое — придёт уведомление.</div>
-      : <div className="list">{list.map(r => <div className="li" key={r.mac + r.t} style={{ opacity: r.trusted ? .55 : 1 }}>
-        <KindIcon kind={r.random ? 'phone' : 'other'} size={32} round={9} />
-        <div className="grow" style={{ minWidth: 0 }}><b style={{ fontSize: 14 }}>{r.name || (r.random ? 'Телефон или ноутбук (случайный MAC)' : 'Без имени')}</b>
-          <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{[r.ip, r.mac, r.segment, r.via && 'через ' + r.via].filter(Boolean).join(' · ')}</div>
-          <div className="dim3" style={{ fontSize: 11.5 }}>появилось {fmt.ago(r.t, data.now)}</div></div>
-        <Btn size="sm" onClick={() => trust(r, !r.trusted)}>{r.trusted ? 'Вернуть' : 'Это моё'}</Btn></div>)}</div>}
-  </Card>;
+  const [open, setOpen] = useState(() => new URLSearchParams(location.search).get('newdev') === '1');
+  const [edit, setEdit] = useState(null);             // mac → ClientEditor
+  const [quietOpen, setQuietOpen] = useState(false);
+  const groups = [['ask', 'Нужно ваше решение'], ['mine', 'Ваши устройства (зарегистрированы на роутере)'], ['ok', 'Подтверждённые'], ['quiet', 'Гостевые и служебные сети']];
+  const row = r => { const role = roleOf(r.role); const live = findClient(data, r.mac);
+    return <div className="li" key={r.mac + r.t} style={{ opacity: r.decision === 'ok' ? .6 : 1 }}>
+      <KindIcon kind={r.random ? 'phone' : 'other'} size={32} round={9} />
+      <div className="grow" style={{ minWidth: 0 }}>
+        <div className="row" style={{ gap: 6 }}><b className="ellipsis" style={{ fontSize: 14 }}>{(live && live.client.name) || r.name || (r.random ? 'Телефон или ноутбук' : 'Без имени')}</b>
+          {role ? <span className="role-badge" style={{ background: role.color }}>{role.label}</span> : r.segment ? <span className="role-badge none">{r.segment}</span> : null}
+          {r.random && (!live || macChanges(live.client)) ? <span className="role-badge none" title="Частный (случайный) MAC-адрес — может меняться">частный MAC</span> : null}</div>
+        <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{[r.ip, r.mac, r.via && 'через ' + r.via].filter(Boolean).join(' · ')}</div>
+        <div className="dim3" style={{ fontSize: 11.5 }}>появилось {fmt.ago(r.t, data.now)}</div>
+        {live ? <PendingIp c={live.client} /> : null}</div>
+      <div className="col" style={{ gap: 6, alignItems: 'stretch' }}>
+        {r.decision === 'ask' ? <Btn size="sm" kind="primary" onClick={() => trust(r, true)}>{r.role === 'subscribers' ? 'Я в курсе' : 'Это моё'}</Btn> : null}
+        {r.decision === 'ok' ? <Btn size="sm" onClick={() => trust(r, false)}>Вернуть</Btn> : null}
+        {live && r.router ? <Btn size="sm" icon="settings" onClick={() => setEdit(r.mac)}>Настроить</Btn> : null}
+      </div></div>; };
+  return <>
+    <button type="button" className="card newdev-row" onClick={() => setOpen(true)}>
+      <div className="newdev-ic"><Icon name="plus" size={18} />{ask.length ? <span className="count">{ask.length}</span> : null}</div>
+      <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}>
+        <b style={{ fontSize: 14.5 }}>Новые в сети · за неделю: {list.length}</b>
+        <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{todoNets ? `отметьте сети (${todoNets}) — Rack Live поймёт, о чём спрашивать` : ask.length
+          ? `ждут решения ${ask.length}: ` + ask.slice(0, 3).map(r => r.name || (r.random ? 'телефон/ноутбук' : r.mac)).join(', ') + (ask.length > 3 ? '…' : '')
+          : list.length ? 'всё разобрано' : 'новых устройств не появлялось'}</div>
+      </div>
+      <Icon name="chevron" size={16} color="var(--text3)" />
+    </button>
+    {open ? <Modal title="Новые устройства в сети" wide onClose={() => setOpen(false)} icon={<Icon name="plus" size={20} color="var(--accent)" />}>
+      <NetworkRoles />
+      {!list.length ? <div className="dim3" style={{ fontSize: 13 }}>За неделю новых устройств не появлялось.</div>
+        : groups.map(([g, title]) => { const items = list.filter(r => r.decision === g); if (!items.length) return null;
+          const folded = g === 'quiet' && !quietOpen;
+          return <div key={g}><div className="card-title" style={{ margin: '6px 0 2px', cursor: g === 'quiet' ? 'pointer' : 'default' }} onClick={() => g === 'quiet' && setQuietOpen(!quietOpen)}>
+            {title} · {items.length}{g === 'quiet' ? (quietOpen ? ' ▴' : ' ▾') : ''}</div>
+            {folded ? null : <div className="list">{items.map(row)}</div>}</div>; })}
+      {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
+    </Modal> : null}
+  </>;
 }

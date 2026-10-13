@@ -1,18 +1,17 @@
 /* App shell */
 const TABS = [
-  { id: 'rack', label: 'Размещение', icon: 'rack' },
-  { id: 'map', label: 'Карта сети', icon: 'map' },
-  { id: 'plan', label: 'План', icon: 'home' },
+  { id: 'rack', label: 'Главная', icon: 'home' },          // widgets (92_dashboard.jsx); the id stays for old #rack links
+  { id: 'map', label: 'Карта', icon: 'map' },              // inside: «Карта сети» / «План» switch (#plan opens the plan)
   { id: 'devices', label: 'Устройства', icon: 'list' },
   { id: 'events', label: 'События', icon: 'bell' },
   { id: 'settings', label: 'Настройки', icon: 'settings', admin: true },
 ];
 /* one hint per tab (and a different one while editing) — shown above the page until dismissed */
 const TAB_HINTS = {
-  rack: ['Здесь шкафы, щитки и комнаты с оборудованием. Нажмите на устройство — откроется карточка: порты, графики, действия. ' +
-    'Чтобы добавить или переставить оборудование, включите «Редактирование» вверху (на телефоне — в меню «⋯»).',
-    'Перетаскивайте оборудование мышью или пальцем. «+ Шкаф» добавит ещё одно место: стойку, щиток или комнату. ' +
-    'Нажмите на юнит, чтобы переименовать его или привязать к устройству — тогда на нём появятся живые данные.'],
+  rack: ['Главная собрана из виджетов: шкаф, состояние сети, интернет, доступность… Нажмите на устройство — откроется карточка. ' +
+    'Чтобы переставить, растянуть или добавить виджеты (карту, план, Frank, заметку…), включите «Редактирование» вверху (на телефоне — в меню «⋯»).',
+    'Включите «Расстановка виджетов», чтобы двигать виджеты, менять их размер (кнопка в углу виджета), добавлять и убирать. ' +
+    'Пока расстановка выключена, редактируется содержимое: в шкафу двигается оборудование, «+ Место» добавит стойку, щиток или комнату.'],
   map: ['Карта строится сама по данным роутера и коммутатора: кто к какому порту подключён. Цвет линии — скорость: зелёный — 1 Гбит, ' +
     'жёлтый — 100 Мбит. Кнопка «Анализ» покажет слабые места сети: точки отказа, медленные кабели, ошибки.',
     'Перетаскивайте узлы, чтобы разложить карту по-своему — положение запоминается. Связь, которую Rack Live не видит сам ' +
@@ -53,7 +52,9 @@ function useTheme() {
 function App() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
-  const [tab, setTab] = useState(() => (location.hash.slice(1) || lsGet('rl_tab', 'rack')));
+  const [tab, setTabRaw] = useState(() => { const t = location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'plan' ? 'map' : t; });
+  const [mapView, setMapView] = useState(() => location.hash === '#plan' ? 'plan' : 'map');     // «Карта» opens on the network map
+  const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else setTabRaw(t); };
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
   const [editor, setEditor] = useState(() => new URLSearchParams(location.search).get('add') === '1' ? null : undefined);    // ?add=1 → «Новое устройство»
@@ -79,7 +80,11 @@ function App() {
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
   const scrollerRef = useRef(null);
-  useEffect(() => { if (APP_MODE) return; location.hash = tab; lsSet('rl_tab', tab); window.scrollTo(0, 0); }, [tab]);
+  useEffect(() => { if (APP_MODE) return; location.hash = tab === 'map' && mapView === 'plan' ? 'plan' : tab; lsSet('rl_tab', tab); window.scrollTo(0, 0); }, [tab, mapView]);
+  // «События»: the badge counts new alarming events since the tab was last opened (not the devices that are down right now)
+  const [evSeen, setEvSeen] = useState(() => +lsGet('rl_ev_seen', 0));
+  useEffect(() => { if (!data || evSeen) return; setEvSeen(data.now); lsSet('rl_ev_seen', String(data.now)); }, [data]);
+  useEffect(() => { if (tab === 'events' && data) { setEvSeen(data.now); lsSet('rl_ev_seen', String(data.now)); } }, [tab, data]);
   // deep link: ?device=<id>&tab=ports&port=9 opens the device sheet
   const deep = useRef(new URLSearchParams(location.search));
   useEffect(() => {
@@ -124,26 +129,28 @@ function App() {
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
   const stale = data.devices.length && (data.now - newest > Math.max(180, (data.settings.poll || 60) * 3));
-  const problems = data.devices.filter(d => ['offline', 'warning'].includes((d.state || {}).status)).length;
+  const problems = (data.events || []).filter(e => e.t > evSeen && ['offline', 'warning'].includes(e.level)).length;
+  const badge = problems > 99 ? '99+' : problems;
   const tabs = TABS.filter(t => !t.admin || admin);
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
+  const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur;          // what is shown: subtitle and hint follow it
   const subtitle = {
-    rack: `Шкафы, щитки и комнаты${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''} · ${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети`,
+    rack: `${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
     settings: 'Уведомления, Frank, приложения на телефон, доступ и резервные копии',
-  }[cur];
+  }[view];
 
   return <AppCtx.Provider value={ctx}>
     <div className="app-bg" />
     <header className="topbar">
       <div className="brand"><AppIcon size={34} radius={10} style={{ boxShadow: '0 4px 14px rgba(0,60,200,.25)' }} />
-        <div style={{ minWidth: 0 }}><div className="brand-title ellipsis">{data.settings.title}</div>
+        <div className="brand-text"><div className="brand-title ellipsis">{data.settings.title}</div>
           <div className={'live' + (stale ? ' stale' : '')}><i />{stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)}</div></div></div>
-      <nav className="tabs">{tabs.map(t => <button key={t.id} className={'tab' + (cur === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>
-        <Icon name={t.icon} size={15} />{t.label}{t.id === 'events' && problems ? <span className="count">{problems}</span> : null}</button>)}</nav>
+      <nav className="tabs">{tabs.map(t => <button key={t.id} className={'tab' + (cur === t.id ? ' on' : '')} title={t.label} onClick={() => setTab(t.id)}>
+        <Icon name={t.icon} size={15} /><span className="tab-label">{t.label}</span>{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
       <div className="grow" />
       <div className="hdr-tools hide-sm">
         {admin ? <Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
@@ -163,17 +170,19 @@ function App() {
         <div className="grow"><div className="page-title">{tabs.find(t => t.id === cur).label}</div><div className="page-sub" style={{ marginBottom: 0 }}>{subtitle}</div></div>
         {edit ? <span className="badge warning"><Icon name="edit" size={12} />Режим редактирования</span> : null}
       </div>
-      {TAB_HINTS[cur] ? (edit && TAB_HINTS[cur][1] ? <Hint key={cur + '-edit'} id={cur + '-edit'}>{TAB_HINTS[cur][1]}</Hint>
-        : <Hint key={cur} id={cur}>{TAB_HINTS[cur][0]}</Hint>) : null}
-      {cur === 'rack' ? <RackView /> : null}
-      {cur === 'map' ? <MapView /> : null}
-      {cur === 'plan' ? <PlanView /> : null}
+      {cur === 'map' ? <div className="view-switch"><Seg value={mapView} onChange={setMapView}
+        options={[{ value: 'map', label: 'Карта сети', icon: 'map' }, { value: 'plan', label: 'План', icon: 'plan' }]} /></div> : null}
+      {TAB_HINTS[view] ? (edit && TAB_HINTS[view][1] ? <Hint key={view + '-edit'} id={view + '-edit'}>{TAB_HINTS[view][1]}</Hint>
+        : <Hint key={view} id={view}>{TAB_HINTS[view][0]}</Hint>) : null}
+      {cur === 'rack' ? <Dashboard /> : null}
+      {view === 'map' ? <MapView /> : null}
+      {view === 'plan' ? <PlanView /> : null}
       {cur === 'devices' ? <DevicesView /> : null}
       {cur === 'events' ? <EventsView /> : null}
       {cur === 'settings' && admin ? <SettingsView /> : null}
     </main>
     <nav className="bottombar">{tabs.map(t => <button key={t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
-      <Icon name={t.icon} size={24} />{t.id === 'map' ? 'Карта' : t.label}{t.id === 'events' && problems ? <span className="count">{problems}</span> : null}</button>)}</nav>
+      <Icon name={t.icon} size={24} />{t.label}{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
     {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={() => setSheet(null)} /> : null}
     {editor !== undefined ? <DeviceEditor device={editor && editor.__preset ? null : editor} preset={editor && editor.__preset} onClose={() => setEditor(undefined)} /> : null}
     {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={() => setAi(null)} /> : null}

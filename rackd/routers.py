@@ -76,6 +76,44 @@ def probe(ip):
     return {'ok': False}
 
 
+QUICK_PORTS = (22, 23, 135, 445, 3389, 3493, 5000, 5001, 8006, 8123)
+TYPE_TEXT = {'nas': 'NAS', 'ha': 'Home Assistant', 'proxmox': 'Proxmox', 'server': 'Сервер (SSH)', 'switch': 'Коммутатор',
+             'pc': 'Компьютер с Windows', 'ups': 'ИБП', 'router': 'Роутер'}
+
+
+def classify(ip):
+    """Not a router by name: which open ports does it have → what Rack Live can watch on it (None = a phone / IoT, skip).
+    Quick TCP connects first, then the matching harmless fingerprint from detect.py."""
+    from . import detect
+    with concurrent.futures.ThreadPoolExecutor(len(QUICK_PORTS)) as pool:
+        opened = {p for p, ok in zip(QUICK_PORTS, pool.map(lambda p: detect._open(ip, p, .8), QUICK_PORTS)) if ok}
+    if not opened:
+        return None
+    tries = []
+    if opened & {5000, 5001}:
+        tries.append(('nas', detect.p_synology))
+    if 8123 in opened:
+        tries.append(('ha', detect.p_homeassistant))
+    if 8006 in opened:
+        tries.append(('proxmox', detect.p_proxmox))
+    if 3493 in opened:
+        tries.append(('ups', detect.p_nut))
+    if opened & {22, 23}:
+        tries += [('switch', detect.p_snmp), ('switch', detect.p_telnet), ('server', detect.p_ssh)]
+    if 3389 in opened or {135, 445} <= opened:
+        tries.append(('pc', detect.p_windows))
+    for typ, fn in tries:
+        try:
+            r = fn(ip)
+        except Exception:
+            r = None
+        if r:
+            if typ == 'switch' and r['driver'] not in ('tplink_jetstream', 'snmp'):
+                continue
+            return dict(r, type=typ)
+    return None
+
+
 class RouterScan:
     def __init__(self, app):
         self.app = app
@@ -118,13 +156,12 @@ class RouterScan:
                     continue
                 host = c.get('hostname') or ''
                 label = f"{c.get('name') or ''} {host}"
-                if NOT_ROUTER.search(label):
-                    continue
-                why = 'name' if NAME_RE.search(label) else 'mac' if mac[:8] in OUI else None
-                if not why:
-                    continue
+                why = None if NOT_ROUTER.search(label) else 'name' if NAME_RE.search(label) else 'mac' if mac[:8] in OUI else None
+                if not why and int(mac[:2], 16) & 2:
+                    continue              # random (private) MAC: a phone or a laptop on Wi-Fi — not a server
                 out[mac] = {'mac': mac, 'ip': c['ip'], 'name': c.get('name') or host or mac, 'hostname': host, 'segment': c.get('segment') or '',
-                            'via': names.get(did), 'port': c.get('port'), 'vendor': vendor_of(c.get('name'), host) or OUI.get(mac[:8]), 'why': why}
+                            'via': names.get(did), 'port': c.get('port'), 'vendor': vendor_of(c.get('name'), host) or OUI.get(mac[:8]), 'why': why,
+                            'type': 'router' if why else None}
         return out
 
     def run(self):
@@ -135,16 +172,25 @@ class RouterScan:
         def job():
             try:
                 cand = self.candidates()
+                look = lambda r: probe(r['ip']) if r['type'] == 'router' else classify(r['ip'])
                 with concurrent.futures.ThreadPoolExecutor(8) as pool:
-                    webs = dict(zip(cand, pool.map(lambda r: probe(r['ip']), cand.values())))
+                    webs = dict(zip(cand, pool.map(look, cand.values())))
                 now = int(time.time())
                 with self.lock:
                     for mac, r in cand.items():
                         w = webs.get(mac) or {}
                         old = self.found.get(mac) or {}
+                        if r['type'] != 'router':           # a server / NAS / switch / PC: keep only what was recognised
+                            if not w:
+                                if old.get('type') not in (None, 'router'):
+                                    old['checked'] = now
+                                continue
+                            self.found[mac] = dict(r, type=w['type'], driver=w['driver'], what=w['what'], hostPreset=w.get('host'),
+                                                   webUrl=w.get('webUrl'), mode=w.get('mode'), first=old.get('first') or now, checked=now)
+                            continue
                         # the name / MAC are surer than the page (Cudy firmware is OpenWrt inside); a Keenetic login realm is surest of all
                         vendor = 'Keenetic' if w.get('keenetic') else r['vendor'] or w.get('vendor')
-                        self.found[mac] = dict(r, web=w, vendor=vendor, model=w.get('model') or old.get('model'),
+                        self.found[mac] = dict(r, type='router', web=w, vendor=vendor, model=w.get('model') or old.get('model'),
                                                first=old.get('first') or now, checked=now)
                     for mac in list(self.found):          # gone for a month → forget
                         if mac not in cand and now - self.found[mac].get('checked', 0) > 30 * 86400:

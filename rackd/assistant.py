@@ -105,7 +105,7 @@ TOOLS = [
 
 LABEL = {'network_overview': 'обзор сети', 'device_details': 'устройство', 'find_clients': 'клиенты', 'network_health': 'здоровье сети',
          'security_findings': 'безопасность', 'availability': 'доступность', 'events': 'журнал', 'device_history': 'история', 'speed_tests': 'замеры скорости',
-         'config_changes': 'конфигурация', 'topology': 'топология', 'propose_action': 'готовлю действие'}
+         'config_changes': 'конфигурация', 'topology': 'топология', 'propose_action': 'готовлю действие', 'client_settings': 'клиент'}
 
 # the only way Frank can change anything: a proposal card the admin has to press
 ACTION_TOOL = ('propose_action', 'Предложить пользователю действие: появится карточка с кнопкой «Выполнить», выполнится только после нажатия. '
@@ -117,6 +117,25 @@ ACTION_TOOL = ('propose_action', 'Предложить пользователю 
                 'finding': ('string', 'id замечания безопасности — вместо device/action'),
                 'reason': ('string', 'коротко: зачем это сделать')})
 MAX_PROPOSALS = 3
+CLIENT_TOOL = ('client_settings', 'Настроить клиента (телефон, ноутбук, ТВ…) на роутере: имя = регистрация «своим», постоянный IP, ограничение скорости '
+                                  '(Мбит/с, 0 — снять; только зарегистрированным), политика (id из device_details → policies роутера, «» — по умолчанию, '
+                                  '«deny» — запретить интернет). Найди клиента через find_clients. Частный (случайный) MAC регистрировать бессмысленно — '
+                                  'предупреди. Новый IP устройство получит только после переподключения. Без полного доступа или без дословной просьбы — карточка с кнопкой.',
+               {'client': ('string', 'MAC, IP или имя клиента'), 'name': ('string', 'новое имя (необязательно)'), 'ip': ('string', 'постоянный IP; «» — снять'),
+                'limit': ('number', 'Мбит/с; 0 — без ограничения'), 'policy': ('string', 'id политики, «» или «deny»'), 'request': ('string', 'дословная цитата просьбы пользователя')})
+
+
+def find_client(app, ref):
+    ref = str(ref or '').strip().lower()
+    for d in app.store.cfg['devices']:
+        for c in (app.states.get(d['id']) or {}).get('clients') or []:
+            if ref and ref in {str(c.get(k) or '').lower() for k in ('mac', 'ip', 'name', 'hostname')}:
+                return d, c
+    for d in app.store.cfg['devices']:
+        for c in (app.states.get(d['id']) or {}).get('clients') or []:
+            if ref and ref in str(c.get('name') or '').lower():
+                return d, c
+    return None, None
 
 # ───────── full access (cfg.ai.admin): the same rules Claude Code works under ─────────
 # look around freely · change what the user asked for · dangerous → a confirmation card · destructive → never
@@ -347,7 +366,8 @@ def run_tool(app, name, args):
                'summary': st.get('summary'), 'metrics': st.get('metrics'), 'ports': [_port(p) for p in st.get('ports') or []],
                'children': st.get('children'), 'storage': st.get('storage'), 'services': (st.get('services') or [])[:40],
                'sections': st.get('sections'), 'ups': st.get('ups'), 'clientsCount': len(st.get('clients') or []),
-               'entities': st.get('entities'), 'actions': _device_actions(d, st)}
+               'entities': st.get('entities'), 'actions': _device_actions(d, st),
+               'policies': st.get('policies'), 'networks': st.get('networks'), 'netroles': {k.split(':', 1)[1]: v for k, v in (cfg.get('netroles') or {}).items() if k.startswith(d['id'] + ':')}}
         drv = REGISTRY.get(d.get('driver'))
         if getattr(drv, 'command', None) and (cfg.get('ai') or {}).get('admin'):
             out['commandLine'] = getattr(drv, 'shell', 'командная строка')
@@ -478,7 +498,7 @@ def _post(c, url, payload, headers):
 
 
 def _tool_defs(actions, admin=False):
-    return TOOLS + ([ACTION_TOOL] if actions else []) + (ADMIN_TOOLS if actions and admin else [])
+    return TOOLS + ([ACTION_TOOL, CLIENT_TOOL] if actions else []) + (ADMIN_TOOLS if actions and admin else [])
 
 
 def _anthropic_tools(actions=False, admin=False):
@@ -542,6 +562,39 @@ def ask(app, c, chat, progress=lambda s, t=None: None):
 
     def call_tool(name, args):
         d = _find_device(app, args.get('device')) if args.get('device') else None
+        if name == 'client_settings':
+            from .drivers import REGISTRY
+            if not acts:
+                return err('действия выключены в настройках')
+            rd, cl = find_client(app, args.get('client'))
+            if not cl:
+                return err('клиент не найден — посмотри find_clients')
+            if not getattr(REGISTRY.get(rd.get('driver')), 'client', None):
+                return err(f"роутер «{rd.get('name')}» не умеет настраивать клиентов")
+            mg = (app.states.get(rd['id']) or {}).get('clientMgmt')
+            if mg and not mg.get('ok'):
+                return err(f"на роутере «{rd.get('name')}» настройки клиентов отключены: {mg.get('reason')}. Объясни пользователю, что настраивать нужно в самом роутере")
+            want = {k: args[k] for k in ('name', 'ip', 'limit', 'policy') if k in args and args[k] is not None}
+            if not want:
+                return err('не указано, что поменять')
+            label = cl.get('name') or cl.get('mac')
+            what = ', '.join(f"{ {'name': 'имя', 'ip': 'IP', 'limit': 'скорость', 'policy': 'политика'}[k]} → {v if v not in ('', None) else 'по умолчанию'}" for k, v in want.items())
+            note = ' Внимание: у устройства частный (случайный) MAC — настройки потеряются, когда он сменится.' if int(cl['mac'][:2], 16) & 2 else ''
+            if admin and quoted(args.get('request'), users):
+                progress(f'Настраиваю {label}…', used)
+                try:
+                    done = REGISTRY[rd['driver']].client(rd, cl['mac'], want)
+                    app.store.add_event(rd['id'], rd.get('name'), 'info', f"Frank: клиент {label}: " + ', '.join(done))
+                    threading.Thread(target=app.poll_device, args=(rd,), daemon=True).start()
+                    ops.append({'device': rd.get('name'), 'label': f'Клиент {label}: ' + ', '.join(done), 'ok': True, 'out': ''})
+                    used.append('настроил клиента: ' + label)
+                    return json.dumps({'done': done, 'note': ('Новый IP — после переподключения устройства.' if 'ip' in want else '') + note}, ensure_ascii=False)
+                except Exception as e:
+                    return err(str(e))
+            p = {'id': 'p' + secrets.token_hex(4), 'device': rd['id'], 'deviceName': rd.get('name'), 'action': 'client', 'params': {},
+                 'client': {'mac': cl['mac'], 'want': want}, 'label': f'Клиент {label}: {what}', 'text': note.strip(), 'reason': str(args.get('reason') or '')[:300],
+                 'status': 'pending'}
+            return card(p, 'настройка клиента — по кнопке (полный доступ выключен или нет дословной просьбы)')
         if name in ('device_command', 'run_action'):
             if not admin:
                 return err('полный доступ выключен в настройках — используй propose_action')
@@ -922,7 +975,12 @@ class Assistant:
         try:
             if not d:
                 raise AiError('устройство удалено из Rack Live')
-            if p.get('command'):                      # a command Frank wanted to run (full access) — confirmed by this press
+            if p.get('client'):                       # client settings on the router — confirmed by this press
+                from .drivers import REGISTRY
+                done = REGISTRY[d['driver']].client(d, p['client']['mac'], p['client']['want'])
+                threading.Thread(target=self.app.poll_device, args=(d,), daemon=True).start()
+                p.update(status='done', result=', '.join(done) or 'Готово')
+            elif p.get('command'):                    # a command Frank wanted to run (full access) — confirmed by this press
                 if gate(p['command']) == 'deny':
                     raise AiError('эта команда запрещена')
                 out = run_command(self.app, d, p['command'])

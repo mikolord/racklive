@@ -137,7 +137,32 @@ def p_http(host):
         return {'driver': 'http', 'score': 15, 'what': f"Веб-сайт / веб-интерфейс{': ' + title.group(1).strip() if title else ''}", 'host': url}
 
 
-PROBES = [p_keenetic, p_openwrt, p_synology, p_homeassistant, p_snmp, p_telnet, p_ssh, p_nut, p_http]
+def p_proxmox(host):
+    try:
+        code, _, body = _http(f'https://{host}:8006/')
+    except Exception:
+        return None
+    if 'proxmox' in body.lower():
+        return {'driver': 'ssh', 'score': 92, 'what': 'Proxmox VE — следить по SSH (CPU, память, диски, контейнеры); веб-панель на :8006',
+                'kind': 'server', 'webUrl': f'https://{host}:8006'}
+
+
+def _open(host, port, timeout=1.2):
+    try:
+        with socket.create_connection((host, port), timeout):
+            return True
+    except OSError:
+        return False
+
+
+def p_windows(host):
+    rdp, smb = _open(host, 3389), _open(host, 445)
+    if rdp or (smb and _open(host, 135)):
+        return {'driver': 'ping', 'score': 30, 'kind': 'pc',
+                'what': 'Компьютер с Windows (' + ', '.join(x for x, on in (('удалённый рабочий стол', rdp), ('общие папки', smb)) if on) + ') — следить за доступностью'}
+
+
+PROBES = [p_keenetic, p_openwrt, p_synology, p_homeassistant, p_proxmox, p_snmp, p_telnet, p_ssh, p_nut, p_windows, p_http]
 
 
 def _bases(hostport, url):

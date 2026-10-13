@@ -142,8 +142,7 @@ function RackView() {
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
   const poe = allPorts.reduce((a, p) => a + (p.poeW || 0), 0);
 
-  return <div className="rack-layout">
-    <div>
+  const left = <div>
       {data.racks.length > 1 || edit ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
         {data.racks.map(r => <button key={r.id} className={'chip' + (r.id === rackId ? ' on' : '')} onClick={() => setRackId(r.id)}>
           <Icon name={placeKind(r).icon} size={13} />{r.name}</button>)}
@@ -186,32 +185,8 @@ function RackView() {
             <option key={n} value={n} disabled={n < minU}>{n}U{n < minU ? ' — мало' : ''}</option>)}</select>
       </div> : <div className="dim" style={{ fontSize: 12.5, marginTop: 10, textAlign: 'center' }}>Нажмите на устройство, чтобы открыть подробности</div>}
       </>}
-    </div>
-
-    <div className="side-stack">
-      <div className="stats">
-        <Stat k="Устройства" v={`${devices.filter(d => d.state && d.state.status === 'online').length}/${devices.length}`} />
-        <Stat k="Проблемы" v={problems.length} level={problems.length ? 'warn' : ''} />
-        <Stat k="Клиенты" v={clients} />
-        <Stat k="PoE" v={poe ? poe.toFixed(1) : 0} unit="Вт" />
-      </div>
-      {problems.length ? <Card title="Требуют внимания"><div className="list">{problems.map(d => <div className="li" key={d.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
-        <KindIcon kind={d.kind} size={34} /><div className="grow"><div style={{ fontWeight: 600 }}>{d.name}</div>
-          <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{d.state.error || (d.state.metrics || []).filter(m => m.level).map(m => `${m.label}: ${m.value}`).join(', ') || STATUS_TEXT[d.state.status]}</div></div>
-        <StatusBadge status={d.state.status} /></div>)}</div></Card> : <Card><div className="row"><span className="dot online" /><b>Всё работает</b><span className="dim">— все устройства на связи</span></div></Card>}
-      <HealthCard />
-      <SecurityCard />
-      <InternetCard />
-      <UptimeCard />
-      <Card title={`Устройства · ${rack.name}`}><div className="list">{rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => (a.uStart || 0) - (b.uStart || 0)).map(u => {
-        const d = devById[u.deviceId]; return <div className="li" key={u.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
-          <KindIcon kind={d.kind} size={34} /><div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{d.name}</span>{rack.kind === 'rack' || !rack.kind ? <span className="dim3 mono" style={{ fontSize: 11 }}>U{u.uStart}</span> : null}</div>
-            <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{deviceLine(d)}</div></div><Icon name="chevron" size={16} color="var(--text3)" /></div>;
-      })}
-        {!rack.units.filter(u => u.deviceId && devById[u.deviceId]).length ? <div className="empty" style={{ fontSize: 13 }}>Пока нет связанных устройств</div> : null}</div></Card>
-      <EventsList events={data.events.slice(0, 6)} compact />
-    </div>
-
+    </div>;
+  const modals = <>
     {editing ? <UnitEditor unit={editing} rack={rack} onClose={() => setEditing(null)} fits={fits} /> : null}
     {rackSettings ? <RackSettings rack={rackSettings} canDelete={data.racks.length > 1} onClose={() => setRackSettings(null)}
       onSelect={setRackId} /> : null}
@@ -222,7 +197,9 @@ function RackView() {
       {info.notes ? <div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }} className="card pad">{info.notes}</div> : null}
       {info.webUrl ? <a className="btn" href={info.webUrl} target="_blank" rel="noreferrer">Открыть веб-интерфейс</a> : null}
     </Modal> : null}
-  </div>;
+  </>;
+  // «Главная»: the rack is one widget; the cards around it are widgets of their own
+  return <>{left}{modals}</>;
 }
 
 /* Box / room: devices as free tiles you can drag around (edit mode), snapped to a grid */

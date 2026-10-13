@@ -120,8 +120,16 @@ class Keenetic(Driver):
         get, cli = self._session(cfg)
         rc = cli(['show running-config'])[0]['parse']['message']
         pcfg, cur, cur_b, segs, seg_vlan = {}, None, None, {}, {}
+        seg_net, seg_name, statics, policies, cur_pol = {}, {}, {}, {}, None
         for l in rc:
+            m = re.match(r'ip dhcp host ([0-9a-f:]{17}) (\d+\.\d+\.\d+\.\d+)$', l)
+            if m:
+                statics[m.group(1)] = m.group(2)
             if not l.startswith(' '):
+                mp = re.match(r'ip policy (\S+)$', l)
+                cur_pol = mp.group(1) if mp else None
+                if cur_pol:
+                    policies[cur_pol] = cur_pol
                 m = re.match(r'interface (X?GigabitEthernet\d/\d+)$', l)
                 cur = m.group(1) if m else None
                 mb = re.match(r'interface (Bridge\d+)$', l)
@@ -139,7 +147,15 @@ class Keenetic(Driver):
                     pcfg[cur]['access'] = int(s.split()[-1])
                 elif s.startswith('switchport trunk vlan'):
                     pcfg[cur]['trunk'].append(int(s.split()[-1]))
+            elif cur_pol and s.startswith('description'):
+                d = s.split(' ', 1)[1].strip('"')
+                policies[cur_pol] = codecs.escape_decode(d.encode())[0].decode('utf-8', 'ignore') if '\\x' in d else d
             elif cur_b:
+                ma = re.match(r'ip address (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)$', s)
+                if ma:
+                    seg_net[cur_b] = (ma.group(1), ma.group(2))
+                if s.startswith('rename '):
+                    seg_name[cur_b] = s.split(' ', 1)[1].strip('"')
                 if s.startswith('description'):
                     d = s.split(' ', 1)[1].strip('"')
                     segs[cur_b] = codecs.escape_decode(d.encode())[0].decode('utf-8', 'ignore') if '\\x' in d else d
@@ -198,8 +214,13 @@ class Keenetic(Driver):
             seg = iface.get('description') or iface.get('id') if isinstance(iface, dict) else iface
             mws_i = h.get('mws') or {}
             ap = mws_i.get('cid') or ('self' if h.get('ap') or h.get('ssid') else None)
+            ts = h.get('traffic-shape') or {}
             clients.append({'mac': h.get('mac'), 'ip': h.get('ip'), 'name': h.get('name') or h.get('hostname') or '', 'hostname': h.get('hostname') or '',
-                            'segment': seg, 'ap': ap, 'rssi': mws_i.get('rssi') or h.get('rssi'), 'rate': mws_i.get('txrate') or h.get('txrate'),
+                            'segment': seg, 'segId': iface.get('id') if isinstance(iface, dict) else None, 'registered': bool(h.get('registered')),
+                            'access': h.get('access') or 'permit', 'policy': h.get('policy') or '', 'staticIp': statics.get((h.get('mac') or '').lower()),
+                            'limit': round(max(ts.get('rx') or 0, ts.get('tx') or 0) / 1000) or 0, 'connected': h.get('uptime'),
+                            'firstSeen': h.get('first-seen'),          # seconds since the router first saw this MAC
+                            'ap': ap, 'rssi': mws_i.get('rssi') or h.get('rssi'), 'rate': mws_i.get('txrate') or h.get('txrate'),
                             'band': '5 ГГц' if 'WifiMaster1' in (mws_i.get('ap') or h.get('ap') or '') else ('2.4 ГГц' if ap else ''),
                             'port': h.get('port'), 'online': True, 'kind': guess_kind(h.get('name') or h.get('hostname')),
                             'rx': h.get('rxbytes'), 'tx': h.get('txbytes')})
@@ -222,7 +243,89 @@ class Keenetic(Driver):
                 'summary': {'model': ver.get('model'), 'fw': ver.get('title'), 'uptime': uptime_seconds(sysi.get('uptime')),
                             'cpu': sysi.get('cpuload'), 'mem': round(int(mem[0]) * 100 / max(1, int(mem[1]))),
                             'ip': cfg['host'], 'mac': lanmac},
-                'ports': ports, 'clients': clients, 'children': children, 'sections': sections, 'vpn': self._vpn(get, rc)}
+                'ports': ports, 'clients': clients, 'children': children, 'sections': sections, 'vpn': self._vpn(get, rc),
+                # the router's networks (for «which network is which») and its connection policies (for a client's «policy»)
+                'networks': [{'id': b, 'name': segs.get(b) or seg_name.get(b) or b, 'alias': seg_name.get(b, ''), 'vlan': seg_vlan.get(b),
+                              'ip': seg_net[b][0], 'mask': seg_net[b][1]} for b in sorted(seg_net, key=lambda x: int(x[6:] or 0))],
+                'policies': [{'id': k, 'name': v} for k, v in policies.items()]}
+
+    # ───────── one client: name (registration), static IP, speed limit, policy / block — all on the router ─────────
+    def client(self, cfg, mac, want):
+        """want: {name, ip ('' = no static), limit (Mbit/s, 0 = none), policy ('' default | PolicyN | 'deny'), forget: bool}
+        → list of what was done. Syntax checked on a real Keenetic 5.1 (known host / ip dhcp host / ip traffic-shape host / ip hotspot host)."""
+        mac = str(mac or '').lower()
+        if not re.match(r'^([0-9a-f]{2}:){5}[0-9a-f]{2}$', mac):
+            raise DriverError('неверный MAC-адрес')
+        get, cli = self._session(cfg)
+        host = next((h for h in get('/rci/show/ip/hotspot').get('host', []) if (h.get('mac') or '').lower() == mac), {}) or {}
+        cmds, done = [], []
+        if want.get('forget'):
+            cmds += [f'no ip traffic-shape host {mac}', f'no ip hotspot host {mac} policy', f'ip hotspot host {mac} permit',
+                     f'no ip dhcp host {mac}', f'no known host {mac}']
+            done.append('регистрация снята, настройки клиента удалены')
+        else:
+            if 'name' in want:
+                name = re.sub(r'["\\\n\r]', '', str(want.get('name') or '')).strip()[:64]
+                if not name:
+                    raise DriverError('укажите имя устройства')
+                cmds.append(f'known host "{name}" {mac}')
+                done.append(f'имя «{name}»' + ('' if host.get('registered') else ', устройство зарегистрировано'))
+            registered = host.get('registered') or 'name' in want
+            if 'ip' in want:
+                ip = str(want.get('ip') or '').strip()
+                if ip:
+                    if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
+                        raise DriverError('неверный IP-адрес')
+                    # only an address of the client's own network: not another subnet, not the router, not .0 / .255
+                    seg = (host.get('interface') or {}).get('id') if isinstance(host.get('interface'), dict) else None
+                    bi = get('/rci/show/interface/' + seg) if seg else {}
+                    if bi.get('address') and bi.get('mask'):
+                        import ipaddress
+                        net = ipaddress.ip_network(f"{bi['address']}/{bi['mask']}", strict=False)
+                        a = ipaddress.ip_address(ip)
+                        if a not in net:
+                            raise DriverError(f'адрес {ip} не из сети этого устройства ({net}) — укажите адрес вида {str(net.network_address)[:-1]}…')
+                        if a in (net.network_address, net.broadcast_address) or ip == bi['address']:
+                            raise DriverError(f'{ip} — служебный адрес сети или адрес роутера, выберите другой')
+                    busy = next((h for h in get('/rci/show/ip/hotspot').get('host', []) if h.get('ip') == ip and (h.get('mac') or '').lower() != mac), None)
+                    if busy:
+                        raise DriverError(f'адрес {ip} уже занят ({busy.get("name") or busy.get("mac")})')
+                    cmds.append(f'ip dhcp host {mac} {ip}')
+                    done.append(f'постоянный адрес {ip}')
+                else:
+                    cmds.append(f'no ip dhcp host {mac}')
+                    done.append('постоянный адрес снят')
+            if 'limit' in want:
+                mbit = float(want.get('limit') or 0)
+                if mbit > 0:
+                    if not registered:
+                        raise DriverError('ограничить скорость можно только зарегистрированному устройству — задайте ему имя')
+                    cmds.append(f'ip traffic-shape host {mac} rate {int(mbit * 1024)}')
+                    done.append(f'скорость до {mbit:g} Мбит/с')
+                else:
+                    cmds.append(f'no ip traffic-shape host {mac}')
+                    done.append('без ограничения скорости')
+            if 'policy' in want:
+                pol = str(want.get('policy') or '')
+                if pol == 'deny':
+                    cmds += [f'ip hotspot host {mac} deny']
+                    done.append('доступ в интернет запрещён')
+                elif pol:
+                    if not re.match(r'^[\w-]{1,32}$', pol):
+                        raise DriverError('неверная политика')
+                    cmds += [f'ip hotspot host {mac} permit', f'ip hotspot host {mac} policy {pol}']
+                    done.append(f'политика {pol}')
+                else:
+                    cmds += [f'ip hotspot host {mac} permit', f'no ip hotspot host {mac} policy']
+                    done.append('политика по умолчанию')
+        if not cmds:
+            return []
+        res = cli(cmds + ['system configuration save'])
+        for c, r in zip(cmds, res):
+            for st in ((r or {}).get('parse') or {}).get('status') or []:
+                if st.get('status') == 'error' and 'no rate limit exists' not in str(st.get('message')) and 'not applicable' not in str(st.get('message')):
+                    raise DriverError(f'роутер не принял «{c}»: {st.get("message")}')
+        return done
 
     shell = 'CLI Keenetic (как в веб-CLI): show …, interface …, ip …; несколько команд — каждая с новой строки; сохранить: system configuration save'
 

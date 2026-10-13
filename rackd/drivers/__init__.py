@@ -46,6 +46,7 @@ class Driver:
                 'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden,
                 'plugins': callable(getattr(cls, 'plugins', None)),      # driver has a «Плагины» tab (see rackd/plugins.py)
                 'backup': callable(getattr(cls, 'backup', None)),        # config versions (rackd/backups.py)
+                'clientMgmt': callable(getattr(cls, 'client', None)),    # name / static IP / speed / policy of a client on the router
                 'inetTest': callable(getattr(cls, 'inet_test', None))}   # internet speed through it (rackd/inet.py)
 
 

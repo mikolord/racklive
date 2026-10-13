@@ -1,37 +1,61 @@
 /* Devices list and the add / edit wizard */
+const DEV_FILTERS = [['all', 'Все'], ['problems', 'С проблемами'], ['local', 'Локальные'], ['remote', 'Удалённые']];
+const DEV_SORTS = [['group', 'По площадкам'], ['name', 'По имени'], ['status', 'Сначала проблемы']];
 function DevicesView() {
   const { data, admin, edit, openDevice, openEditor } = useApp();
-  const [flt, setFlt] = useState('all'); const [q, setQ] = useState('');
+  const [flt, setFlt] = useState(() => lsGet('rl_dev_flt', 'all')); const [sort, setSort] = useState(() => lsGet('rl_dev_sort', 'group'));
+  const [q, setQ] = useState(''); const [find, setFind] = useState(false); const [menu, setMenu] = useState(false);
+  useEffect(() => { lsSet('rl_dev_flt', flt); lsSet('rl_dev_sort', sort); }, [flt, sort]);
+  useEffect(() => { if (!menu) return; const close = e => { if (!e.target.closest('.sort-menu, .sort-btn')) setMenu(false); };
+    document.addEventListener('pointerdown', close); return () => document.removeEventListener('pointerdown', close); }, [menu]);
   const drvTitle = id => (data.drivers.find(d => d.id === id) || {}).title || id;
+  const bad = d => ['offline', 'warning'].includes((d.state || {}).status);
   const list = data.devices.filter(d => {
-    const s = (d.state || {}).status;
-    if (flt === 'problems' && !['offline', 'warning'].includes(s)) return false;
+    if (flt === 'problems' && !bad(d)) return false;
     if (flt === 'remote' && d.location !== 'remote') return false;
     if (flt === 'local' && d.location === 'remote') return false;
     return !q || [d.name, d.host, (d.state && d.state.summary || {}).ip, d.site].join(' ').toLowerCase().includes(q.toLowerCase());
-  });
-  const sites = [...new Set(data.devices.map(d => d.site).filter(Boolean))];
-  const counts = { all: data.devices.length, problems: data.devices.filter(d => ['offline', 'warning'].includes((d.state || {}).status)).length,
+  }).sort((a, b) => sort === 'name' ? (a.name || '').localeCompare(b.name || '') : sort === 'status' ? bad(b) - bad(a) || (a.name || '').localeCompare(b.name || '') : 0);
+  const sites = sort === 'group' ? [...new Set(data.devices.map(d => d.site).filter(Boolean))] : [];
+  const counts = { all: data.devices.length, problems: data.devices.filter(bad).length,
     local: data.devices.filter(d => d.location !== 'remote').length, remote: data.devices.filter(d => d.location === 'remote').length };
-  const [showNew, setShowNew] = useState(false);
   const routers = ((data.routerScan || {}).list || []).filter(r => !r.dismissed);
   const [showRouters, setShowRouters] = useState(() => new URLSearchParams(location.search).get('routers') === '1');
+  const changed = flt !== 'all' || sort !== 'group';
   return <>
-    <div className="row wrap" style={{ marginBottom: 14 }}>
-      {data.newDevices ? <button className={'chip' + (showNew ? ' on' : '')} onClick={() => setShowNew(!showNew)}><Icon name="plus" size={13} />Новые в сети · {data.newDevices.length}</button> : null}
-      {routers.length ? <button className={'chip' + (showRouters ? ' on' : '')} onClick={() => setShowRouters(!showRouters)}><Icon name="router" size={13} />Роутеры в сети · {routers.length}</button> : null}
-      {[['all', 'Все'], ['problems', 'Проблемы'], ['local', 'Локальные'], ['remote', 'Удалённые']].map(([k, l]) =>
-        <button key={k} className={'chip' + (flt === k ? ' on' : '')} onClick={() => setFlt(k)}>{l} · {counts[k]}</button>)}
+    <div className="dev-tools">
+      {find || q ? <div className="dev-find"><SearchBox value={q} onChange={setQ} placeholder="Имя, адрес, площадка" autoFocus />
+        <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFind(false); }} /></div>
+        : <button type="button" className="round-btn" title="Найти устройство" onClick={() => setFind(true)}><Icon name="search" size={18} /></button>}
+      <div style={{ position: 'relative' }}>
+        <button type="button" className={'round-btn sort-btn' + (changed ? ' on' : '')} title="Фильтр и сортировка" onClick={() => setMenu(!menu)}><Icon name="sort" size={18} /></button>
+        {menu ? <div className="sort-menu">
+          <div className="sort-head">Показать</div>
+          {DEV_FILTERS.map(([k, l]) => <button key={k} type="button" className="sort-opt" onClick={() => { setFlt(k); setMenu(false); }}>
+            <span className="sort-check">{flt === k ? <Icon name="check" size={15} stroke={2.6} /> : null}</span><span className="grow">{l}</span><span className="dim3">{counts[k]}</span></button>)}
+          <div className="sort-head">Сортировать</div>
+          {DEV_SORTS.map(([k, l]) => <button key={k} type="button" className="sort-opt" onClick={() => { setSort(k); setMenu(false); }}>
+            <span className="sort-check">{sort === k ? <Icon name="check" size={15} stroke={2.6} /> : null}</span><span className="grow">{l}</span></button>)}
+        </div> : null}
+      </div>
+      {changed ? <span className="dim" style={{ fontSize: 13 }}>{DEV_FILTERS.find(x => x[0] === flt)[1]}{sort !== 'group' ? ' · ' + DEV_SORTS.find(x => x[0] === sort)[1].toLowerCase() : ''}</span> : null}
       <div className="grow" />
-      <div style={{ width: 240 }}><SearchBox value={q} onChange={setQ} /></div>
       {admin ? <Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить</Btn> : null}
     </div>
     {!data.devices.length ? <Card><div className="empty" style={{ padding: 50 }}>
       <div style={{ fontSize: 40, marginBottom: 10 }}>🛰️</div><div style={{ fontSize: 17, fontWeight: 600, color: 'var(--text)' }}>Пока нет ни одного устройства</div>
       <div style={{ margin: '6px 0 16px' }}>Добавьте роутер, коммутатор, NAS или любой сервер — данные начнут собираться автоматически.</div>
       {admin ? <Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить устройство</Btn> : null}</div></Card> : null}
-    {data.newDevices && (showNew || data.newDevices.some(r => !r.trusted)) ? <div style={{ marginBottom: 20 }}><NewDevicesCard /></div> : null}
-    {admin && data.routerScan && (showRouters || routers.some(r => !r.seen)) ? <div style={{ marginBottom: 20 }}><RoutersCard /></div> : null}
+    {data.newDevices ? <div style={{ marginBottom: 10 }}><NewDevicesCard /></div> : null}
+    {admin && data.routerScan && routers.length ? <div style={{ marginBottom: 14 }}>
+      <button type="button" className="card newdev-row" onClick={() => setShowRouters(true)}>
+        <div className="newdev-ic"><Icon name="search" size={18} /></div>
+        <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b style={{ fontSize: 14.5 }}>Найдено в сети: {routers.length}</b>
+          <div className="dim ellipsis" style={{ fontSize: 12.5 }}>можно добавить в Rack Live: {routers.slice(0, 3).map(r => r.name).join(', ')}{routers.length > 3 ? '…' : ''}</div></div>
+        <Icon name="chevron" size={16} color="var(--text3)" /></button>
+      {showRouters ? <Modal title="Найдено в сети" wide onClose={() => setShowRouters(false)} icon={<Icon name="search" size={20} color="var(--accent)" />}><RoutersCard /></Modal> : null}
+    </div> : null}
+    {!list.length && data.devices.length ? <div className="empty">Ничего не найдено{flt !== 'all' ? ' — фильтр «' + DEV_FILTERS.find(x => x[0] === flt)[1] + '»' : ''}</div> : null}
     {(sites.length ? [...sites, ''] : ['']).map(site => {
       const items = list.filter(d => (d.site || '') === site); if (!items.length) return null;
       return <div key={site || '_'} style={{ marginBottom: 20 }}>

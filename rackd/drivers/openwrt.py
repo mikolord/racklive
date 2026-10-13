@@ -1,9 +1,26 @@
 """OpenWrt via ubus JSON-RPC (uhttpd-mod-ubus / LuCI); plugins (Forkop, Podkop, modem drivers) over SSH."""
 import re
+import time
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
 from .. import plugins
 from ..util import DriverError, http_json
+
+
+# captive portals and the like manage clients themselves: with any of these on the router, Rack Live does not touch clients
+SPECIAL = {'opennds': 'captive-портал OpenNDS', 'nodogsplash': 'captive-портал Nodogsplash', 'chilli': 'CoovaChilli (hotspot)',
+           'coova-chilli': 'CoovaChilli (hotspot)', 'wifidog': 'WiFiDog (hotspot)', 'uspot': 'uspot (captive-портал)'}
+SPECIAL_SCRIPT = r"""for s in opennds nodogsplash chilli coova-chilli wifidog uspot; do [ -x /etc/init.d/$s ] && echo "@@special $s"; done
+[ -x /etc/init.d/dnsmasq ] || echo "@@special nodnsmasq"
+"""
+
+
+def _in_net(ip, n):
+    import ipaddress
+    try:
+        return ipaddress.ip_address(ip) in ipaddress.ip_network(f"{n['ip']}/{n['mask']}", strict=False)
+    except (ValueError, TypeError, KeyError):
+        return False
 
 
 class OpenWrt(Driver):
@@ -39,25 +56,209 @@ class OpenWrt(Driver):
         leases = (call('luci-rpc', 'getDHCPLeases') or {}).get('dhcp_leases', [])
         mem = info.get('memory', {})
         ip = lambda i: ', '.join(a['address'] for a in i.get('ipv4-address', [])) or '—'
-        ports = []
-        for name, d in sorted(dev.items()):
-            if '.' in name or not (name.startswith('eth') or name.startswith('lan') or name.startswith('wan')):
-                continue
-            sp = str(d.get('speed') or '')
-            ports.append({'n': len(ports) + 1, 'name': name, 'kind': 'wan' if name.startswith('wan') else 'rj45', 'link': bool(d.get('carrier')),
-                          'speed': int(''.join(c for c in sp if c.isdigit()) or 0) if d.get('carrier') else 0,
-                          'label': '', 'vlansU': [], 'vlansT': [], 'peers': []})
-        clients = [{'mac': (l.get('macaddr') or '').lower(), 'ip': l.get('ipaddr'), 'name': l.get('hostname') or '', 'segment': 'LAN',
-                    'online': True, 'kind': 'phone'} for l in leases]
+        hw = self._hw_ports(cfg)                     # real sockets via swconfig (SSH); None = not available
+        ports, usb = ((hw['ports'] or []), hw['usb']) if hw else ([], [])
+        if hw and hw['ports'] is None:
+            hw = dict(hw, ports=[])
+            hw_sw = False
+        else:
+            hw_sw = bool(hw)
+        wan_v = {int(str(v.get('l3_device')).rsplit('.', 1)[1]) for k, v in ifs.items()
+                 if k.startswith('wan') and re.match(r'.+\.\d+$', str(v.get('l3_device') or ''))}
+        for p in ports:
+            if set(p.get('vlansU') or []) & wan_v:
+                p.update(kind='wan', label='WAN')
+        if not hw_sw:
+            for name, d in sorted(dev.items()):
+                if '.' in name or not (name.startswith('eth') or name.startswith('lan') or name.startswith('wan')):
+                    continue
+                sp = int(''.join(c for c in str(d.get('speed') or '') if c.isdigit()) or 0)
+                if d.get('carrier') and sp not in (10, 100, 1000, 2500, 5000, 10000):
+                    usb.append({'name': name, 'speed': sp})   # e.g. a USB LTE modem reporting «150» — not an Ethernet socket
+                    continue
+                ports.append({'n': len(ports) + 1, 'name': name, 'kind': 'wan' if name.startswith('wan') else 'rj45', 'link': bool(d.get('carrier')),
+                              'speed': sp if d.get('carrier') else 0, 'label': '', 'vlansU': [], 'vlansT': [], 'peers': []})
+        nets = self._networks(ifs)
+        hosts, blocks = (hw or {}).get('hosts', {}), (hw or {}).get('blocks', set())
+        clients = []
+        for l in leases:
+            mac = (l.get('macaddr') or '').lower(); h = hosts.get(mac) or {}
+            net = next((n for n in nets if _in_net(l.get('ipaddr'), n)), None)
+            clients.append({'mac': mac, 'ip': l.get('ipaddr'), 'name': h.get('label') or h.get('name') or l.get('hostname') or '', 'hostname': l.get('hostname') or '',
+                            'segment': net['name'] if net else 'LAN', 'segId': net['id'] if net else None, 'registered': bool(h),
+                            'staticIp': h.get('ip'), 'access': 'deny' if mac in blocks else 'permit', 'policy': '', 'limit': 0,
+                            'online': True, 'kind': 'phone'})
+        special = (hw or {}).get('special') or []
+        mgmt = ({'ok': False, 'reason': 'нет доступа по SSH — Rack Live не может проверить роутер и менять настройки клиентов'} if not hw else
+                {'ok': False, 'reason': f"на роутере работает {', '.join(special)} — он сам управляет доступом клиентов; чтобы ничего не сломать, "
+                                        'настройки клиентов из Rack Live на этом роутере отключены'} if special else {'ok': True})
         load = info.get('load') or [0]
         return {'status': 'online',
                 'summary': {'model': board.get('model'), 'fw': (board.get('release') or {}).get('description'), 'uptime': info.get('uptime'),
                             'mem': round(100 - (mem.get('free', 0) + mem.get('buffered', 0)) * 100 / max(1, mem.get('total', 1))),
                             'cpu': round(load[0] / 65536 * 100), 'ip': cfg['host'],
                             'macs': sorted({(d.get('macaddr') or '').lower() for d in dev.values() if d.get('macaddr')})},
-                'ports': ports, 'clients': clients,
+                'ports': ports, 'clients': clients, 'networks': nets, 'policies': [],
+                'clientMgmt': mgmt, 'clientCaps': {'limit': False, 'policy': False, 'deny': True},
                 'sections': [{'title': 'Интерфейсы', 'rows': [[k, f"{'▲' if v.get('up') else '▽'} {ip(v)} · {v.get('l3_device') or ''}"]
-                                                              for k, v in sorted(ifs.items()) if k != 'loopback']}]}
+                                                              for k, v in sorted(ifs.items()) if k != 'loopback']}] +
+                            ([{'title': 'USB', 'rows': [[u['name'], 'USB-модем / сетевой адаптер' + (f" · заявлено до {u['speed']} Мбит/с" if u.get('speed') else '')]
+                                                        for u in usb]}] if usb else [])}
+
+    @staticmethod
+    def _networks(ifs):
+        import ipaddress
+        out = []
+        for k, v in sorted(ifs.items()):
+            a = (v.get('ipv4-address') or [{}])[0]
+            if k == 'loopback' or k.startswith('wan') or not a.get('address'):
+                continue
+            if any(r.get('target') == '0.0.0.0' and not r.get('mask') for r in v.get('route') or []):
+                continue                             # the uplink (a USB modem, a second WAN) — not a network of clients
+            mask = str(ipaddress.ip_network(f"0.0.0.0/{a.get('mask', 24)}").netmask)
+            out.append({'id': k, 'name': k, 'alias': v.get('l3_device') or '', 'vlan': None, 'ip': a['address'], 'mask': mask})
+        return out
+
+    @staticmethod
+    def _parse_extra(out):
+        special, hosts, sect, blocks = [], {}, {}, set()
+        for l in out.split('\n'):
+            l = l.strip()
+            if l.startswith('@@special '):
+                k = l.split()[1]
+                special.append('dnsmasq не установлен (DHCP через другой сервер)' if k == 'nodnsmasq' else SPECIAL.get(k, k))
+            elif l.startswith('@@dh '):
+                m = re.match(r"@@dh dhcp\.([^.=]+)\.(mac|ip|name|rl_label)='?([^']*)'?$", l)
+                if m:
+                    sect.setdefault(m.group(1), {})[m.group(2)] = m.group(3)
+            elif l.startswith('@@fw '):
+                m = re.match(r"@@fw firewall\.rl_block_[^.]+\.src_mac='?([0-9A-Fa-f:]{17})'?", l)
+                if m:
+                    blocks.add(m.group(1).lower())
+        for v in sect.values():
+            for mac in (v.get('mac') or '').lower().split():
+                hosts[mac] = {'name': v.get('name', ''), 'label': v.get('rl_label', ''), 'ip': v.get('ip')}
+        return {'special': sorted(set(special)), 'hosts': hosts, 'blocks': blocks}
+
+    # ───────── one client: name (a DHCP host entry), permanent IP, block — only on a router without a captive portal ─────────
+    def client(self, cfg, mac, want):
+        mac = str(mac or '').lower()
+        if not re.match(r'^([0-9a-f]{2}:){5}[0-9a-f]{2}$', mac):
+            raise DriverError('неверный MAC-адрес')
+        special = self._parse_extra(self._ssh(cfg, SPECIAL_SCRIPT, timeout=20))['special']
+        if special:
+            raise DriverError(f"на роутере {', '.join(special)} — настройки клиентов из Rack Live отключены, чтобы ничего не сломать")
+        if 'limit' in want and float(want.get('limit') or 0) > 0:
+            raise DriverError('ограничение скорости на OpenWrt пока не поддерживается')
+        if want.get('policy') not in (None, '', 'deny'):
+            raise DriverError('политики маршрутизации на OpenWrt пока не поддерживаются — только «по умолчанию» или «запретить интернет»')
+        q = lambda v: re.sub(r"[^\w .,:@()+-]", '', str(v or ''), flags=re.U)[:64]       # nothing that could break the quoting
+        tag = mac.replace(':', '')
+        find = f"S=$(uci -q show dhcp | grep -i \"\\.mac='{mac}'\" | head -n1 | cut -d. -f2)\n"
+        lines, done = [find], []
+        if want.get('forget'):
+            lines += ['[ -n "$S" ] && uci delete dhcp.$S', f'uci -q delete firewall.rl_block_{tag}', 'uci commit dhcp', 'uci commit firewall',
+                      '/etc/init.d/dnsmasq reload', '/etc/init.d/firewall reload']
+            done.append('запись клиента и блокировка удалены')
+        else:
+            dhcp = False
+            if 'name' in want or want.get('ip'):
+                lines += ['[ -z "$S" ] && S=$(uci add dhcp host) && uci set dhcp.$S.mac=' + f"'{mac}'"]
+            if 'name' in want:
+                label = q(want.get('name')).strip()
+                if not label:
+                    raise DriverError('укажите имя устройства')
+                host = re.sub(r'-+', '-', re.sub(r'[^a-z0-9-]', '-', _translit(label).lower())).strip('-')[:40] or 'host-' + tag[-6:]
+                lines += [f"uci set dhcp.$S.name='{host}'", f"uci set dhcp.$S.rl_label='{label}'"]
+                done.append(f'имя «{label}»'); dhcp = True
+            if 'ip' in want:
+                ip = str(want.get('ip') or '').strip()
+                if ip:
+                    if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
+                        raise DriverError('неверный IP-адрес')
+                    lines.append(f"uci set dhcp.$S.ip='{ip}'"); done.append(f'постоянный адрес {ip}')
+                else:
+                    lines.append('[ -n "$S" ] && uci -q delete dhcp.$S.ip'); done.append('постоянный адрес снят')
+                dhcp = True
+            if dhcp:
+                lines += ['uci commit dhcp', '/etc/init.d/dnsmasq reload']
+            if 'policy' in want:
+                if want['policy'] == 'deny':
+                    lines += ["Z=$(uci show firewall | grep \"\\.masq='1'\" | head -n1 | cut -d. -f2); ZN=$(uci -q get firewall.$Z.name); [ -z \"$ZN\" ] && ZN=wan",
+                              f'uci set firewall.rl_block_{tag}=rule', f"uci set firewall.rl_block_{tag}.name='Rack Live: no internet {mac}'",
+                              f"uci set firewall.rl_block_{tag}.src='*'", f"uci set firewall.rl_block_{tag}.src_mac='{mac}'",
+                              f'uci set firewall.rl_block_{tag}.dest="$ZN"', f"uci set firewall.rl_block_{tag}.target='REJECT'"]
+                    done.append('доступ в интернет запрещён')
+                else:
+                    lines.append(f'uci -q delete firewall.rl_block_{tag}'); done.append('доступ в интернет по умолчанию')
+                lines += ['uci commit firewall', '/etc/init.d/firewall reload >/dev/null 2>&1']
+        out = self._ssh(cfg, '\n'.join(lines) + '\necho @@ok\n', timeout=60)
+        if '@@ok' not in out:
+            raise DriverError('роутер не подтвердил изменения: ' + out.strip()[-200:])
+        return done
+
+    # ───────── physical ports: swconfig switch chips (ath79 / ramips boards like the MikroTik RB2011) ─────────
+    _hw_fail = {}                                  # host → time of the last failed SSH (back off 10 min)
+    HW_SCRIPT = r'''for i in /sys/class/net/*; do n=${i##*/}; u=$(readlink -f $i/device 2>/dev/null | grep -c usb); echo "@@if $n $u $(cat $i/speed 2>/dev/null)"; done
+for s in $(swconfig list 2>/dev/null | awk '{print $2}'); do echo "@@sw $s"; swconfig dev $s show 2>/dev/null; done
+''' + SPECIAL_SCRIPT + r'''uci -q show dhcp | grep -E "^dhcp\.[^.]+(=host|\.(mac|ip|name|rl_label)=)" | sed 's/^/@@dh /'
+uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed 's/^/@@fw /'
+'''
+
+    def _hw_ports(self, cfg):
+        host = self._hostname(cfg)
+        if time.time() - self._hw_fail.get(host, 0) < 600:
+            return None
+        try:
+            out = self._ssh(cfg, self.HW_SCRIPT, timeout=20)
+        except Exception:
+            self._hw_fail[host] = time.time()
+            return None
+        usb, switches, sw, port, vlan = [], [], None, None, None
+        for l in out.split('\n'):
+            s = l.strip()
+            if s.startswith('@@if '):
+                f = s.split()
+                if len(f) >= 3 and f[2] == '1' and not '.' in f[1]:
+                    usb.append({'name': f[1], 'speed': int(f[3]) if len(f) > 3 and f[3].isdigit() else 0})
+            elif s.startswith('@@sw '):
+                sw = {'name': s[5:], 'ports': {}, 'vlans': {}}
+                switches.append(sw)
+                port = vlan = None
+            elif sw is None:
+                continue
+            elif re.match(r'Port (\d+): MAC ([0-9a-f:]{17})', s):
+                m = re.match(r'Port (\d+): MAC ([0-9a-f:]{17})', s)
+                sw['ports'].setdefault(int(m.group(1)), {'peers': []})['peers'].append({'mac': m.group(2)})
+            elif re.match(r'Port (\d+):$', s):
+                port, vlan = int(s[5:-1]), None
+                sw['ports'].setdefault(port, {'peers': []})
+            elif re.match(r'VLAN (\d+):$', s):
+                vlan, port = int(s[5:-1]), None
+            elif s.startswith('link:') and port is not None:
+                m = re.search(r'link:(up|down)(?:\s+speed:(\d+))?', s)
+                sw['ports'][port].update(link=bool(m and m.group(1) == 'up'), speed=int(m.group(2)) if m and m.group(2) else 0)
+            elif s.startswith('vid:') and vlan is not None:
+                sw['vlans'][vlan] = {'vid': int(s[4:].strip() or vlan), 'members': []}
+            elif s.startswith('ports:') and vlan is not None:
+                sw['vlans'].setdefault(vlan, {'vid': vlan, 'members': []})['members'] = s[6:].split()
+        extra = self._parse_extra(out)
+        if not switches:
+            return dict(extra, ports=None, usb=usb)
+        ports = []
+        for sw in switches:
+            tagged = {int(m[:-1]) for v in sw['vlans'].values() for m in v['members'] if m.endswith('t')}
+            cpu = tagged | {0} | ({6} if max(sw['ports'] or [0]) == 6 else set())     # CPU links: tagged trunk, port 0, ar83xx port 6
+            for n in sorted(sw['ports']):
+                if n in cpu or 'link' not in sw['ports'][n]:
+                    continue
+                p = sw['ports'][n]
+                vu = sorted(v['vid'] for v in sw['vlans'].values() if str(n) in v['members'])
+                vt = sorted(v['vid'] for v in sw['vlans'].values() if f'{n}t' in v['members'])
+                ports.append({'n': len(ports) + 1, 'name': f"{sw['name']} · порт {n}", 'kind': 'rj45', 'link': p['link'],
+                              'speed': p['speed'] if p['link'] else 0, 'label': '', 'vlansU': vu, 'vlansT': vt,
+                              'peers': p['peers'] if p['link'] else []})
+        return dict(extra, ports=ports, usb=usb)
 
     def action(self, cfg, action_id, params):
         if action_id == 'reboot':
@@ -189,3 +390,12 @@ class OpenWrt(Driver):
             return {'ok': True, 'log': log, 'message': f"Установлено: {prof['title']}. Дальше: {prof['after']} Если модем не заработал — "
                                                          'удалите этот вариант и попробуйте другой (иногда нужно переподключить модем).'}
         raise DriverError('неизвестный плагин')
+
+
+_TR = dict(zip('абвгдеёжзийклмнопрстуфхцчшщъыьэюя', ['a', 'b', 'v', 'g', 'd', 'e', 'e', 'zh', 'z', 'i', 'y', 'k', 'l', 'm', 'n', 'o', 'p', 'r', 's', 't', 'u',
+                                                   'f', 'h', 'ts', 'ch', 'sh', 'sch', '', 'y', '', 'e', 'yu', 'ya']))
+
+
+def _translit(s):
+    """a DNS-valid host name for dnsmasq from «Айфон Миши» → aifon-mishi (the original goes to rl_label)"""
+    return ''.join(_TR.get(c, _TR.get(c.lower(), c)) for c in s)

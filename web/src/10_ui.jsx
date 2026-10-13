@@ -26,13 +26,14 @@ function Modal({ title, onClose, children, footer, wide, icon }) {
     const h = e => e.key === 'Escape' && onClose && onClose();
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [onClose]);
-  return <div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose && onClose()}>
+  // always on top of the page: a window opened from inside another window / a blurred card would otherwise be pinned to it
+  return ReactDOM.createPortal(<div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose && onClose()}>
     <div className={'modal' + (wide ? ' wide' : '')}>
       <div className="modal-head">{icon}<h3>{title}</h3>{onClose ? <Btn icon="x" size="sm" onClick={onClose} /> : null}</div>
       <div className="modal-body">{children}</div>
       {footer ? <div className="modal-foot">{footer}</div> : null}
     </div>
-  </div>;
+  </div>, document.body);
 }
 
 function Sheet({ onClose, head, tabs, tab, setTab, children }) {

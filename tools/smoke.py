@@ -251,6 +251,7 @@ def main():
             check(name, 'page-title' in out and 'rl-crash' not in out and not err, err or ('пустая страница' if 'page-title' not in out else ''))
             if name == 'Размещение':
                 check('подсказка на вкладке', 'hint-box' in out)
+                check('главная из виджетов', out.count('data-wid=') >= 5)
             if name == 'План — дом':
                 check('покрытие Wi-Fi на плане', 'cov-pin' in out)
             if name == 'Тест скорости':

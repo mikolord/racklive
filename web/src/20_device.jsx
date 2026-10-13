@@ -55,7 +55,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
     {tab === 'overview' ? <Overview device={device} drv={drv} /> : null}
     {tab === 'ports' ? <PortsTab device={device} drv={drv} initialPort={initialPort} /> : null}
     {tab === 'children' ? <ChildrenTab device={device} drv={drv} /> : null}
-    {tab === 'clients' ? <ClientsTab clients={st.clients} children={st.children} /> : null}
+    {tab === 'clients' ? <ClientsTab clients={st.clients} children={st.children} device={device} drv={drv} /> : null}
     {tab === 'vpn' ? <VpnTab vpn={st.vpn} /> : null}
     {tab === 'storage' ? <StorageTab storage={st.storage} /> : null}
     {tab === 'services' ? <ServicesTab device={device} drv={drv} /> : null}
@@ -308,8 +308,10 @@ function ChildrenTab({ device, drv }) {
   </Card>)}</div>;
 }
 
-function ClientsTab({ clients, children }) {
-  const [q, setQ] = useState(''); const [seg, setSeg] = useState('');
+function ClientsTab({ clients, children, device, drv }) {
+  const { admin } = useApp();
+  const [q, setQ] = useState(''); const [seg, setSeg] = useState(''); const [edit, setEdit] = useState(null);
+  const canEdit = admin && drv && drv.clientMgmt;
   const apName = k => k === 'self' ? 'Роутер' : ((children || []).find(c => c.key === k) || {}).name || '';
   const segs = [...new Set(clients.map(c => c.segment || '—'))];
   const list = clients.filter(c => (!seg || (c.segment || '—') === seg) &&
@@ -319,15 +321,23 @@ function ClientsTab({ clients, children }) {
     <SearchBox value={q} onChange={setQ} placeholder="Имя, IP или MAC" />
     <div className="row wrap"><button className={'chip' + (!seg ? ' on' : '')} onClick={() => setSeg('')}>Все · {clients.length}</button>
       {segs.map(s => <button key={s} className={'chip' + (seg === s ? ' on' : '')} onClick={() => setSeg(s)}>{s} · {clients.filter(c => (c.segment || '—') === s).length}</button>)}</div>
-    <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{list.map(c => <div className="li" key={c.mac}>
+    {canEdit ? <div className="dim3" style={{ fontSize: 12.5 }}>Нажмите на устройство — имя, постоянный адрес, скорость и политика на роутере.</div> : null}
+    <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{list.map(c => <div className="li" key={c.mac} style={canEdit ? { cursor: 'pointer' } : null} onClick={() => canEdit && setEdit(c.mac)}>
       <KindIcon kind={c.kind} size={34} round={9} />
       <div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{c.name || c.mac}</div>
-        <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{c.ip} · {c.mac}</div></div>
+        <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{c.ip} · {c.mac}</div>
+        {c.limit || c.policy || c.access === 'deny' || (c.registered === false) ? <div className="row wrap" style={{ gap: 4, marginTop: 2 }}>
+          {c.registered === false ? <span className="role-badge none">не зарегистрировано</span> : null}
+          {c.access === 'deny' ? <span className="role-badge" style={{ background: 'var(--red)' }}>без интернета</span> : null}
+          {c.limit ? <span className="role-badge none">до {c.limit} Мбит/с</span> : null}
+          {c.policy ? <span className="role-badge none">{c.policy}</span> : null}</div> : null}
+        <PendingIp c={c} /></div>
       <div style={{ textAlign: 'right', fontSize: 12 }} className="dim">
         {c.ap ? <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}><Icon name="wifi" size={13} />{apName(c.ap)} {c.band}</div> : <div>{c.port ? 'порт ' + c.port : 'кабель'}</div>}
         {c.rssi ? <div style={{ color: c.rssi > -65 ? 'var(--green)' : c.rssi > -75 ? 'var(--orange)' : 'var(--red)' }}>{c.rssi} дБм{c.rate ? ' · ' + c.rate + ' Мбит' : ''}</div> : <div>{c.segment}</div>}
       </div></div>)}
       {!list.length ? <div className="empty">Ничего не найдено</div> : null}</div></Card>
+    {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
   </>;
 }
 
@@ -415,11 +425,12 @@ function ServicesTab({ device, drv }) {
   })}</div></Card>;
 }
 
-function EventsList({ events, compact }) {
+function EventsList({ events, compact, bare }) {
   const { data } = useApp();
   if (!events.length) return compact ? null : <div className="empty">Событий пока нет</div>;
-  return <Card title={compact ? 'Последние события' : null}>{events.map((e, i) => <div className="ev" key={i}>
+  const rows = events.map((e, i) => <div className="ev" key={i}>
     <span className={'dot ' + (e.level === 'info' ? '' : e.level)} style={{ marginTop: 6, background: e.level === 'info' ? 'var(--accent)' : undefined }} />
     <div className="grow"><div style={{ fontSize: 14 }}><b>{e.name}</b> — {e.text}</div><div className="dim3" style={{ fontSize: 12 }}>{fmt.time(e.t)} · {fmt.ago(e.t, data.now)}</div></div>
-  </div>)}</Card>;
+  </div>);
+  return bare ? <>{rows}</> : <Card title={compact ? 'Последние события' : null}>{rows}</Card>;
 }

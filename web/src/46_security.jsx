@@ -81,6 +81,34 @@ function ExtScanBox() {
   </div>;
 }
 
+/* «Размещение»: health and security in one card; one window with a switch between them (?security=1 / ?health=1) */
+function StateCard() {
+  const { data } = useApp(); const openCheck = useCheckOpener();
+  const [open, setOpen] = useState(() => { const q = new URLSearchParams(location.search); return q.get('security') === '1' ? 'security' : q.get('health') === '1' ? 'health' : null; });
+  const h = data.health, s = data.security;
+  if (!h && !s) return null;
+  const hWarn = h ? h.checks.filter(c => c.level === 'bad' || c.level === 'warn').length : 0;
+  const tile = (id, score, title, sub, warn) => <button type="button" className="state-tile" onClick={() => setOpen(id)}>
+    <ScoreRing score={score} size={52} />
+    <div style={{ minWidth: 0 }}><div className="state-k">{id === 'health' ? 'Здоровье' : 'Безопасность'}</div>
+      <div className="state-t ellipsis" style={{ color: warn ? 'var(--orange)' : undefined }}>{title}</div><div className="dim3 ellipsis" style={{ fontSize: 12 }}>{sub}</div></div>
+  </button>;
+  return <>
+    <Card title="Состояние сети" right={<Btn size="sm" onClick={() => setOpen(h ? 'health' : 'security')}>Подробнее</Btn>}>
+      <div className="state-tiles">
+        {h ? tile('health', h.score, h.type.name, hWarn ? `${hWarn} ${ruPlural(hWarn, 'замечание', 'замечания', 'замечаний')}` : 'серьёзных замечаний нет', false) : null}
+        {s ? tile('security', s.score, s.counts.bad ? `Критично: ${s.counts.bad}` : s.counts.warn ? 'Есть что улучшить' : 'Проблем нет',
+          s.counts.warn ? `${s.counts.warn} ${ruPlural(s.counts.warn, 'совет', 'совета', 'советов')}` : 'порты, пароли, прошивки', !!s.counts.bad) : null}
+      </div>
+    </Card>
+    {open ? <Modal title="Состояние сети" wide onClose={() => setOpen(null)} icon={<Icon name={open === 'health' ? 'pulse' : 'shield'} size={20} color="var(--accent)" />}>
+      {h && s ? <Seg value={open} onChange={setOpen} options={[{ value: 'health', label: `Здоровье · ${h.score}` }, { value: 'security', label: `Безопасность · ${s.score}` }]} /> : null}
+      {open === 'health' && h ? <HealthBody h={h} onCheck={c => { setOpen(null); openCheck(c); }} /> : null}
+      {open === 'security' && s ? <SecurityBody s={s} /> : null}
+    </Modal> : null}
+  </>;
+}
+
 function SecurityCard() {
   const { data } = useApp();
   const [open, setOpen] = useState(() => new URLSearchParams(location.search).get('security') === '1');

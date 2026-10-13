@@ -2,7 +2,7 @@
 <html lang="ru" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,7 +15,15 @@
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=27">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css">
-  <script>try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);
+  <script>
+  // phones and the installed app behave like an app: no page zoom (pinch, double tap), no text selection / «Copy» bubble while dragging.
+  // The map and the plan zoom with their own gestures.
+  (function(){if(!(matchMedia('(pointer: coarse)').matches||matchMedia('(display-mode: standalone)').matches||navigator.standalone))return;
+   document.documentElement.classList.add('app-touch');
+   var no=function(e){e.preventDefault()},o={passive:false};
+   ['gesturestart','gesturechange','gestureend','dblclick'].forEach(function(t){document.addEventListener(t,no,o)});
+   var last=0;document.addEventListener('touchend',function(e){var n=Date.now();if(n-last<300&&!e.target.closest('textarea,input,select,button,a,[role=button]'))e.preventDefault();last=n},o);})();
+  try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);
   if(t!=='auto'){document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.removeAttribute('media');m.setAttribute('content',r==='dark'?'#000000':'#f2f2f7')})}}catch(e){}</script>
 </head>
 <body>
