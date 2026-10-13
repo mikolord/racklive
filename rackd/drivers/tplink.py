@@ -29,6 +29,14 @@ class TPLinkJetStream(Driver):
 
     _locks = {}
 
+    shell = ('CLI TP-Link JetStream по telnet (enable уже выполнен): show …; настройки: configure → interface gigabitEthernet 1/0/N → … → end; '
+             'сохранить: copy running-config startup-config')
+
+    def command(self, cfg, cmd):
+        cmds = [c.strip() for c in cmd.split('\n') if c.strip()]
+        out = self._cli(cfg, cmds)
+        return '\n\n'.join(f'> {c}\n{(out.get(c) or "").strip()}' for c in cmds) if isinstance(out, dict) else str(out)
+
     def _cli(self, cfg, cmds, wait=1.0):
         # one telnet session per switch at a time: the switch drops/mixes parallel CLI sessions
         lock = self._locks.setdefault(cfg['host'], threading.Lock())

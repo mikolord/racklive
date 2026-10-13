@@ -279,6 +279,10 @@ class TgBot:
         self._send_rich(chat, job.get('text') or '…')
         ch = ai.chat(job['chat']) or {}
         last = next((m for m in reversed(ch.get('messages') or []) if m['role'] == 'assistant'), {})
+        changed = [o for o in last.get('ops') or [] if o.get('kind') != 'read']
+        if changed:
+            self.say(chat, '⚙️ Frank выполнил:\n' + '\n'.join(
+                f"{'✅' if o.get('ok') else '❌'} {o.get('device')}: {(o.get('command') or o.get('label') or '').splitlines()[0][:80]}" for o in changed[:15]))
         for p in [p for p in last.get('proposals') or [] if p['status'] == 'pending']:
             body = f"🛠 Предлагаю: {p['label']}\n{p['deviceName']}" + (f"\n\n{p['text']}" if p.get('text') else '') + \
                    (f"\n\nЗачем: {p['reason']}" if p.get('reason') else '')

@@ -57,6 +57,11 @@ class SSHHost(Driver):
                {'id': 'reboot', 'label': 'Перезагрузить сервер', 'scope': 'device', 'confirm': 'Сервер перезагрузится, всё на нём будет недоступно 1–3 минуты. Продолжить?'}]
 
     # ── transport ──
+    shell = 'shell Linux по SSH (sh): systemctl, docker, journalctl, df, ip …'
+
+    def command(self, cfg, cmd):
+        return self._run(cfg, '{\n' + cmd + '\n} 2>&1\n', timeout=180)
+
     def _run(self, cfg, script, timeout=30):
         host, port = cfg['host'].strip(), int(cfg.get('sshPort') or 22)
         user = cfg.get('username') or 'root'

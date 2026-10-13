@@ -11,9 +11,23 @@ class Synology(Driver):
     kind = 'nas'
     description = 'NAS: диски, тома, температура, CPU/RAM, сетевые карты, Docker-контейнеры.'
     fields = [{'name': 'host', 'label': 'Адрес DSM', 'type': 'text', 'required': True, 'placeholder': 'https://192.168.1.3:5001'},
-              FIELD_USER, FIELD_PASS]
+              FIELD_USER, FIELD_PASS,
+              {'name': 'sshPort', 'label': 'Порт SSH (для полного доступа Frank)', 'type': 'text', 'default': '22',
+               'hint': 'Панель управления → Терминал → «Включить SSH». Вход тем же пользователем DSM (он должен быть администратором).'}]
     actions = [{'id': 'container_restart', 'label': 'Перезапустить контейнер', 'scope': 'service',
                 'confirm': 'Перезапустить контейнер {name}?'}]
+    shell = 'shell DSM по SSH, команды выполняются от root (sudo): docker / docker compose (папки в /volume1/docker), synopkg, df, ls, cat …'
+
+    def command(self, cfg, cmd):
+        """Frank with full access: SSH as the DSM admin, the command runs through sudo (Docker on DSM needs root)"""
+        import shlex
+        from .sshhost import SSHHost
+        host = urllib.parse.urlparse(self._base(cfg)).hostname
+        pw = cfg.get('password') or ''
+        script = (f"printf '%s\\n' {shlex.quote(pw)} | sudo -S -p '' sh -c "
+                  + shlex.quote('export PATH=$PATH:/usr/local/bin:/usr/syno/bin:/usr/syno/sbin\n' + cmd) + ' 2>&1\n')
+        return SSHHost()._run({'host': host, 'sshPort': cfg.get('sshPort') or 22, 'username': cfg.get('username') or '',
+                               'password': pw}, script, timeout=300)
 
     def _base(self, cfg):
         h = cfg['host'].rstrip('/')

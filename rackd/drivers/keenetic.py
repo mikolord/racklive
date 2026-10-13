@@ -224,6 +224,29 @@ class Keenetic(Driver):
                             'ip': cfg['host'], 'mac': lanmac},
                 'ports': ports, 'clients': clients, 'children': children, 'sections': sections, 'vpn': self._vpn(get, rc)}
 
+    shell = 'CLI Keenetic (как в веб-CLI): show …, interface …, ip …; несколько команд — каждая с новой строки; сохранить: system configuration save'
+
+    def command(self, cfg, cmd):
+        """Frank with full access (gated in rackd/assistant.py): CLI lines through RCI parse → readable text"""
+        _, cli = self._session(cfg)
+        cmds = [c.strip() for c in cmd.split('\n') if c.strip()]
+        out = []
+        for c, r in zip(cmds, cli(cmds)):
+            p = (r or {}).get('parse', r)
+            msgs = []
+            if isinstance(p, dict):
+                for st in p.get('status') or []:
+                    msgs.append(f"{st.get('status')}: {st.get('message')}")
+                if isinstance(p.get('message'), list):
+                    msgs.append('\n'.join(p['message']))
+                rest = {k: v for k, v in p.items() if k not in ('status', 'message', 'prompt')}
+                if rest:
+                    msgs.append(json.dumps(rest, ensure_ascii=False, indent=1))
+            else:
+                msgs.append(str(p))
+            out.append(f'> {c}\n' + ('\n'.join(msgs) or 'ok'))
+        return '\n\n'.join(out)
+
     def backup(self, cfg):
         """running-config as text — what rackd/backups.py versions."""
         _, cli = self._session(cfg)

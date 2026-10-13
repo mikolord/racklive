@@ -39,6 +39,12 @@ class DemoBase(Driver):
                 'toggle': 'Готово', 'reboot': 'Перезагрузка (демо)', 'reboot_child': 'Точка перезагружается (демо)',
                 'container_restart': f"Контейнер {params.get('name')} перезапущен (демо)"}.get(action_id, 'Готово (демо)')
 
+    shell = 'демо-CLI (ничего не меняет): show …, любые команды'
+
+    def command(self, cfg, cmd):
+        time.sleep(0.3)
+        return '\n\n'.join(f'> {c}\n(демо) выполнено, password secret123' for c in cmd.split('\n') if c.strip())
+
 
 class DemoRouter(DemoBase):
     id, title, kind = 'demo_router', 'Демо: роутер', 'router'

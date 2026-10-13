@@ -70,6 +70,11 @@ class OpenWrt(Driver):
     def _hostname(cfg):
         return re.sub(r'^\w+://', '', cfg['host'].strip()).split('/')[0].split(':')[0]
 
+    shell = 'shell OpenWrt по SSH (ash, root): uci show/set/commit, ubus call, logread, /etc/init.d/…, apk/opkg'
+
+    def command(self, cfg, cmd):
+        return self._ssh(cfg, '{\n' + cmd + '\n} 2>&1\n', timeout=120)
+
     def _ssh(self, cfg, script, timeout=30):
         from .sshhost import SSHHost
         return SSHHost()._run({'host': self._hostname(cfg), 'sshPort': cfg.get('sshPort') or 22, 'username': cfg.get('username') or 'root',

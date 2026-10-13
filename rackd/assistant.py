@@ -27,7 +27,8 @@ PRESETS = {
 DEFAULT = {'enabled': False, 'preset': 'deepseek', 'base': '', 'model': '', 'key': '', 'proxy': '', 'limit': 50,
            'effort': '',            # '' = the model's default · low | high | max (how deep the model thinks)
            'actions': True,         # Frank may propose actions (each one needs the admin's press)
-           'telegram': True}        # linked Telegram accounts can ask Frank in the bot
+           'telegram': True,        # linked Telegram accounts can ask Frank in the bot
+           'admin': False}          # full access: Frank runs commands on devices himself (see gate())
 ROUNDS = 8                  # tool rounds per question
 RESULT_MAX = 14000          # characters of one tool result
 HISTORY = 12                # previous chat messages sent along
@@ -64,7 +65,7 @@ def resolved(c):
 
 def public(c):
     r = resolved(c)
-    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram')}
+    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram', 'admin')}
     out.update(base=merged(c)['base'], model=merged(c)['model'], keySet=bool(r['key']), title=r['title'],
                ready=bool(r['enabled'] and r['base'] and r['model'] and (r['key'] or r['noKey'])), effModel=r['model'])
     return out
@@ -116,6 +117,78 @@ ACTION_TOOL = ('propose_action', 'Предложить пользователю 
                 'finding': ('string', 'id замечания безопасности — вместо device/action'),
                 'reason': ('string', 'коротко: зачем это сделать')})
 MAX_PROPOSALS = 3
+
+# ───────── full access (cfg.ai.admin): the same rules Claude Code works under ─────────
+# look around freely · change what the user asked for · dangerous → a confirmation card · destructive → never
+REQ = ('string', 'для изменений: ДОСЛОВНАЯ цитата слов пользователя из его последнего сообщения, где он просит это сделать')
+ADMIN_TOOLS = [
+    ('device_command', 'ПОЛНЫЙ ДОСТУП: выполнить команду на устройстве (язык команд — device_details → commandLine). Смотреть (show, cat, logread, '
+                       'статусы, docker ps) — можно всегда. Менять — только то, о чём пользователь прямо попросил (request). Опасное '
+                       '(перезагрузка, WAN/интернет, VPN, firewall и пробросы, выключение портов и VLAN, удаление) станет карточкой с кнопкой '
+                       '«Выполнить». Сброс, форматирование, пароли — запрещены.',
+     {'device': ('string', 'имя или id устройства'), 'command': ('string', 'команда; несколько — каждая с новой строки'), 'request': REQ}),
+    ('run_action', 'ПОЛНЫЙ ДОСТУП: сразу выполнить встроенное действие Rack Live (как propose_action, но без кнопки), если пользователь '
+                   'прямо попросил (request). Перезагрузка устройства всё равно станет карточкой.',
+     dict(ACTION_TOOL[2], request=REQ)),
+]
+MAX_OPS = 15
+DENY = re.compile(r'(?i)(factory|\berase\b|mkfs|\bformat\b|default-config|system\s+reset|\breset\b|firstboot|jffs2reset|passwd|password|'
+                  r'chpasswd|\brm\s+-\w*r\w*\s+/(\s|$|\*)|\bdd\s+if=|>\s*/dev/(sd|mmc|nvme|mtd|hd)|\bmtd\s|sysupgrade|firmware\s+upgrade|'
+                  r'\bno\s+user\b|\buser\s+\S+\s+password|synouser|synogroup|poweroff|\bhalt\b|shutdown\s+-h)')
+RISKY = re.compile(r'(?i)(\breboot\b|system\s+reboot|\bshutdown\b|\bkill(all)?\b|\bisp\b|\bwan\d?\b|pppoe|gpon|ip\s+global|default-?gw|'
+                   r'ip\s+static|ip\s+nat|firewall|iptables|nft\b|access-list|ip\s+policy|wireguard|ipsec|openvpn|\bvpn\b|'
+                   r'\bdown\b|\bno\s+up\b|\bvlan\b|switchport|spanning-tree|\brm\s+-\w*r|docker\s+(rm|kill|volume\s+rm|network\s+rm|system\s+prune)|'
+                   r'compose\s+down|systemctl\s+(stop|disable|mask)|init\.d/\S+\s+(stop|disable)|uci\s+delete|ifdown|'
+                   r'\bdropbear\b|\bsshd?\b|\btelnet\b|security-level|uhttpd|ip\s+http)')
+READ = re.compile(r'(?i)^\s*(show\b|more\b|ping\b|traceroute\b|tools\s+(ping|traceroute)|cat\b|ls\b|head\b|tail\b|grep\b|egrep\b|wc\b|sort\b|uniq\b|'
+                  r'awk\b|cut\b|df\b|du\b|free\b|uptime\b|uname\b|id\b|whoami\b|date\b|hostname\s*$|ps\b|top\s+-b|ip\s+(-\S+\s+)*(a|addr|address|'
+                  r'r|route|link|neigh|rule)(\s+show.*|\s+list.*)?\s*$|ifconfig\s*$|iwinfo\b|iw\s+dev\b|uci\s+(show|get|export)\b|'
+                  r'ubus\s+(list\b|call\s+\S+\s+(status|info|board|list|dump|get\w*)\b)|logread\b|dmesg\b|netstat\b|ss\s|wg\s*(show.*)?$|'
+                  r'docker\s+(ps|images|logs|inspect|stats\s+--no-stream|version|info|compose\s+(ps|ls|logs|config))\b|'
+                  r'systemctl\s+(status|list-units|is-active|is-enabled)\b|journalctl\b|find\b|stat\b|which\b|mount\s*$|lsblk\b|lsusb\b|'
+                  r'blkid\b|synopkg\s+(list|status|version)\b|apk\s+(info|list|search)\b|opkg\s+(list|info|status)\b|echo\b|true\s*$)')
+CONFIRM_WORDS = re.compile(r'(?i)^\W*(да|ага|угу|давай|делай|делаем|выполняй|выполни|го|ок|окей|ok|yes|подтверждаю|согласен|можно|\+)\W*$')
+
+
+def gate(cmd):
+    """deny | read | risky | change"""
+    lines = [l for l in str(cmd or '').split('\n') if l.strip()]
+    if not lines:
+        return 'deny'
+    if DENY.search(cmd):
+        return 'deny'
+    if all('>' not in l and '`' not in l and '$(' not in l and all(READ.match(s) for s in re.split(r'\|\||&&|;|\|', l) if s.strip()) for l in lines):
+        return 'read'
+    return 'risky' if RISKY.search(cmd) else 'change'
+
+
+def _norm(s):
+    s = str(s or '').lower().replace('ё', 'е')
+    return re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', ' ', s)).strip()
+
+
+def quoted(q, users):
+    """the quote must really be the user's words: from the last message, or the one before when the last is just «да»"""
+    q = _norm(q)
+    if len(q) < 4 or not users:
+        return False
+    texts = [users[-1]] + ([users[-2]] if len(users) > 1 and CONFIRM_WORDS.match(users[-1] or '') else [])
+    return any(q in _norm(t) for t in texts)
+
+
+def run_command(app, d, cmd):
+    """→ masked output (passwords / keys never reach the model); logged in the events"""
+    from .drivers import REGISTRY
+    drv = REGISTRY.get(d.get('driver'))
+    first = cmd.strip().split('\n')[0][:120] + (' …' if '\n' in cmd.strip() else '')
+    try:
+        out = drv.command(d, cmd)
+    except Exception as e:
+        app.store.add_event(d['id'], d.get('name'), 'warning', f'Frank: «{first}» — ошибка: {e}')
+        raise
+    app.store.add_event(d['id'], d.get('name'), 'info', f'Frank выполнил: «{first}»')
+    out = '\n'.join(backups.mask(l) for l in str(out or '').replace('\r', '').split('\n')).strip()
+    return out[:8000] + ('\n…(обрезано)' if len(out) > 8000 else '') if out else '(пустой вывод — команда выполнена)'
 
 
 def _device_actions(d, st):
@@ -198,6 +271,20 @@ ACTIONS_ON = """Сам ты ничего в сети не меняешь, но �
   одного-двух за ответ; в тексте объясни зачем и что будет (например, «на 10 секунд пропадёт связь с камерой»).
   Никогда не пиши, что действие выполнено, — оно выполнится только после нажатия. Перезагрузку роутера предлагай в последнюю очередь.
   Сообщения «[Rack Live] …» в истории — это результаты действий, которые пользователь подтвердил."""
+ADMIN_ON = """ПОЛНЫЙ ДОСТУП включён: ты можешь сам работать на устройствах — device_command (командная строка: Keenetic, OpenWrt, Synology,
+  TP-Link, серверы) и run_action (встроенные действия сразу). Правила, как у администратора-помощника:
+  1) Смотреть можно всегда, когда это нужно для ответа (show, cat, logread, docker ps…).
+  2) Менять — ТОЛЬКО то, о чём пользователь прямо попросил в последнем сообщении; в request — дословная цитата его слов.
+     Сам заметил проблему — не чини молча: расскажи и предложи.
+  3) Перед изменением посмотри текущее состояние; после — проверь, что получилось, и коротко отчитайся (что сделал, что изменилось).
+  4) Если просьба неясна или есть варианты — спроси. Опасное (перезагрузка, WAN/интернет, VPN, firewall и пробросы, выключение портов,
+     VLAN, удаление) сервер всё равно покажет карточкой — заранее скажи, что пропадёт и на сколько.
+  5) Не отрежь доступ к сети, к Rack Live (NAS) и к самому устройству: не трогай порт и VLAN, через которые всё подключено,
+     удалённый доступ и пароли. Сброс, форматирование, пароли запрещены.
+  6) Keenetic: изменения действуют сразу, но после перезагрузки пропадут, пока не выполнишь system configuration save — сохраняй,
+     когда пользователь хочет, чтобы настройка осталась (обычно да). TP-Link: copy running-config startup-config.
+     Synology: контейнеры — docker / docker compose в папках /volume1/docker/<имя> (команды идут от root).
+  7) Команды — небольшими шагами, по одной-несколько, проверяя вывод. Не больше 15 команд за ответ."""
 ACTIONS_OFF = """Ты только читаешь данные и советуешь, ничего в сети не меняешь. Если нужно действие — подскажи, где оно в Rack Live
   или в веб-интерфейсе устройства, и предупреди о последствиях (например, «на пару секунд пропадёт связь»)."""
 
@@ -230,6 +317,7 @@ def _port(p):
 
 
 def run_tool(app, name, args):
+    from .drivers import REGISTRY
     cfg, states = app.store.cfg, app.states
     view = app.view(True)
     vdev = {d['id']: d for d in view['devices']}
@@ -260,6 +348,9 @@ def run_tool(app, name, args):
                'children': st.get('children'), 'storage': st.get('storage'), 'services': (st.get('services') or [])[:40],
                'sections': st.get('sections'), 'ups': st.get('ups'), 'clientsCount': len(st.get('clients') or []),
                'entities': st.get('entities'), 'actions': _device_actions(d, st)}
+        drv = REGISTRY.get(d.get('driver'))
+        if getattr(drv, 'command', None) and (cfg.get('ai') or {}).get('admin'):
+            out['commandLine'] = getattr(drv, 'shell', 'командная строка')
         if st.get('vpn'):
             out['vpn'] = [dict({k: v.get(k) for k in ('name', 'kind', 'role', 'up', 'address', 'endpoint', 'routing', 'rx', 'tx')},
                                handshake=_ago(v.get('handshake')),
@@ -386,19 +477,19 @@ def _post(c, url, payload, headers):
         raise AiError(f'{host} не ответил за 3 минуты')
 
 
-def _tool_defs(actions):
-    return TOOLS + ([ACTION_TOOL] if actions else [])
+def _tool_defs(actions, admin=False):
+    return TOOLS + ([ACTION_TOOL] if actions else []) + (ADMIN_TOOLS if actions and admin else [])
 
 
-def _anthropic_tools(actions=False):
+def _anthropic_tools(actions=False, admin=False):
     return [{'name': n, 'description': d, 'input_schema': {'type': 'object', 'properties': {k: {'type': t, 'description': ds} for k, (t, ds) in p.items()}}}
-            for n, d, p in _tool_defs(actions)]
+            for n, d, p in _tool_defs(actions, admin)]
 
 
-def _openai_tools(actions=False):
+def _openai_tools(actions=False, admin=False):
     return [{'type': 'function', 'function': {'name': n, 'description': d,
                                               'parameters': {'type': 'object', 'properties': {k: {'type': t, 'description': ds} for k, (t, ds) in p.items()}}}}
-            for n, d, p in _tool_defs(actions)]
+            for n, d, p in _tool_defs(actions, admin)]
 
 
 def _context(app):
@@ -419,8 +510,11 @@ def ask(app, c, chat, progress=lambda s, t=None: None):
     if not c['key'] and not c['noKey']:
         raise AiError('не задан ключ API — Настройки → Frank')
     acts = bool(c.get('actions'))
+    admin = acts and bool(c.get('admin'))
+    rounds = ROUNDS * 2 if admin else ROUNDS
     deepseek = 'deepseek.com' in c['base']
-    system = SYSTEM.replace('{ACTIONS}', ACTIONS_ON if acts else ACTIONS_OFF) + '\n\n' + _context(app)
+    system = SYSTEM.replace('{ACTIONS}', (ACTIONS_ON + '\n- ' + ADMIN_ON) if admin else ACTIONS_ON if acts else ACTIONS_OFF) + '\n\n' + _context(app)
+    users = [str(m.get('text') or '') for m in chat if m.get('role') == 'user']
     hist = []
     for m in chat[-HISTORY:]:
         if m.get('role') not in ('user', 'assistant') or not m.get('text'):
@@ -433,10 +527,70 @@ def ask(app, c, chat, progress=lambda s, t=None: None):
         hist.pop(0)
     if not hist or hist[-1]['role'] != 'user':
         raise AiError('пустой вопрос')
-    used, usage, proposals = [], {'in': 0, 'out': 0}, []
+    used, usage, proposals, ops = [], {'in': 0, 'out': 0}, [], []
+
+    def err(text):
+        return json.dumps({'error': text}, ensure_ascii=False)
+
+    def card(p, why):
+        if len(proposals) >= MAX_PROPOSALS:
+            return err(f'не больше {MAX_PROPOSALS} карточек за ответ')
+        proposals.append(p)
+        used.append('нужно подтверждение: ' + p['label'])
+        return json.dumps({'shown': True, 'card': p['label'], 'why': why,
+                           'note': 'НЕ выполнено: пользователь видит карточку с кнопкой «Выполнить». Скажи, что нужно нажать, и что произойдёт.'}, ensure_ascii=False)
 
     def call_tool(name, args):
         d = _find_device(app, args.get('device')) if args.get('device') else None
+        if name in ('device_command', 'run_action'):
+            if not admin:
+                return err('полный доступ выключен в настройках — используй propose_action')
+            if len(ops) >= MAX_OPS:
+                return err(f'не больше {MAX_OPS} команд за ответ — остановись и расскажи, что сделано')
+            asked = quoted(args.get('request'), users)
+            if name == 'run_action':
+                try:
+                    p = make_proposal(app, args)
+                except AiError as e:
+                    return err(str(e))
+                if p['action'] in ('reboot', 'restart', 'system_reboot') or not asked:
+                    return card(p, 'перезагрузка устройства — только по кнопке' if asked else
+                                'в request нет дословной просьбы пользователя из последнего сообщения')
+                progress('Выполняю: ' + p['label'] + '…', used)
+                dev = app.store.device(p['device'])
+                try:
+                    r = app.run_action(dev, p['action'], dict(p['params']))
+                    p.update(status='done', result=r.get('message') or 'Готово', auto=True, t=time.time())
+                except Exception as e:
+                    p.update(status='error', result=str(e), auto=True, t=time.time())
+                proposals.append(p)
+                ops.append({'device': p['deviceName'], 'label': p['label'], 'ok': p['status'] == 'done', 'out': str(p['result'])[:300]})
+                used.append('выполнил: ' + p['label'])
+                return json.dumps({'done': p['status'] == 'done', 'result': p['result']}, ensure_ascii=False)
+            from .drivers import REGISTRY
+            if not d:
+                return err('устройство не найдено')
+            if not getattr(REGISTRY.get(d.get('driver')), 'command', None):
+                return err('у этого устройства в Rack Live нет командной строки (есть у Keenetic, OpenWrt, Synology, TP-Link, серверов по SSH)')
+            cmd = str(args.get('command') or '').strip()
+            g = gate(cmd)
+            if g == 'deny':
+                return err('эта команда запрещена всегда (сброс, форматирование, пароли, пользователи). Объясни пользователю, как сделать вручную')
+            if g == 'risky' or (g == 'change' and not asked):
+                p = {'id': 'p' + secrets.token_hex(4), 'device': d['id'], 'deviceName': d.get('name'), 'command': cmd, 'action': 'command',
+                     'params': {}, 'label': 'Команда: ' + cmd.split('\n')[0][:60] + (' …' if '\n' in cmd else ''), 'text': cmd,
+                     'reason': str(args.get('reason') or '')[:300], 'status': 'pending'}
+                return card(p, 'опасная команда (перезагрузка, WAN, VPN, firewall, порты, удаление) — только по кнопке' if g == 'risky'
+                            else 'изменение без дословной просьбы пользователя в request')
+            progress(('Смотрю' if g == 'read' else 'Выполняю') + f" на {d.get('name')}…", used)
+            try:
+                out = run_command(app, d, cmd)
+                ok = True
+            except Exception as e:
+                out, ok = f'ошибка: {e}', False
+            ops.append({'device': d.get('name'), 'command': cmd, 'kind': g, 'ok': ok, 'out': out[:400]})
+            used.append(('посмотрел' if g == 'read' else 'выполнил') + f": {d.get('name')}")
+            return out
         if name == 'propose_action':
             progress('Готовлю действие…', used)
             if not acts:
@@ -459,17 +613,18 @@ def ask(app, c, chat, progress=lambda s, t=None: None):
         return tool_result(app, name, args)
 
     def done(text, reasoning=''):
-        return {'text': text or ('' if proposals else '(пустой ответ)'), 'tools': used, 'usage': usage, 'proposals': proposals, 'reasoning': reasoning}
+        return {'text': text or ('' if proposals or ops else '(пустой ответ)'), 'tools': used, 'usage': usage, 'proposals': proposals,
+                'reasoning': reasoning, 'ops': ops}
 
     if c['proto'] == 'anthropic':
         msgs = list(hist)
-        tools = _anthropic_tools(acts)
-        for rnd in range(ROUNDS + 1):
+        tools = _anthropic_tools(acts, admin)
+        for rnd in range(rounds + 1):
             progress('Думаю…' if rnd == 0 else 'Анализирую…', used)
             body = {'model': c['model'], 'max_tokens': 16000, 'system': system, 'messages': msgs, 'tools': tools, 'fallbacks': 'default'}
             if c.get('effort') in ('low', 'high', 'max'):
                 body['output_config'] = {'effort': c['effort']}
-            if rnd == ROUNDS:
+            if rnd == rounds:
                 body['tool_choice'] = {'type': 'none'}
             r = _post(c, c['base'] + '/v1/messages', body, {'x-api-key': c['key'], 'anthropic-version': '2023-06-01',
                                                              'anthropic-beta': 'server-side-fallback-2026-07-01'})
@@ -494,16 +649,16 @@ def ask(app, c, chat, progress=lambda s, t=None: None):
             msgs.append({'role': 'user', 'content': results})
     else:
         msgs = [{'role': 'system', 'content': system}] + hist
-        tools = _openai_tools(acts)
+        tools = _openai_tools(acts, admin)
         headers = {'Authorization': 'Bearer ' + c['key']} if c['key'] else {}
         if 'openrouter.ai' in c['base']:
             headers.update({'X-Title': 'Rack Live', 'HTTP-Referer': 'https://github.com/mikolord/racklive'})
-        for rnd in range(ROUNDS + 1):
+        for rnd in range(rounds + 1):
             progress('Думаю…' if rnd == 0 else 'Анализирую…', used)
             body = {'model': c['model'], 'messages': msgs, 'tools': tools}
             if c.get('effort') in ('low', 'high', 'max'):     # DeepSeek: low / high / max; OpenAI knows low / medium / high
                 body['reasoning_effort'] = c['effort'] if deepseek or c['effort'] != 'max' else 'high'
-            if rnd == ROUNDS:
+            if rnd == rounds:
                 body['tool_choice'] = 'none'
             r = _post(c, c['base'] + '/chat/completions', body, headers)
             u = r.get('usage') or {}
@@ -707,6 +862,8 @@ class Assistant:
                 msg.update(text=res['text'], tools=res['tools'])
                 if res.get('proposals'):
                     msg['proposals'] = res['proposals']
+                if res.get('ops'):
+                    msg['ops'] = res['ops']
                 if res.get('reasoning'):
                     msg['reasoning'] = res['reasoning'][:20000]
                 self._count(res['usage'])
@@ -765,8 +922,14 @@ class Assistant:
         try:
             if not d:
                 raise AiError('устройство удалено из Rack Live')
-            r = self.app.run_action(d, p['action'], dict(p['params']))
-            p.update(status='done', result=r.get('message') or 'Готово')
+            if p.get('command'):                      # a command Frank wanted to run (full access) — confirmed by this press
+                if gate(p['command']) == 'deny':
+                    raise AiError('эта команда запрещена')
+                out = run_command(self.app, d, p['command'])
+                p.update(status='done', result=out[:600] + ('…' if len(out) > 600 else ''))
+            else:
+                r = self.app.run_action(d, p['action'], dict(p['params']))
+                p.update(status='done', result=r.get('message') or 'Готово')
         except Exception as e:
             p.update(status='error', result=str(e))
         p['t'] = time.time()

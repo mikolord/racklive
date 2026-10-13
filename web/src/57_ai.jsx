@@ -68,6 +68,21 @@ function AiText({ text }) {
 }
 
 /* an action Frank proposed: runs only when the admin presses «Выполнить» */
+/* full access: what Frank ran himself in this answer (commands with their output) */
+function OpsList({ ops }) {
+  const [open, setOpen] = useState(false);
+  const changed = ops.filter(o => o.kind !== 'read').length;
+  return <div className="ai-ops">
+    <button type="button" className="ai-ops-head" onClick={() => setOpen(!open)}>
+      <Icon name="terminal" size={13} />{changed ? `Frank выполнил ${changed} ${ruPlural(changed, 'изменение', 'изменения', 'изменений')}` : 'Frank посмотрел на устройствах'}
+      {ops.length - changed ? ` · ${ops.length - changed} просмотр.` : ''}{ops.some(o => !o.ok) ? ' · есть ошибки' : ''}
+      <Icon name="chevron" size={12} style={{ transform: open ? 'rotate(90deg)' : 'none', marginLeft: 'auto' }} /></button>
+    {open ? ops.map((o, i) => <div key={i} className={'ai-op' + (o.ok ? '' : ' bad')}>
+      <div className="dim3" style={{ fontSize: 11.5 }}>{o.device}{o.kind === 'read' ? ' · просмотр' : ' · изменение'}</div>
+      <pre className="ai-cmd">{o.command || o.label}</pre>{o.out ? <pre className="ai-cmd out">{o.out}</pre> : null}</div>) : null}
+  </div>;
+}
+
 function ProposalCard({ p, onAct }) {
   const [busy, setBusy] = useState(false);
   const go = async run => { setBusy(true); try { await onAct(p, run); } finally { setBusy(false); } };
@@ -76,10 +91,11 @@ function ProposalCard({ p, onAct }) {
     <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
       <div className="ai-prop-ic"><Icon name={st === 'done' ? 'check' : st === 'error' ? 'alert' : st === 'cancelled' ? 'x' : 'bolt'} size={16} /></div>
       <div className="grow" style={{ minWidth: 0 }}>
-        <b>{p.label}</b><div className="dim3" style={{ fontSize: 12 }}>{p.deviceName}</div>
-        {p.text && st === 'pending' ? <div className="ai-prop-text">{p.text}</div> : null}
+        <b>{p.command ? 'Команда' : p.label}</b><div className="dim3" style={{ fontSize: 12 }}>{p.deviceName}{p.auto ? ' · Frank выполнил сам по вашей просьбе' : ''}</div>
+        {p.command ? <pre className="ai-cmd">{p.command}</pre> : p.text && st === 'pending' ? <div className="ai-prop-text">{p.text}</div> : null}
         {p.reason && st === 'pending' ? <div className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>Зачем: {p.reason}</div> : null}
-        {st === 'done' || st === 'error' ? <div className="ai-prop-text">{st === 'done' ? '✓ ' : ''}{p.result}</div> : null}
+        {st === 'done' || st === 'error' ? (p.command ? <pre className="ai-cmd out">{p.result}</pre>
+          : <div className="ai-prop-text">{st === 'done' ? '✓ ' : ''}{p.result}</div>) : null}
         {st === 'cancelled' ? <div className="dim3" style={{ fontSize: 12.5, marginTop: 4 }}>Не выполнялось</div> : null}
       </div>
     </div>
@@ -279,7 +295,8 @@ function AiPanel({ initial, onClose, standalone }) {
           {m.role === 'user' ? <div className="ai-bubble">{m.text}</div> : <div className="ai-bubble">
             {m.err ? <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="alert" size={16} color="var(--red)" /><span>{m.text}</span></div> : <AiText text={m.text} />}
             {m.tools && m.tools.length ? <div className="ai-tools">{[...new Set(m.tools)].map(t => <span key={t}><Icon name="eye" size={11} />{t}</span>)}</div> : null}
-            {(m.proposals || []).map(p => <ProposalCard key={p.id} p={p} onAct={act} />)}
+            {m.ops && m.ops.length ? <OpsList ops={m.ops} /> : null}
+            {(m.proposals || []).filter(p => !(p.auto && !p.command)).map(p => <ProposalCard key={p.id} p={p} onAct={act} />)}
           </div>}
         </div>)}
         {busy && view === 'chat' ? <div className="ai-msg assistant"><div className="ai-bubble ai-busy"><span className="spin-dot" />{busy.stage}
@@ -318,7 +335,7 @@ function AskAi({ q, label = 'Спросить Frank', size = 'sm' }) {
 function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
-  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false }));
+  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false, admin: !!ai.admin }));
   const [res, setRes] = useState(null);
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
@@ -334,6 +351,13 @@ function AiCard() {
           <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка с глазом вверху: вопросы о сети простыми словами.</div></div></div>
         <div className="row"><Switch on={!!s.actions} onChange={v => set('actions', v)} /><div className="grow"><div>Frank может предлагать действия</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Перезапуск PoE или порта, проверка кабеля, перезагрузка точки, выключатели Home Assistant, исправления безопасности. Сам Frank ничего не делает: под ответом появится карточка, и действие выполнится только после вашей кнопки «Выполнить».</div></div></div>
+        {s.actions ? <div className={'row' + (s.admin ? ' ai-admin-on' : '')}><Switch on={!!s.admin} onChange={v => set('admin', v)} /><div className="grow"><div>Полный доступ <span className="ai-badge">админ</span></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Frank сам работает на устройствах через командную строку — Keenetic, OpenWrt, Synology (docker, контейнеры), TP-Link, серверы по SSH:
+            настроить роутер, запустить контейнер, посмотреть логи. <b>Смотрит</b> — когда нужно для ответа. <b>Меняет</b> — только то, о чём вы прямо попросили
+            (сервер сверяет с вашим сообщением). <b>Опасное</b> (перезагрузка, WAN, VPN, firewall, порты, удаление) — карточкой «Выполнить». Сброс и пароли запрещены.
+            Каждая команда — в журнале событий.</div>
+          {s.admin ? <div className="ai-admin-warn">Модель может ошибиться в команде и, например, отрезать интернет — исправлять тогда придётся вручную у роутера.
+            Для Synology включите SSH (Панель управления → Терминал); вход — тем же пользователем DSM.</div> : null}</div></div> : null}
         <div className="row"><Switch on={!!s.telegram} onChange={v => set('telegram', v)} /><div className="grow"><div>Отвечать в Telegram</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Напишите вопрос боту Rack Live в личку — ответит Frank. Только привязанным аккаунтам (Настройки → Уведомления → «Привязать Telegram»); /new — новый разговор. Разговоры видны и в приложении Frank.</div></div></div>
         <Field label="Сервис">
