@@ -120,6 +120,7 @@ function Overview({ device, drv }) {
     </Card>
     {(st.sections || []).filter(x => x.rows && x.rows.length).map((sec, i) => <Card key={i} title={sec.title}><KV rows={sec.rows} /></Card>)}
     {speedAction ? <SpeedCard device={device} action={speedAction} /> : null}
+    <DeviceUptime device={device} />
     {device.notes ? <Card title="Заметки"><div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }}>{device.notes}</div></Card> : null}
     {admin && devActions.length ? <Card title="Действия"><div className="row wrap">{devActions.map(a =>
       <Btn key={a.id} kind="danger" icon="power" onClick={() => runAction(device, a)}>{a.label}</Btn>)}</div></Card> : null}

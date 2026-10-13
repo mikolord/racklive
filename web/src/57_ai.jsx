@@ -254,7 +254,7 @@ function AiPanel({ initial, onClose, standalone }) {
             <Btn kind="primary" icon="plus" onClick={() => open(null)}>Новый разговор</Btn></div>
           : <div className="list">{chats.map(c => <div key={c.id} role="button" tabIndex={0} className={'li ai-chat-item' + (c.id === cid ? ' on' : '')} onClick={() => open(c.id)}>
             <div className="grow" style={{ minWidth: 0 }}><b className="ellipsis" style={{ display: 'block', fontSize: 14 }}>{c.title}</b>
-              <div className="dim3" style={{ fontSize: 12 }}>{dayLabel(c.updated)} · {c.count} {ruPlural(c.count, 'сообщение', 'сообщения', 'сообщений')}{c.busy ? ' · Frank отвечает…' : ''}</div></div>
+              <div className="dim3" style={{ fontSize: 12 }}>{dayLabel(c.updated)} · {c.count} {ruPlural(c.count, 'сообщение', 'сообщения', 'сообщений')}{c.src === 'telegram' ? ' · из Telegram' : ''}{c.busy ? ' · Frank отвечает…' : ''}</div></div>
             <button type="button" className="btn sm icon" title="Удалить разговор" onClick={e => { e.stopPropagation(); del(c); }}><Icon name="trash" size={15} /></button>
           </div>)}</div>}
         {chats && chats.length ? <div className="dim3" style={{ fontSize: 12, textAlign: 'center', marginTop: 8 }}>Разговоры хранятся в Rack Live, пока вы их не удалите — видны с любого устройства.</div> : null}
@@ -318,7 +318,7 @@ function AskAi({ q, label = 'Спросить Frank', size = 'sm' }) {
 function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
-  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false }));
+  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false }));
   const [res, setRes] = useState(null);
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
@@ -334,6 +334,8 @@ function AiCard() {
           <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка с глазом вверху: вопросы о сети простыми словами.</div></div></div>
         <div className="row"><Switch on={!!s.actions} onChange={v => set('actions', v)} /><div className="grow"><div>Frank может предлагать действия</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Перезапуск PoE или порта, проверка кабеля, перезагрузка точки, выключатели Home Assistant, исправления безопасности. Сам Frank ничего не делает: под ответом появится карточка, и действие выполнится только после вашей кнопки «Выполнить».</div></div></div>
+        <div className="row"><Switch on={!!s.telegram} onChange={v => set('telegram', v)} /><div className="grow"><div>Отвечать в Telegram</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Напишите вопрос боту Rack Live в личку — ответит Frank. Только привязанным аккаунтам (Настройки → Уведомления → «Привязать Telegram»); /new — новый разговор. Разговоры видны и в приложении Frank.</div></div></div>
         <Field label="Сервис">
           <div className="row wrap" style={{ gap: 6 }}>{ai.presets.map(x => <button key={x.id} type="button" className={'chip' + (s.preset === x.id ? ' on' : '')} onClick={() => pick(x.id)}>{x.title}</button>)}</div></Field>
         {!p.noKey ? <Field label="Ключ API" hint={p.keyUrl ? <>Получить: <a href={p.keyUrl} target="_blank" rel="noreferrer">{p.keyUrl.replace(/^https:\/\//, '')}</a></> : null}>

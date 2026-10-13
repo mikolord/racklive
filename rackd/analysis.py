@@ -43,11 +43,13 @@ def analyze(topo, devices, states, cable_tests):
         adj[e['source']].add(e['target'])
         adj[e['target']].add(e['source'])
     root = 'inet' if 'inet' in nodes else next((i for i, n in nodes.items() if n.get('kind') == 'router'), None)
-    main = next((e['target'] for e in edges if e['source'] == 'inet' and e.get('kind') == 'wan'), None) \
+    # the ONT / modem in front of the router (map.wan) is the provider's side, not part of the LAN
+    wanbox = {i for i, n in nodes.items() if n.get('wan')}
+    main = next((e['target'] for e in edges if e.get('kind') == 'wan' and (e['source'] == 'inet' or e['source'] in wanbox)), None) \
         or next((i for i, n in nodes.items() if n.get('kind') == 'router'), None)
     # other routers (a captive-portal box, a tenant's router) are separate networks: endpoints, never a path for our LAN
     other_router = lambda i: nodes[i].get('kind') == 'router' and i != main
-    is_infra = lambda i: i != 'inet' and not other_router(i) and (nodes[i].get('kind') in INFRA or i.startswith('x:'))
+    is_infra = lambda i: i != 'inet' and i not in wanbox and not other_router(i) and (nodes[i].get('kind') in INFRA or i.startswith('x:'))
     checks = []
 
     def reach(skip_node=None, skip_edge=None):
@@ -75,7 +77,7 @@ def analyze(topo, devices, states, cable_tests):
         d, cur, guard = 0, i, 0
         while cur in parent and guard < 40:
             cur = parent[cur]['source']
-            if cur == 'inet':
+            if cur == 'inet' or cur in wanbox:
                 break
             d, guard = d + 1, guard + 1
         return d
@@ -98,7 +100,7 @@ def analyze(topo, devices, states, cable_tests):
             spof.append({'id': i, 'label': nodes[i]['label'], 'kind': nodes[i].get('kind'), 'deviceId': nodes[i].get('deviceId'),
                          'affected': len(lost), 'what': describe(lost)})
     spof.sort(key=lambda s: -s['affected'])
-    total_local = len([x for x in base if x != 'inet' and not nodes[x].get('remote')])
+    total_local = len([x for x in base if x != 'inet' and x not in wanbox and not nodes[x].get('remote')])
 
     # cables between infrastructure nodes that have no alternative path
     bridges = []

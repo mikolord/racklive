@@ -238,7 +238,8 @@ def main():
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
-                 'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings'}
+                 'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings',
+                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map'}
         for name, q in pages.items():
             if name == 'Помощник — настроен':          # a provider nobody listens on: enough for the panel to show the chat
                 api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-test'}, 'PUT')
@@ -258,6 +259,10 @@ def main():
                 check('настройки разбиты на разделы', out.count('set-item') >= 6 and 'set-head' in out)
             if name == 'Устройства · роутеры в сети':
                 check('карточка «Роутеры в сети»', 'router-row' in out and 'Гостевой домик' in out)
+            if name == 'Доступность':
+                check('доступность за 30 дней', 'up-bars' in out and 'сбо' in out)
+            if name == 'Карта — ONT':
+                check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':
                 check('карточка помощника в настройках', 'ai-settings' in out)
             if name == 'Настройки · Приложения':

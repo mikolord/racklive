@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, routers, security, speedtest, tgbot, topology
+from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -49,6 +49,7 @@ class App:
         self.tgbot = tgbot.TgBot(self)
         self.ai = assistant.Assistant(self)
         self.routers = routers.RouterScan(self)
+        self.uptime = uptime.Uptime(self.store)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
@@ -104,6 +105,10 @@ class App:
                     p['errDay'] = sum(x.get('err', 0) for x in h)
             self.states[d['id']] = st
             self.store.bump()
+            try:
+                self.uptime.from_state(d, st, st.get('updated') or time.time())
+            except Exception:
+                traceback.print_exc()
             prev, cur = old.get('status'), st.get('status')
             if prev is None and cur == 'offline':
                 self.store.add_event(d['id'], d.get('name'), 'offline', 'нет связи' + (f": {st.get('error')}" if st.get('error') else ''))
@@ -307,11 +312,11 @@ class App:
             devices.append(pd)
         units = self.store.all_units()
         topo = topology.build(cfg['devices'], self.states, units, cfg['map'].get('links'),
-                              cfg['settings'].get('showClients', True), REGISTRY)
+                              cfg['settings'].get('showClients', True), REGISTRY, cfg['map'].get('wan'))
         try:
             # analysis always sees the clients, even when the map hides them
             full = topo if cfg['settings'].get('showClients', True) else topology.build(
-                cfg['devices'], self.states, units, cfg['map'].get('links'), True, REGISTRY)
+                cfg['devices'], self.states, units, cfg['map'].get('links'), True, REGISTRY, cfg['map'].get('wan'))
             health = analysis.analyze(full, cfg['devices'], self.states, self.store.cable)
         except Exception:
             traceback.print_exc()
@@ -330,7 +335,7 @@ class App:
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
-                'speedtests': self.speed.public(),
+                'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
 
 
@@ -771,7 +776,7 @@ class Handler(BaseHTTPRequestHandler):
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/map' and method == 'PUT':
-                for k in ('positions', 'links', 'collapsed'):
+                for k in ('positions', 'links', 'collapsed', 'wan'):
                     if k in body:
                         st.cfg['map'][k] = body[k]
                 st.save()
@@ -866,6 +871,7 @@ class Handler(BaseHTTPRequestHandler):
                     st.add_event(None, d.get('name'), 'info', 'устройство удалено')
                     st.delete_device(did)
                     APP.backups.forget(did)
+                    APP.uptime.forget(did)
                     APP.states.pop(did, None)
                     return self.send({'ok': True})
                 if sub == 'poll' and method == 'POST':
@@ -1046,6 +1052,8 @@ def main():
         APP.inet.items = APP.store._load('inetspeed.json', [])
         APP.inet.last_run = max([x['t'] for x in APP.inet.items] or [0])
         APP.newdev = newdev.NewDevices(APP.store)
+        if not APP.uptime.data:
+            APP.uptime.seed_demo(APP.store.cfg['devices'])
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
         log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()

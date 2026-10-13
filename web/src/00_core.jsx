@@ -63,7 +63,7 @@ const fmt = {
 
 const speedClass = (p) => !p || !p.link ? '' : (p.speed >= 1000 ? 'g' : p.speed >= 100 ? 'y' : 'o');
 const speedColor = (s, kind) => {
-  if (kind === 'wifi') return 'var(--accent)'; if (kind === 'wan' || kind === 'remote') return 'var(--purple)';
+  if (kind === 'wifi') return 'var(--accent)'; if (kind === 'wan' || kind === 'isp' || kind === 'remote') return 'var(--purple)';
   if (kind === 'mesh') return 'var(--teal)'; if (kind === 'manual' || kind === 'lan') return 'var(--text3)';
   if (!s) return 'var(--text3)'; return s >= 1000 ? 'var(--green)' : s >= 100 ? 'var(--yellow)' : 'var(--orange)';
 };

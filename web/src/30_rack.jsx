@@ -202,6 +202,7 @@ function RackView() {
       <HealthCard />
       <SecurityCard />
       <InternetCard />
+      <UptimeCard />
       <Card title={`Устройства · ${rack.name}`}><div className="list">{rack.units.filter(u => u.deviceId && devById[u.deviceId]).sort((a, b) => (a.uStart || 0) - (b.uStart || 0)).map(u => {
         const d = devById[u.deviceId]; return <div className="li" key={u.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
           <KindIcon kind={d.kind} size={34} /><div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{d.name}</span>{rack.kind === 'rack' || !rack.kind ? <span className="dim3 mono" style={{ fontSize: 11 }}>U{u.uStart}</span> : null}</div>

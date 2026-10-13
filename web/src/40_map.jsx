@@ -13,7 +13,7 @@ function layoutMap(data, collapsed) {
   const rackMeta = {}; let ry = 0;
   racks.forEach(r => {
     const isRack = r.kind === 'rack' || !r.kind;
-    const devN = r.units.filter(u => u.deviceId && nodes['d:' + u.deviceId]).length;
+    const devN = r.units.filter(u => (u.deviceId && nodes['d:' + u.deviceId]) || nodes['u:' + u.id]).length;
     const rows = isRack ? r.totalU : Math.max(1, devN);        // box/room: one row per device
     rackMeta[r.id] = { id: r.id, name: r.name, kind: r.kind || 'rack', isRack, total: r.totalU, rows, y: ry, units: r.units };
     ry += rows * M.RU + 92;
@@ -23,8 +23,8 @@ function layoutMap(data, collapsed) {
   racks.forEach(r => {
     const m = rackMeta[r.id]; let i = 0;
     r.units.forEach(u => {
-      const nid = 'd:' + u.deviceId;
-      if (!u.deviceId || !nodes[nid]) return;
+      const nid = u.deviceId ? 'd:' + u.deviceId : 'u:' + u.id;     // u: — a unit without a device that is still on the map (the ONT)
+      if (!nodes[nid]) return;
       if (m.isRack && (u.side || 'front') === 'back') return;   // back-side units aren't drawn on the map
       rackNode[nid] = { ...u, rackId: r.id };
       pos[nid] = m.isRack
@@ -77,9 +77,11 @@ function layoutMap(data, collapsed) {
       cursor = y + M.GAP * 2;
     });
   }
-  // internet + remote devices on top
-  const topY = hasRack ? -170 : Math.min(0, ...Object.values(pos).map(p => p.y)) - 170;
+  // internet + remote devices on top; an ONT / modem that isn't in a rack sits between the internet and the rack
+  const box = hasRack && nodes['wan:box'] && !pos['wan:box'];
+  const topY = (hasRack ? -170 : Math.min(0, ...Object.values(pos).map(p => p.y)) - 170) - (box ? M.NH + 70 : 0);
   if (inet) pos['inet'] = { x: (hasRack ? M.RW / 2 : M.NW / 2) - M.NW / 2, y: topY, w: M.NW, h: M.NH };
+  if (box) { pos['wan:box'] = { x: M.RW / 2 - M.NW / 2, y: topY + M.NH + 70, w: M.NW, h: M.NH }; col['wan:box'] = -1; }
   const remotes = (kids['inet'] || []).filter(e => e.kind === 'remote').map(e => e.target);
   // remote devices go to the left of the internet node, so they never collide with the columns on the right
   remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) - (M.NW + 50) * (i + 1), y: topY, w: M.NW, h: M.NH }; col[id] = -1; });
@@ -100,8 +102,18 @@ function edgePath(e, L) {
     const d = cross ? 80 + Math.min(130, Math.abs(y2 - y1) * .12) : 26 + Math.min(70, Math.abs(y2 - y1) * .18);
     return { d: `M0,${y1} C${-d},${y1} ${-d},${y2} 0,${y2}`, lx: -d + 8, ly: (y1 + y2) / 2, inside: true, cross };
   }
-  if (e.source === 'inet' && b.rack) {
+  if (!a.rack && !b.rack && b.y >= a.y + a.h && b.x < a.x + a.w && b.x + b.w > a.x) {   // straight down (internet → ONT above the rack)
+    const x = (Math.max(a.x, b.x) + Math.min(a.x + a.w, b.x + b.w)) / 2, y1 = a.y + a.h, y2 = b.y;
+    return { d: `M${x},${y1} L${x},${y2}`, lx: x + 34, ly: (y1 + y2) / 2 + 4 };
+  }
+  if ((e.source === 'inet' || (L.nodes[e.source] || {}).wan) && b.rack && !a.rack) {
     const sx = a.x + a.w / 2, sy = a.y + a.h, ty = b.y + b.h / 2, tx = M.RW;
+    const lane = tx + 34;                                                     // run down a lane beside the rack, not across its face
+    if (ty - sy > 160) {
+      const y1 = sy + 60;
+      return { d: `M${sx},${sy} C${sx},${y1 - 10} ${lane},${sy + 10} ${lane},${y1 + 30} L${lane},${ty - 22} Q${lane},${ty} ${tx + 2},${ty}`,
+        lx: lane + 26, ly: y1 + 40 };
+    }
     return { d: `M${sx},${sy} C${sx},${sy + 60} ${tx + 70},${ty - 40} ${tx + 2},${ty}`, lx: tx + 34, ly: (sy + ty) / 2 };
   }
   if (e.source === 'inet' && b.x + b.w <= a.x) {      // remote device to the left of the internet node
@@ -314,18 +326,18 @@ function MapView() {
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
     <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>
       <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} /> : null}
+        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={setSel} /> : null}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
           return <g key={e.id} className={dim}>
-            <path className={'edge' + (e.kind === 'wifi' || e.kind === 'mesh' ? ' wifi' : '') + (e.kind === 'remote' || e.extra || e.kind === 'lan' ? ' dashed' : '')} d={g.d} stroke={col} opacity={e.extra ? .55 : 1} />
-            {(e.kind === 'wan' || (e.kind === 'wire' && e.speed >= 1000)) && !e.extra ? <path className="edge flow" d={g.d} stroke="#fff" opacity=".5" /> : null}
+            <path className={'edge' + (e.kind === 'wifi' || e.kind === 'mesh' ? ' wifi' : '') + (e.kind === 'remote' || e.extra || e.kind === 'lan' ? ' dashed' : '') + (e.kind === 'isp' ? ' isp' : '')} d={g.d} stroke={col} opacity={e.extra ? .55 : 1} />
+            {(e.kind === 'wan' || e.kind === 'isp' || (e.kind === 'wire' && e.speed >= 1000)) && !e.extra ? <path className="edge flow" d={g.d} stroke="#fff" opacity=".5" /> : null}
             {e.manual ? <path className="edge-hit" d={g.d} onClick={() => edgeClick(e)} /> : null}
             {e.sourcePort && !g.inside ? <g className="port-pill" transform={`translate(${g.lx - 14},${g.ly - 9})`}><rect width="28" height="18" rx="9" /><text x="14" y="12.5" textAnchor="middle">{e.sourcePort}</text></g> : null}
             {g.cross ? <g transform={`translate(${g.lx},${g.ly})`}><rect x={-52} y={-10} width={104} height={20} rx={10} fill="var(--accent)" opacity=".92" />
               <text x={0} y={4} textAnchor="middle" fontSize="11" fontWeight="600" fill="#fff">между шкафами{e.sourcePort ? ' · ' + e.sourcePort : ''}</text></g> : null}
             {e.poeW > 0 && g.mx ? <g transform={`translate(${g.lx - 14 - 50},${g.ly - 9})`}><rect width="44" height="18" rx="9" fill="#ffd60a" /><text x="22" y="12.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="#000">⚡{e.poeW}W</text></g> : null}
-            {(e.label && (e.manual || e.kind === 'wan')) ? <text x={g.lx} y={g.ly - 14} fontSize="11" fill="var(--text2)" textAnchor="middle">{e.label}</text> : null}
+            {(e.label && (e.manual || e.kind === 'wan' || e.kind === 'isp')) ? <text x={g.lx} y={g.ly - 14} fontSize="11" fill="var(--text2)" textAnchor="middle">{e.label}</text> : null}
           </g>; })}
         {Object.values(L.nodes).map(n => { const p = L.pos[n.id]; if (!p || p.rack) return null;
           return <MapNode key={n.id} n={n} p={p} sel={sel === n.id || searchHit.includes(n.id) || linking === n.id} dim={pathSet && !pathSet.has(n.id)} mark={spofSet && spofSet.has(n.id)}
@@ -346,39 +358,74 @@ function MapView() {
   </div>;
 }
 
-function RackBox({ L, data, devById, dimSet, markSet, onOpen }) {
-  return <>{L.racks.map(rk => <RackFrame key={rk.id} rk={rk} devById={devById} dimSet={dimSet} markSet={markSet} onOpen={onOpen} />)}</>;
+function RackBox({ L, data, devById, dimSet, markSet, onOpen, onSel }) {
+  return <>{L.racks.map(rk => <RackFrame key={rk.id} rk={rk} devById={devById} dimSet={dimSet} markSet={markSet} onOpen={onOpen} nodes={L.nodes} onSel={onSel} />)}</>;
 }
 
-function RackFrame({ rk, devById, dimSet, markSet, onOpen }) {
+function RackFrame({ rk, devById, dimSet, markSet, onOpen, nodes = {}, onSel }) {
   const h = rk.rows * M.RU;
   // rack: units at their U positions; box/room: linked devices stacked by order
   const rows = rk.isRack
     ? rk.units.filter(u => (u.side || 'front') === 'front').map(u => ({ u, y: (u.uStart - 1) * M.RU, hh: u.uSize * M.RU - 4 }))
-    : rk.units.filter(u => u.deviceId && devById[u.deviceId]).map((u, i) => ({ u, y: i * M.RU, hh: M.RU - 4 }));
+    : rk.units.filter(u => (u.deviceId && devById[u.deviceId]) || nodes['u:' + u.id]).map((u, i) => ({ u, y: i * M.RU, hh: M.RU - 4 }));
   return <g className="rackbox" transform={`translate(0,${rk.y})`}>
     <rect className="frame" x={-14} y={-46} width={M.RW + 28} height={h + 60} rx={16} />
     <text x={0} y={-22} fontSize="14" fontWeight="700">{rk.name}</text>
     <text x={M.RW} y={-22} fontSize="11" textAnchor="end" className="usub">{rk.isRack ? rk.total + 'U' : PLACE_KINDS[rk.kind].label}</text>
     {rk.isRack ? Array.from({ length: rk.total }, (_, i) => <text key={i} x={-7} y={i * M.RU + M.RU / 2 + 3} fontSize="8" textAnchor="middle" className="usub">{i + 1}</text>) : null}
     {rows.map(({ u, y, hh }) => {
-      const d = devById[u.deviceId]; const st = d && d.state;
-      const dim = dimSet && !(d && dimSet.has('d:' + d.id));
+      const d = devById[u.deviceId]; const un = !d && nodes['u:' + u.id];          // un: ONT / modem without a device (status from the WAN port)
+      const st = d ? d.state : un ? { status: un.status } : null;
+      const dim = dimSet && !(d ? dimSet.has('d:' + d.id) : un && dimSet.has(un.id));
       const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
-      return <g key={u.id} className={'u' + (dim ? ' dim-out' : '')} style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && onOpen(d)}>
+      return <g key={u.id} className={'u' + (dim ? ' dim-out' : '')} style={{ cursor: d || un ? 'pointer' : 'default' }} onClick={() => d ? onOpen(d) : un && onSel && onSel(un.id)}>
         <rect x={0} y={y} width={M.RW} height={hh} rx={6} />
         {d && markSet && markSet.has('d:' + d.id) ? <rect className="spof-mark" x={-3} y={y - 3} width={M.RW + 6} height={hh + 6} rx={8} /> : null}
         <rect x={0} y={y} width={4} height={hh} rx={2} fill={u.color || '#0a84ff'} stroke="none" />
         <g className="u-ic" transform={`translate(12,${y + hh / 2 - 9})`}><Icon name={kind} size={18} color="currentColor" /></g>
         <text x={38} y={y + (hh > 30 ? hh / 2 - 2 : hh / 2 + 4)} fontSize="12.5" fontWeight="600">{trunc(u.name, 30)}</text>
         {hh > 30 ? <text x={38} y={y + hh / 2 + 12} className="usub">{trunc(d ? deviceLine(d) : KIND_TEXT[u.type], 40)}</text> : null}
-        {st ? <circle cx={M.RW - 12} cy={y + 11} r={4} fill={st.status === 'online' ? 'var(--green)' : st.status === 'warning' ? 'var(--orange)' : 'var(--red)'} /> : null}
+        {st ? <circle cx={M.RW - 12} cy={y + 11} r={4} fill={st.status === 'online' ? 'var(--green)' : st.status === 'warning' ? 'var(--orange)' : st.status === 'unknown' ? 'var(--text3)' : 'var(--red)'} /> : null}
         {st && (st.ports || []).length > 4 ? <g transform={`translate(${M.RW - 14 - Math.ceil(Math.min(st.ports.length, 28) / 2) * 7},${y + hh - 17})`}>
           {st.ports.slice(0, 28).map((p, i) => <rect key={i} x={Math.floor(i / 2) * 7} y={(i % 2) * 7} width={5} height={5} rx={1}
             fill={!p.link ? '#3a3a3c' : p.speed >= 1000 ? '#30d158' : p.speed >= 100 ? '#ffd60a' : '#ff9f0a'} stroke="none" />)}</g> : null}
       </g>;
     })}
   </g>;
+}
+
+/* how the internet reaches the router: straight in, or through an ONT (PON) / modem — map.wan */
+const WAN_OPTS = [{ value: 'auto', label: 'Авто' }, { value: 'direct', label: 'Напрямую' }, { value: 'ont', label: 'ONT (PON)' }, { value: 'modem', label: 'Модем' }];
+function WanSetup({ n, L, data }) {
+  const { admin, saveMap } = useApp();
+  const wan = data.map.wan || {}; const via = wan.via || 'auto';
+  const box = Object.values(L.nodes).find(x => x.wan);
+  const wanEdge = L.edges.find(e => e.kind === 'wan');
+  const set = patch => saveMap({ wan: { ...wan, ...patch } });
+  const units = allUnits(data).filter(u => !['cross', 'patch', 'router', 'switch', 'blank', 'organizer', 'shelf'].includes(u.type) && (u.side || 'front') === 'front');
+  const isp = L.edges.find(e => e.kind === 'isp');
+  const now = box ? `${n.id === 'inet' ? 'Интернет → ' : ''}${box.label} → ${wanEdge && L.nodes[wanEdge.target] ? L.nodes[wanEdge.target].label : 'роутер'}`
+    : wanEdge && L.nodes[wanEdge.target] ? `Интернет → ${L.nodes[wanEdge.target].label} (кабель провайдера прямо в роутер)` : '';
+  return <div className="wan-setup">
+    <div className="dim" style={{ fontSize: 12.5, marginBottom: 6 }}>{now}{wanEdge && wanEdge.targetPort ? ` · порт ${wanEdge.targetPort}` : ''}{wanEdge && wanEdge.label ? ` · ${wanEdge.label}` : ''}
+      {isp && isp.label ? <><br />Линия провайдера: {isp.label}</> : null}</div>
+    {admin ? <>
+      <div className="card-title" style={{ margin: '8px 0 6px' }}>Как приходит интернет</div>
+      <Seg value={via} onChange={v => set({ via: v })} options={WAN_OPTS} />
+      <div className="dim3" style={{ fontSize: 12, margin: '6px 0 0', lineHeight: 1.4 }}>
+        {via === 'auto' ? 'Rack Live сам ищет в шкафу юнит «Модем / ONT» или с «PON», «ONT», «модем» в названии.' : via === 'direct' ? 'Кабель провайдера включён прямо в роутер.'
+          : via === 'ont' ? 'Оптика приходит в PON-терминал, от него кабель в роутер.' : 'Линия (DSL, кабельный, LTE) приходит в модем, от него кабель в роутер.'}</div>
+      {via !== 'direct' ? <div className="row wrap" style={{ gap: 8, marginTop: 8 }}>
+        <select className="select grow" style={{ minWidth: 150 }} value={wan.unit || ''} onChange={e => set({ unit: e.target.value || undefined })}>
+          <option value="">Найти в шкафу сам</option>
+          <option value="none">Не в шкафу</option>
+          {units.map(u => <option key={u.id} value={u.id}>{u.rackName} · {u.name}</option>)}
+        </select>
+        <input className="input grow" style={{ minWidth: 130 }} defaultValue={wan.line || ''} placeholder={via === 'modem' ? 'Линия: DSL, LTE…' : 'Линия: оптика'}
+          onBlur={e => e.target.value.trim() !== (wan.line || '') && set({ line: e.target.value.trim() || undefined })} />
+      </div> : null}
+    </> : null}
+  </div>;
 }
 
 function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
@@ -394,6 +441,7 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
     <div style={{ marginTop: 10 }}><KV rows={[['IP', n.sub ? <span className="mono">{n.sub}</span> : null], ...(n.mac ? [['MAC', <span className="mono">{n.mac}</span>]] : []),
       ...(client && client.segment ? [['Сеть', client.segment]] : []), ['Подключение', conn], ...(pe && pe.poeW ? [['PoE', pe.poeW + ' Вт']] : []),
       ...(dev ? [['Состояние', STATUS_TEXT[(dev.state || {}).status]]] : [])]} /></div>
+    {n.id === 'inet' || n.wan ? <WanSetup n={n} L={L} data={data} /> : null}
     {dev ? <Btn kind="primary" style={{ width: '100%', marginTop: 12 }} onClick={() => onOpen(dev)}>Подробнее</Btn> : null}
     {!dev && pe && pe.sourcePort && parent && parent.deviceId ? <Btn style={{ width: '100%', marginTop: 12 }} onClick={() => onOpen(devById[parent.deviceId], 'ports', pe.sourcePort)}>Порт {pe.sourcePort} на {parent.label}</Btn> : null}
   </div>;

@@ -26,7 +26,8 @@ PRESETS = {
 }
 DEFAULT = {'enabled': False, 'preset': 'deepseek', 'base': '', 'model': '', 'key': '', 'proxy': '', 'limit': 50,
            'effort': '',            # '' = the model's default · low | high | max (how deep the model thinks)
-           'actions': True}         # Frank may propose actions (each one needs the admin's press)
+           'actions': True,         # Frank may propose actions (each one needs the admin's press)
+           'telegram': True}        # linked Telegram accounts can ask Frank in the bot
 ROUNDS = 8                  # tool rounds per question
 RESULT_MAX = 14000          # characters of one tool result
 HISTORY = 12                # previous chat messages sent along
@@ -63,7 +64,7 @@ def resolved(c):
 
 def public(c):
     r = resolved(c)
-    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions')}
+    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram')}
     out.update(base=merged(c)['base'], model=merged(c)['model'], keySet=bool(r['key']), title=r['title'],
                ready=bool(r['enabled'] and r['base'] and r['model'] and (r['key'] or r['noKey'])), effModel=r['model'])
     return out
@@ -85,6 +86,8 @@ TOOLS = [
                      'Можно искать по части имени, IP или MAC.',
      {'query': ('string', 'что искать (необязательно)'), 'device': ('string', 'только клиенты этого роутера/точки (необязательно)')}),
     ('network_health', 'Анализ сети Rack Live: тип топологии, оценка, точки отказа, замечания (медленные линки, ошибки портов, слабый Wi-Fi…).', {}),
+    ('availability', 'Доступность за 30 дней по устройствам и mesh-точкам: % времени в сети (30 и 7 дней), сколько раз пропадали, '
+                     'последний и самый долгий сбой, по дням. Для вопросов «что барахлило», «часто ли падает…».', {}),
     ('security_findings', 'Замечания безопасности: открытые порты и пробросы, удалённый доступ к роутеру, пароли по умолчанию, telnet/SNMP, прошивки; '
                           'результат проверки портов снаружи.', {}),
     ('events', 'Журнал событий: сбои, восстановления, входы, действия, новые устройства, изменения конфигурации.',
@@ -100,7 +103,7 @@ TOOLS = [
 ]
 
 LABEL = {'network_overview': 'обзор сети', 'device_details': 'устройство', 'find_clients': 'клиенты', 'network_health': 'здоровье сети',
-         'security_findings': 'безопасность', 'events': 'журнал', 'device_history': 'история', 'speed_tests': 'замеры скорости',
+         'security_findings': 'безопасность', 'availability': 'доступность', 'events': 'журнал', 'device_history': 'история', 'speed_tests': 'замеры скорости',
          'config_changes': 'конфигурация', 'topology': 'топология', 'propose_action': 'готовлю действие'}
 
 # the only way Frank can change anything: a proposal card the admin has to press
@@ -284,6 +287,15 @@ def run_tool(app, name, args):
     if name == 'network_health':
         h = view.get('health') or {}
         return {k: h.get(k) for k in ('score', 'type', 'checks', 'spof', 'stats')}
+    if name == 'availability':
+        def when(t):
+            return time.strftime('%d.%m %H:%M', time.localtime(t)) if t else None
+        return [{'name': u['name'], 'kind': u['kind'], 'pct30': u['pct'], 'pct7': u['pct7'], 'outages30': u['outs'], 'outages7': u['outs7'],
+                 'downNow': u['downNow'], 'downTotalMin': round(u['down'] / 60),
+                 'last': {'start': when(u['last']['start']), 'end': when(u['last']['end']) or 'ещё не в сети', 'min': round(u['last']['dur'] / 60)} if u['last'] else None,
+                 'longestMin': round(u['longest'] / 60), 'since': u['since'],
+                 'badDays': [{'day': i - 29, 'pct': v} for i, v in enumerate(u['days']) if v is not None and v < 99.5]}
+                for u in view.get('uptime') or []]
     if name == 'security_findings':
         s = view.get('security') or {}
         return {'score': s.get('score'), 'counts': s.get('counts'),
@@ -615,7 +627,7 @@ class Assistant:
     def chat_list(self):
         busy = {j['chat'] for j in self.jobs.values() if not j['done']}
         return [{'id': c['id'], 'title': c['title'], 'created': c['created'], 'updated': c['updated'], 'count': len(c['messages']),
-                 'busy': c['id'] in busy} for c in sorted(self.chats, key=lambda c: -c['updated'])]
+                 'busy': c['id'] in busy, 'src': c.get('src')} for c in sorted(self.chats, key=lambda c: -c['updated'])]
 
     def chat_view(self, cid):
         c = self.chat(cid)
@@ -652,8 +664,8 @@ class Assistant:
             self.app.store._dump('ai.json', self.usage)
             self.app.store.bump()
 
-    def start(self, cid, text):
-        """A question into chat `cid` (None = a new chat). → (job, chat id)"""
+    def start(self, cid, text, src=None):
+        """A question into chat `cid` (None = a new chat; src 'telegram' = asked in the bot). → job"""
         c = self.app.store.cfg.get('ai') or {}
         text = str(text or '').strip()[:8000]
         if not text:
@@ -671,6 +683,8 @@ class Assistant:
             if not ch:
                 title = re.sub(r'\s+', ' ', text)
                 ch = {'id': 'c' + secrets.token_hex(5), 'title': title[:60] + ('…' if len(title) > 60 else ''), 'created': now, 'updated': now, 'messages': []}
+                if src:
+                    ch['src'] = src
                 self.chats.append(ch)
             ch['messages'].append({'role': 'user', 'text': text, 't': now})
             ch['updated'] = now

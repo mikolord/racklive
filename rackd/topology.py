@@ -4,9 +4,26 @@ Each node is attached to at most one parent (it's a tree rooted at "Интерн
 plus any manual links the user drew in edit mode.
 """
 import ipaddress
+import re
 
 ROUTER_DRIVERS = ('keenetic', 'openwrt', 'demo_router')
 SWITCH_DRIVERS = ('tplink_jetstream', 'snmp', 'demo_switch')
+# how the internet reaches the router: map.wan = {via: auto|direct|ont|modem, unit, name}
+WAN_VIA = {'ont': ('PON-терминал', 'оптика'), 'modem': ('Модем', 'линия провайдера')}
+ONT_RE = re.compile(r'(^|[^a-z])(g?e?x?pon|ont|onu)([^a-z]|$)|оптич\w*\s+терминал|терминал', re.I)
+MODEM_RE = re.compile(r'модем|modem|lte|dsl|docsis', re.I)
+
+
+def wan_unit(units, wan):
+    """the rack unit that is the ONT / modem: chosen by the user, else type «Модем / ONT», else guessed by its name"""
+    wan = wan or {}
+    if wan.get('unit') == 'none':                  # «не в шкафу» — the box is drawn above the rack
+        return None
+    if wan.get('unit'):
+        return next((u for u in units if u.get('id') == wan['unit']), None)
+    cands = [u for u in units if u.get('type') not in ('cross', 'patch', 'router', 'switch') and (u.get('side') or 'front') == 'front']
+    return next((u for u in cands if u.get('type') == 'modem'), None) \
+        or next((u for u in cands if ONT_RE.search(u.get('name') or '') or MODEM_RE.search(u.get('name') or '')), None)
 
 
 def _is_ip(s):
@@ -17,7 +34,34 @@ def _is_ip(s):
         return False
 
 
-def build(devices, states, rack_units, manual_links, show_clients=True, drivers=None):
+def _wan_box(wan_cfg, units, nodes, add, wan_port):
+    """→ (node id, label for the provider line) when the internet comes through an ONT / modem; None = straight into the router"""
+    wan_cfg = wan_cfg or {}
+    via = wan_cfg.get('via') or 'auto'
+    if via == 'direct':
+        return None
+    u = wan_unit(units, wan_cfg)
+    if via == 'auto':
+        if not u:
+            return None
+        via = 'modem' if u.get('type') != 'modem' and MODEM_RE.search(u.get('name') or '') and not ONT_RE.search(u.get('name') or '') else 'ont'
+    title, line = WAN_VIA.get(via, WAN_VIA['ont'])
+    # the box is up when the router's WAN port has a link (its own status if a device is bound to the unit)
+    link = (wan_port or {}).get('link')
+    status = 'online' if link else 'offline' if link is False else 'unknown'
+    if u and u.get('deviceId') and 'd:' + u['deviceId'] in nodes:
+        nid = 'd:' + u['deviceId']
+        nodes[nid]['wan'] = True
+    elif u:
+        nid = add({'id': 'u:' + u['id'], 'label': wan_cfg.get('name') or u.get('name') or title, 'sub': title, 'kind': 'modem', 'status': status,
+                   'rackUnit': u['id'], 'rackId': u.get('rackId'), 'wan': True})
+    else:
+        nid = add({'id': 'wan:box', 'label': wan_cfg.get('name') or title, 'sub': 'у провайдера' if via == 'ont' else '', 'kind': 'modem',
+                   'status': status, 'wan': True})
+    return nid, wan_cfg.get('line') or line
+
+
+def build(devices, states, rack_units, manual_links, show_clients=True, drivers=None, wan_cfg=None):
     nodes, edges, attached = {}, [], set()
     unit_by_dev = {u['deviceId']: u for u in rack_units if u.get('deviceId')}       # each unit carries rackId
 
@@ -105,8 +149,13 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
 
     wan = next((p for p in main_ports if p.get('kind') == 'wan'), None)
     if main:
-        edge(internet(), main_id, targetPort=wan['n'] if wan else None, speed=(wan or {}).get('speed'), kind='wan',
-             label=(wan or {}).get('ip') or '')
+        box = _wan_box(wan_cfg, rack_units, nodes, add, wan)
+        wan_kw = dict(targetPort=wan['n'] if wan else None, speed=(wan or {}).get('speed'), kind='wan', label=(wan or {}).get('ip') or '')
+        if box:                                    # internet → ONT / modem (provider line) → cable → router WAN port
+            edge(internet(), box[0], kind='isp', label=box[1])
+            edge(box[0], main_id, **wan_kw)
+        else:
+            edge(internet(), main_id, **wan_kw)
         attached.add(internet())
 
     router_uplink_port = None
