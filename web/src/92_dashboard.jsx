@@ -353,7 +353,9 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
       <span className="wg-tile-top"><span className="wg-tile-ic" style={{ background: d.color }}><Icon name={d.icon} size={14} color="#fff" stroke={2.2} /></span>
         <span className="wg-tile-name ellipsis">{name}</span></span>
       <span className="wg-tile-art">{art}</span>
-      {showV ? <span className="wg-tile-v" style={{ color: t.bad ? 'var(--orange)' : undefined }}>{t.v}</span> : null}
+      <span className="wg-tile-big"><Icon name={d.icon} size={46} stroke={1.5} /></span>        {/* «Графит»: a big outline icon instead of the picture */}
+      {showV ? <span className="wg-tile-v" style={{ color: t.bad ? 'var(--orange)' : undefined }}>{t.v}</span>
+        : t.v !== '' && t.v != null ? <span className="wg-tile-v gv" style={{ color: t.bad ? 'var(--orange)' : undefined }}>{t.v}</span> : null}
       <span className="wg-tile-s ellipsis">{t.s}</span>
     </button>;
   } else {

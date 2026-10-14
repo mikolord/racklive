@@ -126,9 +126,12 @@ const ICON_PATHS = {
 };
 /* the app icons (Rack Live / Frank / speed test) — same files as on the home screen; ?v= busts the old cached ones */
 const APP_ICONS = { rack: '/icon.svg?v=27', frank: '/frank-icon.svg?v=27', speed: '/speed-icon.svg?v=27' };
+const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1' };
 function AppIcon({ app = 'rack', size = 30, radius, style }) {
-  return <img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false"
-    style={{ borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, display: 'block', ...style }} />;
+  const st = { borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, ...style };
+  // every app icon has a flat outline twin for the «Графит» look (css shows one of the two, so the original look is untouched)
+  return <><img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false" className="app-ic-c" style={{ display: 'block', ...st }} />
+    <img src={APP_ICONS_G[app]} width={size} height={size} alt="" draggable="false" className="app-ic-g" style={st} /></>;
 }
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {
   const d = ICON_PATHS[name] || ICON_PATHS.other;

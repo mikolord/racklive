@@ -6,7 +6,7 @@ RUN case "$(uname -m)" in x86_64) a=x86_64;; aarch64) a=aarch64;; armv7l) a=armh
     [ -z "$a" ] || wget -qO- "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$a.tgz" | tar xz -C /usr/local/bin speedtest || true
 WORKDIR /app
 COPY rackd ./rackd
-COPY web/index.html web/styles.css web/app.js web/agent.py web/icon.svg web/icon-512.png web/icon-192.png web/apple-touch-icon.png web/manifest.json web/frank.html web/frank-manifest.json web/frank-icon.svg web/frank-icon-512.png web/frank-icon-192.png web/frank-apple-touch-icon.png web/speed.html web/speed-manifest.json web/speed-icon.svg web/speed-icon-512.png web/speed-icon-192.png web/speed-apple-touch-icon.png ./web/
+COPY web/index.html web/styles.css web/app.js web/agent.py web/icon.svg web/icon-graphite.svg web/icon-512.png web/icon-192.png web/apple-touch-icon.png web/manifest.json web/frank.html web/frank-manifest.json web/frank-icon.svg web/frank-icon-graphite.svg web/frank-icon-512.png web/frank-icon-192.png web/frank-apple-touch-icon.png web/speed.html web/speed-manifest.json web/speed-icon.svg web/speed-icon-graphite.svg web/speed-icon-512.png web/speed-icon-192.png web/speed-apple-touch-icon.png ./web/
 COPY web/vendor ./web/vendor
 ENV RL_DATA=/data RL_WEB=/app/web RL_PORT=8080 PYTHONUNBUFFERED=1
 VOLUME /data

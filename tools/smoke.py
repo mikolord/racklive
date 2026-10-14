@@ -405,6 +405,8 @@ def main():
                  'Обучение Frank — приветствие': '?tour=1#rack', 'Обучение Frank — устройства': '?tour=1&tourstep=1#rack',
                  'Обучение Frank — определить': '?tour=1&tourstep=3&add=1#devices', 'Обучение — в настройках': '?section=general#settings',
                  'Коммутатор — защита от петель': f'?device={dev["demo_switch"]}',
+                 'Настройки — оформление': '?section=look#settings',
+                 'Главная — стиль «Графит»': '?skin=graphite&accent=green#rack',
                  'Устройства — удалённые': '#devices', 'Доступ — вход и устройства': '?section=access#settings',
                  'Доступ — подключение приложения': '?section=access&mfa=totp#settings',
                  'Новое устройство — группы': '?add=1#devices', 'Новое устройство — роутеры': '?add=1&addgrp=router#devices',
@@ -464,6 +466,10 @@ def main():
                 i = out.find('Защита от петель')
                 check('карточка «Защита от петель» у коммутатора', 'Защита от петель' in out and 'Выключена' in out and 'Включить защиту от петель' in out,
                       re.sub(r'<[^>]+>', ' ', out[i: i + 900]) if i >= 0 else 'карточки нет; длина ' + str(len(out)))
+            if name == 'Настройки — оформление':
+                check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
+            if name == 'Главная — стиль «Графит»':
+                check('стиль «Графит» включается атрибутами на <html>', 'data-skin="graphite"' in out and 'data-accent="green"' in out)
             if name == 'Устройства — удалённые':
                 check('вкладки Все / Локальные / Удалённые', all(x in out for x in ('Все · ', 'Локальные · ', 'Удалённые · ')))
             if name == 'Новое устройство — группы':

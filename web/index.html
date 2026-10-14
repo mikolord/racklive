@@ -23,7 +23,7 @@
    var no=function(e){e.preventDefault()},o={passive:false};
    ['gesturestart','gesturechange','gestureend','dblclick'].forEach(function(t){document.addEventListener(t,no,o)});
    var last=0;document.addEventListener('touchend',function(e){var n=Date.now();if(n-last<300&&!e.target.closest('textarea,input,select,button,a,[role=button]'))e.preventDefault();last=n},o);})();
-  try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);
+  try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);var qs=(location.search.match(/skin=(classic|graphite)/)||[])[1],qa=(location.search.match(/accent=(\w+)/)||[])[1];if(qs)localStorage.setItem('rl_skin',qs);if(qa)localStorage.setItem('rl_accent',qa==='none'?'':qa);var sk=localStorage.getItem('rl_skin'),ac=localStorage.getItem('rl_accent');if(sk&&sk!=='classic'){document.documentElement.setAttribute('data-skin',sk);if(sk==='graphite'){var fl=document.querySelector('link[rel~="icon"]');if(fl)fl.setAttribute('href','icon-graphite.svg?v=1');}}if(ac)document.documentElement.setAttribute('data-accent',ac);
   if(t!=='auto'){document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.removeAttribute('media');m.setAttribute('content',r==='dark'?'#000000':'#f2f2f7')})}}catch(e){}</script>
 </head>
 <body>

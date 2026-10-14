@@ -131,7 +131,7 @@ function App() {
     if (data.settings.tourDone !== true) { try { await api('/api/tour', { method: 'POST', body: {} }); } catch (e) { } refresh(); }
   };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, arrange, setArrange, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
+  const ctx = { data, admin, edit, arrange, setArrange, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in

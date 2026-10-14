@@ -1183,3 +1183,110 @@ html.app-touch input, html.app-touch textarea, html.app-touch [contenteditable],
 .room-tag { fill: color-mix(in srgb, var(--accent) 22%, var(--card-solid)); stroke: color-mix(in srgb, var(--accent) 45%, transparent); stroke-width: .6; }
 .room-tag-t { font-size: 9.5px; font-weight: 700; fill: var(--accent); }
 .rackbox.boxframe .frame { stroke-dasharray: none; }
+
+/* ── Оформление (Настройки → Оформление): skin = data-skin on <html>, accent = data-accent; both are kept per device (localStorage rl_skin / rl_accent).
+   «classic» is the default look above. «graphite» is flat: pure black, grey cards without blur, thin outlines, green accent. ── */
+[data-skin="graphite"] { --r: 16px; --r-lg: 24px; --shadow: none; --shadow-lg: 0 24px 70px rgba(0,0,0,.28);
+  --bg: #f4f4f2; --bg2: #ffffff; --card: #ffffff; --card-solid: #ffffff; --elev: #ffffff; --text: #111112; --text2: #66666b; --text3: #9a9a9f;
+  --line: #e3e3df; --line2: #d2d2ce; --fill: #ececea; --fill2: #dcdcd8; --accent: #2f9e4f; --dock: #ffffff; --glass: #ffffff; --glass-line: #e3e3df; --dock-glass: #ffffff; --fr-btn: #ececea; }
+[data-skin="graphite"][data-theme="dark"] { --shadow: none; --shadow-lg: 0 24px 70px rgba(0,0,0,.6);
+  --bg: #000000; --bg2: #0d0d0d; --card: #242424; --card-solid: #242424; --elev: #171717; --text: #ffffff; --text2: #a0a0a5; --text3: #6b6b70;
+  --line: #262628; --line2: #3a3a3d; --fill: #2c2c2e; --fill2: #3c3c3f; --accent: #4cb868; --dock: #0a0a0a; --glass: #141414; --glass-line: #262628; --dock-glass: #121212; --fr-btn: #2c2c2e; }
+[data-skin="graphite"] .app-bg { background: var(--bg); }
+[data-skin="graphite"] .topbar::before, [data-skin="graphite"] .bottombar::before { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; background: var(--dock); border-color: var(--line); }
+[data-skin="graphite"] .card { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; background: var(--card-solid); border: 1px solid var(--line); }
+[data-skin="graphite"] .modal, [data-skin="graphite"] .sheet { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--elev); border-color: var(--line2); }
+[data-skin="graphite"] .overlay { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(0,0,0,.6); }
+[data-skin="graphite"] .tab.on, [data-skin="graphite"] .seg button.on { box-shadow: none; }
+[data-skin="graphite"] .switch.on { background: var(--accent); }
+[data-skin="graphite"] .btn.primary { color: #fff; }
+[data-skin="graphite"] .bottombar button.on svg { filter: none; }
+[data-skin="graphite"] .wg-in { background: var(--bg); border: 1px solid var(--line2); box-shadow: none; }
+[data-skin="graphite"] .wg.size-S .wg-in { background: var(--card-solid); border-color: var(--line); }
+[data-skin="graphite"] .wg[class*="tone-"] .wg-in { background: color-mix(in srgb, var(--tone) 9%, var(--bg)); border-color: color-mix(in srgb, var(--tone) 55%, transparent); }
+[data-skin="graphite"] .wg-tile-art, [data-skin="graphite"] .mini-svg { filter: none; }
+[data-skin="graphite"] .ios-group { background: var(--card-solid); border: 1px solid var(--line); }
+[data-skin="graphite"] .hdr-menu { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--elev); border-color: var(--line2); }
+[data-skin="graphite"] .fr-dock, [data-skin="graphite"] .fr-top .fr-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* accent colours (the same for both looks); selectors are as specific as the skin rules and come after them */
+[data-accent="blue"][data-theme] { --accent: #0a84ff; } [data-accent="green"][data-theme] { --accent: #30b455; } [data-accent="purple"][data-theme] { --accent: #a259e6; }
+[data-accent="orange"][data-theme] { --accent: #f5870a; } [data-accent="red"][data-theme] { --accent: #f2453d; } [data-accent="teal"][data-theme] { --accent: #20b4cc; }
+[data-accent="pink"][data-theme] { --accent: #ee3d73; }
+
+/* the picker in Settings */
+.look-skins { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.look-skin { display: flex; flex-direction: column; gap: 10px; text-align: left; padding: 10px; border-radius: 20px; border: 2px solid var(--line); background: var(--fill); cursor: pointer; color: inherit; font: inherit; }
+.look-skin.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--fill)); }
+.look-skin b { font-size: 15px; } .look-skin small { color: var(--text2); font-size: 12.5px; line-height: 1.4; }
+.look-prev { border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--line); pointer-events: none; }
+.look-prev .lp-card { border-radius: 10px; padding: 8px 10px; background: var(--card-solid); border: 1px solid var(--line); display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; }
+.look-prev .lp-card i { width: 18px; height: 18px; border-radius: 6px; background: var(--accent); display: block; flex: none; }
+.look-prev .lp-card small { margin-left: auto; color: var(--text2); font-weight: 500; }
+.look-prev .lp-ok { border-radius: 10px; padding: 8px 10px; font-size: 12px; font-weight: 650; background: color-mix(in srgb, #30d158 9%, var(--bg)); border: 1px solid color-mix(in srgb, #30d158 55%, transparent); color: #4cc364; }
+.look-prev .lp-btn { align-self: flex-start; border-radius: 9px; padding: 5px 12px; font-size: 12px; font-weight: 700; background: var(--accent); color: #fff; }
+.look-accents { display: flex; gap: 10px; flex-wrap: wrap; }
+.look-dot { width: 38px; height: 38px; border-radius: 50%; border: 3px solid transparent; box-shadow: 0 0 0 1.5px var(--line2); cursor: pointer; padding: 0; display: grid; place-items: center; }
+.look-dot.on { box-shadow: 0 0 0 2px var(--text); } .look-dot.def { background: conic-gradient(#0a84ff, #30d158, #ffd60a, #ff453a, #bf5af2, #0a84ff); }
+@media (max-width: 520px) { .look-skins { grid-template-columns: 1fr; } }
+/* graphite: icons are plain outlines (no coloured squares), tiles and small cards are flat grey with a hairline */
+[data-skin="graphite"] .wg-tile-ic, [data-skin="graphite"] .set-ic { background: transparent !important; box-shadow: none !important; }
+[data-skin="graphite"] .wg-tile-ic svg, [data-skin="graphite"] .set-ic svg { stroke: var(--text) !important; }
+[data-skin="graphite"] .wg[class*="tone-"] .wg-tile-ic { background: transparent !important; } [data-skin="graphite"] .wg[class*="tone-"] .wg-tile-ic svg { stroke: var(--tone) !important; }
+[data-skin="graphite"] .stat, [data-skin="graphite"] .state-tile, [data-skin="graphite"] .shortcut { background: var(--fill); border: 0; }
+[data-skin="graphite"] .tile, [data-skin="graphite"] .ios-cell { background: var(--card-solid); border: 1px solid var(--line); }
+[data-skin="graphite"] .tile:hover { box-shadow: none; transform: none; }
+[data-skin="graphite"] .mini-faces span { border-color: var(--card-solid); }
+[data-skin="graphite"] .wg-tile-v { font-weight: 800; }
+[data-skin="graphite"] .badge { border: 1px solid var(--line); background: transparent; }
+[data-skin="graphite"] .badge.online { color: #4cc364; border-color: color-mix(in srgb, #4cc364 50%, transparent); background: color-mix(in srgb, #4cc364 8%, transparent); }
+[data-skin="graphite"] .chip { background: transparent; border: 1px solid var(--line2); } [data-skin="graphite"] .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+/* the «Rack Live» preview keeps the original colours even while another look is active */
+.look-prev[data-skin="classic"][data-theme="dark"] { --bg: #000; --card-solid: #1c1c1e; --text: #f5f5f7; --text2: rgba(235,235,245,.66); --line: rgba(84,84,88,.45); --accent: #0a84ff; --fill: rgba(118,118,128,.22); }
+.look-prev[data-skin="classic"][data-theme="light"] { --bg: #f2f2f7; --card-solid: #fff; --text: #1c1c1e; --text2: rgba(60,60,67,.72); --line: rgba(60,60,67,.12); --accent: #007aff; --fill: rgba(120,120,128,.12); }
+.look-prev[data-skin="classic"] .lp-card { border-radius: 14px; } .look-prev[data-skin="classic"] { border-radius: 18px; }
+.look-prev[data-accent][data-theme] .lp-card i, .look-prev[data-accent][data-theme] .lp-btn { background: var(--accent); }
+
+/* «Графит»: a tile is a big outline icon, the name, the value and a grey line — like the reference; the live picture is only in the original look */
+.wg-tile-big, .wg-tile-v.gv { display: none; }
+[data-skin="graphite"] .wg.size-S .wg-tile { align-items: center; text-align: center; justify-content: center; gap: 4px; }
+[data-skin="graphite"] .wg.size-S .wg-tile-top { order: 2; justify-content: center; } [data-skin="graphite"] .wg.size-S .wg-tile-top .wg-tile-ic { display: none; }
+[data-skin="graphite"] .wg.size-S .wg-tile-name { font-size: 15px; font-weight: 750; color: var(--text); text-align: center; }
+[data-skin="graphite"] .wg.size-S .wg-tile-art { display: none; }
+[data-skin="graphite"] .wg.size-S .wg-tile-big { order: 1; display: flex; flex: 1; align-items: center; justify-content: center; color: var(--text); min-height: 0; }
+[data-skin="graphite"] .wg.size-S .wg-tile-big svg { width: clamp(30px, 30cqw, 52px); height: auto; stroke: currentColor !important; fill: none; }
+[data-skin="graphite"] .wg.size-S .wg-tile-v, [data-skin="graphite"] .wg.size-S .wg-tile-v.gv { order: 3; display: block; font-size: clamp(18px, 11cqw, 26px); }
+[data-skin="graphite"] .wg.size-S .wg-tile-s { order: 4; color: var(--text2); text-align: center; max-width: 100%; }
+[data-skin="graphite"] .wg[class*="tone-"] .wg-tile-big { color: var(--tone); }
+[data-skin="graphite"] .wg.size-S .wg-tile { padding-top: 6px; }
+[data-skin="graphite"] .wg.size-S .wg-tile-big svg { width: clamp(38px, 38cqw, 72px); stroke-width: 1.4; }
+.app-ic-g { display: none; } [data-skin="graphite"] .app-ic-c { display: none !important; } [data-skin="graphite"] .app-ic-g { display: block; }
+
+/* «Графит»: Frank, the speed test and the welcome tour — flat, no glass and no blue; the original look above is untouched */
+[data-skin="graphite"] .ai-panel, [data-skin="graphite"] .ai-panel.standalone .ai-head { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; }
+[data-skin="graphite"] .ai-bubble { background: var(--card-solid); border: 1px solid var(--line); }
+[data-skin="graphite"] .ai-msg.user .ai-bubble { background: var(--accent); border-color: var(--accent); color: #fff; }
+[data-skin="graphite"] .ai-msg.err .ai-bubble { background: color-mix(in srgb, var(--red) 10%, var(--bg)); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+[data-skin="graphite"] .ai-logo { background: var(--card-solid); border: 1px solid var(--line2); }
+[data-skin="graphite"] .ai-tools span, [data-skin="graphite"] .ai-cmd, [data-skin="graphite"] .ai-ops-head { background: var(--fill); }
+[data-skin="graphite"] .frank-install { background: var(--card-solid); border: 1px solid var(--line); }
+[data-skin="graphite"] .fr-blur { backdrop-filter: none; -webkit-backdrop-filter: none; -webkit-mask-image: none; mask-image: none; background: linear-gradient(var(--bg) 55%, transparent); }
+[data-skin="graphite"] .fr-circle, [data-skin="graphite"] .fr-dbtn, [data-skin="graphite"] .fr-model { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--fill); border: 1px solid var(--line); box-shadow: none; }
+[data-skin="graphite"] .fr-dock { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--card-solid); border: 1px solid var(--line2); box-shadow: none; }
+[data-skin="graphite"] .fr-send.on, [data-skin="graphite"] .fr-dbtn.on { background: var(--accent); box-shadow: none; color: #fff; }
+[data-skin="graphite"] .ai-chat-item.on { background: var(--fill); }
+/* speed test: the dial and the phases use the accent, the verdict is outlined */
+[data-skin="graphite"] .gauge-bar i { background: var(--accent); }
+[data-skin="graphite"] .speed-verdict { background: var(--card-solid); border: 1px solid var(--line); border-left-width: 3px; border-radius: 12px; padding: 10px 12px; }
+[data-skin="graphite"] .speed-dot { background: transparent !important; border: 1px solid var(--line2); }
+/* the welcome tour */
+[data-skin="graphite"] .tour-bubble { background: #151516; border: 1px solid #3a3a3d; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+[data-skin="graphite"] .tour-bubble::before { background: #151516; border-color: #3a3a3d; }
+[data-skin="graphite"] .tour-hint { color: var(--accent); } [data-skin="graphite"] .tour-hint i { background: var(--accent); animation: none; }
+[data-skin="graphite"] .tour-dots i.on { background: var(--accent); }
+[data-skin="graphite"] .tour-next { background: var(--accent); box-shadow: none; }
+[data-skin="graphite"] .tour-skip { background: #1c1c1e; border: 1px solid #3a3a3d; backdrop-filter: none; -webkit-backdrop-filter: none; }
+[data-skin="graphite"] .tour-card-eye { background: #1c1c1e; border: 1px solid #3a3a3d; }
+[data-skin="graphite"] .tour-ring { border-color: var(--accent); }
+[data-skin="graphite"] .tour-dim g rect:nth-child(2), [data-skin="graphite"] .tour-dim g rect:nth-child(3) { display: none; }
+[data-skin="graphite"] .tour-dim g rect:nth-child(1) { fill: rgba(0,0,0,.84); }

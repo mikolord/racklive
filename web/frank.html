@@ -25,7 +25,7 @@
    ['gesturestart','gesturechange','gestureend','dblclick'].forEach(function(t){document.addEventListener(t,no,o)});
    document.addEventListener('touchmove',function(e){if(e.touches.length>1)e.preventDefault()},o);
    var last=0;document.addEventListener('touchend',function(e){var n=Date.now();if(n-last<300&&!e.target.closest('textarea,input,button,a,[role=button]'))e.preventDefault();last=n},o);})();
-  try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);
+  try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);var sk=localStorage.getItem('rl_skin'),ac=localStorage.getItem('rl_accent');if(sk&&sk!=='classic')document.documentElement.setAttribute('data-skin',sk);if(ac)document.documentElement.setAttribute('data-accent',ac);
   if(t!=='auto'){document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.removeAttribute('media');m.setAttribute('content',r==='dark'?'#000000':'#f2f2f7')})}}catch(e){}</script>
 </head>
 <body>

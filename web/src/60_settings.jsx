@@ -149,6 +149,7 @@ function NotifyCard() {
 /* settings sections, like the Settings app: a list on the left (chips on the phone), one section on the right; state = a short live status */
 const SET_SECTIONS = [
   { id: 'general', label: 'Основные', icon: 'settings', color: '#8e8e93', desc: 'Название, опрос данных, подсказки, VLAN', state: d => d.settings.title },
+  { id: 'look', label: 'Оформление', icon: 'sun', color: '#af52de', desc: 'Стиль интерфейса, цвет акцента, тема', state: () => skinName() },
   { id: 'notify', label: 'Уведомления', icon: 'bell', color: '#ff3b30', need: 'notify', desc: 'Telegram, почта, webhook — и о чём сообщать',
     state: d => { const ch = [['telegram', 'Telegram'], ['email', 'почта'], ['webhook', 'webhook']].filter(([k]) => (d.notify[k] || {}).enabled).map(x => x[1]);
       return ch.length ? ch.join(', ') : 'каналы не настроены'; } },
@@ -168,7 +169,7 @@ function useMedia(q) {
 }
 
 /* the phone list: grouped cells like iOS Settings — a coloured icon, the name, a short status, a chevron */
-const IOS_GROUPS = [['general', 'notify', 'frank', 'apps'], ['access', 'backup'], ['about']];
+const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps'], ['access', 'backup'], ['about']];
 function IosSettingsList({ secs, data, onPick }) {
   return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
     return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
@@ -227,6 +228,7 @@ function SettingsView() {
     <div className={'set-body' + (listMode ? ' ios-hidden' : phone ? ' ios-push' : '')} key={phone ? 'p' + cur.id : 'd'}>
     {phone ? <div className="ios-nav"><button type="button" className="ios-back" onClick={back}><Icon name="chevron" size={20} stroke={2.6} style={{ transform: 'rotate(180deg)' }} />Настройки</button><b className="ios-title">{cur.label}</b><span /></div>
       : <div className="set-head"><b>{cur.label}</b><span>{cur.desc}</span></div>}
+    {cur.id === 'look' ? <LookCard /> : null}
     {cur.id === 'general' ? <>
     <Card title="Общие">
       <div className="col" style={{ gap: 14 }}>
