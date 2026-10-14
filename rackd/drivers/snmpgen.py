@@ -47,7 +47,19 @@ def interfaces(s, physical_only=True):
     for idx, e in error_counters(s).items():
         if idx in ports:
             ports[idx].update(e)
+    for idx, n in bcast_counters(s).items():
+        if idx in ports:
+            ports[idx]['bcastPkts'] = n
     return ports
+
+
+def bcast_counters(s):
+    """{ifIndex: frames} — broadcast + multicast frames RECEIVED per port (64-bit ifHC counters, else the 32-bit ones).
+    A normal home port sees tens of them per second; a network loop makes them climb into the tens of thousands."""
+    b, m = s.table(IFX + '.9', optional=True), s.table(IFX + '.8', optional=True)
+    if not b and not m:
+        b, m = s.table(IFX + '.3', optional=True), s.table(IFX + '.2', optional=True)
+    return {idx: (b.get(idx) or 0) + (m.get(idx) or 0) for idx in set(b) | set(m)}
 
 
 def error_counters(s):

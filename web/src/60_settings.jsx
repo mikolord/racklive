@@ -3,6 +3,7 @@ const RULES = [
   ['offline', 'Устройство пропало', 'нет связи дольше', [['minutes', 'мин']]],
   ['ups', 'ИБП', 'перешёл на батарею, разряжается, просит замену батареи', []],
   ['speed', 'Упала скорость порта', '1 Гбит → 100 Мбит дольше (обычно кабель)', [['minutes', 'мин']]],
+  ['loop', 'Петля в сети', 'похоже, кабель замкнул сеть: коммутатор нашёл петлю, штурм широковещательных кадров, «прыгающие» устройства', []],
   ['errors', 'Ошибки на порту', 'повреждённых кадров (CRC) за час больше', [['count', 'шт']]],
   ['security', 'Безопасность', 'появилась критичная проблема: открытый опасный порт, пароль по умолчанию…', []],
   ['newdev', 'Новое устройство в сети', 'подключилось устройство, которого раньше не было', []],
@@ -160,8 +161,24 @@ const SET_SECTIONS = [
   { id: 'about', label: 'О программе', icon: 'other', color: '#8e8e93', desc: 'Версия и ссылки', state: d => 'Rack Live ' + d.version },
 ];
 
+function useMedia(q) {
+  const [m, setM] = useState(() => !!(window.matchMedia && matchMedia(q).matches));
+  useEffect(() => { if (!window.matchMedia) return; const mq = matchMedia(q), h = () => setM(mq.matches); h(); mq.addEventListener('change', h); return () => mq.removeEventListener('change', h); }, [q]);
+  return m;
+}
+
+/* the phone list: grouped cells like iOS Settings — a coloured icon, the name, a short status, a chevron */
+const IOS_GROUPS = [['general', 'notify', 'frank', 'apps'], ['access', 'backup'], ['about']];
+function IosSettingsList({ secs, data, onPick }) {
+  return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
+    return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
+      <span className="ios-ico">{x.id === 'frank' ? <AppIcon app="frank" size={32} radius={8} /> : x.id === 'about' ? <AppIcon size={32} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>}</span>
+      <span className="ios-label">{x.label}</span><span className="ios-val">{x.state ? x.state(data) : ''}</span>
+      <Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} /></button>)}</div>; })}</div>;
+}
+
 function SettingsView() {
-  const { data, refresh, logout } = useApp(); const toast = useToast();
+  const { data, refresh, logout, startTour } = useApp(); const toast = useToast();
   const [s, setS] = useState({ ...data.settings });
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
   const fileRef = useRef(null);
@@ -183,18 +200,33 @@ function SettingsView() {
   };
   const vl = s.vlans || [];
   const [sec, setSec] = useState(() => { const q = new URLSearchParams(location.search).get('section'); return SET_SECTIONS.some(x => x.id === q) ? q : lsGet('rl_set_sec', 'general'); });
-  const pick = id => { setSec(id); lsSet('rl_set_sec', id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  useEffect(() => { const h = e => pick(e.detail); window.addEventListener('rl-section', h); return () => window.removeEventListener('rl-section', h); }, []);     // a window elsewhere sends the person to a section
+  // a phone works like iOS Settings: a list of sections, a tap opens one (with «‹ Настройки» to come back); a computer keeps the two columns
+  const phone = useMedia('(max-width: 900px)');
+  const [open, setOpen] = useState(() => { const q = new URLSearchParams(location.search).get('section'); return SET_SECTIONS.some(x => x.id === q) ? q : null; });
+  const pick = id => {
+    if (phone) { setOpen(id); try { history.pushState({ rlset: id }, ''); } catch (e) { } window.scrollTo({ top: 0 }); return; }
+    setSec(id); lsSet('rl_set_sec', id); window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const back = () => { if (history.state && history.state.rlset) history.back(); else setOpen(null); window.scrollTo({ top: 0 }); };
+  useEffect(() => { const h = e => pick(e.detail); window.addEventListener('rl-section', h); return () => window.removeEventListener('rl-section', h); }, [phone]);     // a window elsewhere sends the person to a section
+  useEffect(() => { const h = e => setOpen(e.state && e.state.rlset ? e.state.rlset : null); window.addEventListener('popstate', h); return () => window.removeEventListener('popstate', h); }, []);   // the system «back» closes a section
   const secs = SET_SECTIONS.filter(x => !x.need || data[x.need]);
-  const cur = secs.find(x => x.id === sec) || secs[0];
+  const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
+  const listMode = phone && !open;                          // the list of sections (the cards below are kept, just hidden)
+  useEffect(() => {                                         // inside a section the big «Настройки» title and the hint above are not needed (css: html.set-detail)
+    document.documentElement.classList.toggle('set-detail', !!(phone && open));
+    return () => document.documentElement.classList.remove('set-detail');
+  }, [phone, open]);
   useEffect(() => { const el = document.querySelector('.set-item.on'); if (el && innerWidth <= 900) el.scrollIntoView({ inline: 'center', block: 'nearest' }); }, [cur.id]);
-  return <div className="set-layout">
-    <nav className="set-nav">{secs.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
+  return <div className={'set-layout' + (phone ? ' ios' : '')}>
+    {listMode ? <IosSettingsList secs={secs} data={data} onPick={pick} /> : null}
+    {!phone ? <nav className="set-nav">{secs.map(x => <button key={x.id} type="button" data-tour={'set-' + x.id} className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
       {x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
       <span className="set-txt"><b>{x.label}</b><small>{x.state ? x.state(data) : x.desc}</small></span>
-      <Icon name="chevron" size={14} color="var(--text3)" /></button>)}</nav>
-    <div className="set-body">
-    <div className="set-head"><b>{cur.label}</b><span>{cur.desc}</span></div>
+      <Icon name="chevron" size={14} color="var(--text3)" /></button>)}</nav> : null}
+    <div className={'set-body' + (listMode ? ' ios-hidden' : phone ? ' ios-push' : '')} key={phone ? 'p' + cur.id : 'd'}>
+    {phone ? <div className="ios-nav"><button type="button" className="ios-back" onClick={back}><Icon name="chevron" size={20} stroke={2.6} style={{ transform: 'rotate(180deg)' }} />Настройки</button><b className="ios-title">{cur.label}</b><span /></div>
+      : <div className="set-head"><b>{cur.label}</b><span>{cur.desc}</span></div>}
     {cur.id === 'general' ? <>
     <Card title="Общие">
       <div className="col" style={{ gap: 14 }}>
@@ -211,6 +243,12 @@ function SettingsView() {
             Вернуть скрытые подсказки ({hiddenN}) — в этом браузере</button> : null}</div></div>
         <Btn kind="primary" onClick={save}>Сохранить</Btn>
       </div>
+    </Card>
+    <Card title="Приветственное обучение">
+      <div className="row" style={{ gap: 14, alignItems: 'center' }}>
+        <div className="tour-card-eye"><FrankHero size={64} still /></div>
+        <div className="grow" style={{ minWidth: 0 }}><div className="dim" style={{ fontSize: 13.5, lineHeight: 1.45 }}>Frank проведёт по главному: как добавить устройство, где карта и настройки. Показывается один раз при первом входе — здесь его можно запустить снова, например чтобы показать коллеге.</div>
+          <Btn style={{ marginTop: 10 }} icon="play" onClick={startTour}>Показать обучение</Btn></div></div>
     </Card>
     <Card title={<button type="button" className="card-toggle" onClick={() => toggleVlan(!vlanOpen)}>
         <Icon name="chevron" size={15} style={{ transform: vlanOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }} />VLAN · {vl.length}</button>}

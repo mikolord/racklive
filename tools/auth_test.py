@@ -265,6 +265,9 @@ def server_flow():
         phone = Client(base)
         st, _ = phone.call('/api/setup', {'password': 'correct-horse'})
         check('setup: password set, signed in, device cookie issued', st == 200 and phone.authed() and 'rl_dev' in phone.cookies)
+        check('a brand-new installation: the welcome tour is due', phone.call('/api/state', method='GET')[1]['settings'].get('tourDone') is False)
+        phone.call('/api/tour')
+        check('...and once it is done or skipped it is not due again', phone.call('/api/state', method='GET')[1]['settings'].get('tourDone') is True)
         check('a wrong password is refused', Client(base).call('/api/login', {'password': 'nope-nope-1'})[0] == 401)
         browser = next((b for b in (r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
                                     r'C:\Program Files\Google\Chrome\Application\chrome.exe') if os.path.exists(b)), shutil.which('chromium') or shutil.which('google-chrome'))

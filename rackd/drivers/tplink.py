@@ -4,8 +4,38 @@ import re, threading, time
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
 from .. import cable
 from ..snmp import Snmp, SnmpError, text
-from .snmpgen import error_counters
+from .snmpgen import bcast_counters, error_counters
 from ..util import DriverError, parse_ranges, telnet_session, uptime_seconds
+
+
+LOOP_YES = ('yes', 'y', 'true', 'loop', 'looped', 'found', 'detected', 'block', 'blocked')
+
+
+def parse_loop(glob, table):
+    """`show loopback-detection global` + `show loopback-detection interface` → the switch's own loop protection:
+    {supported, enabled, interval, recoveryTime, ports: {n: {on, mode, loop, blocked}}, onPorts}.  None when the switch has no such command."""
+    g = re.search(r'global status\s*:\s*(\w+)', glob or '', re.I)
+    if not g:
+        return None
+    iv, rc = re.search(r'interval\s*:\s*(\d+)', glob), re.search(r'recovery time\s*:\s*(\d+)', glob)
+    ports = {}
+    for l in (table or '').splitlines():
+        m = re.match(r'\s*Gi1/0/(\d+)\s+(enable|disable)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', l)
+        if m:
+            ports[int(m.group(1))] = {'on': m.group(2) == 'enable', 'mode': m.group(3), 'loop': m.group(5).lower() in LOOP_YES, 'blocked': m.group(6).lower() in LOOP_YES}
+    return {'supported': True, 'enabled': g.group(1).lower() == 'enable', 'interval': int(iv.group(1)) if iv else None,
+            'recoveryTime': int(rc.group(1)) if rc else None, 'ports': ports, 'onPorts': sum(1 for p in ports.values() if p['on'])}
+
+
+def runs(nums):
+    """[1, 2, 3, 5] → [(1, 3), (5, 5)]"""
+    out = []
+    for n in sorted(nums):
+        if out and n == out[-1][1] + 1:
+            out[-1] = (out[-1][0], n)
+        else:
+            out.append((n, n))
+    return out
 
 
 class TPLinkJetStream(Driver):
@@ -24,7 +54,14 @@ class TPLinkJetStream(Driver):
                 'confirm': 'Связь на порту {port} пропадёт на 5 секунд. Продолжить?'},
                {'id': 'cable_test', 'label': 'Проверить кабель', 'scope': 'port', 'kind': 'cable',
                 'confirm': 'Коммутатор измерит кабель на порту {port}: длину и каждую из 4 пар. '
-                           'Связь с устройством может пропасть на 3–5 секунд. Продолжить?'}]
+                           'Связь с устройством может пропасть на 3–5 секунд. Продолжить?'},
+               {'id': 'loop_guard', 'label': 'Включить защиту от петель', 'scope': 'device',
+                'confirm': 'Коммутатор начнёт проверять петли на портах (кроме защищённых — uplink). Если кабель по ошибке замкнут, порт сам отключится '
+                           'и включится снова через 90 секунд — сеть не «ляжет». Настройка сохранится в самом коммутаторе. Связь не пропадёт. Включить?'},
+               {'id': 'loop_guard_off', 'label': 'Выключить защиту от петель', 'scope': 'device',
+                'confirm': 'Защита от петель на коммутаторе будет выключена — случайная петля снова сможет «положить» сеть. Выключить?'},
+               {'id': 'loop_recover', 'label': 'Вернуть порт после петли', 'scope': 'port',
+                'confirm': 'Порт {port} включится сразу, не дожидаясь автоматического возврата. Если петля осталась, он снова отключится. Продолжить?'}]
     protected_ports_hint = 'uplink'
 
     _locks = {}
@@ -57,7 +94,7 @@ class TPLinkJetStream(Driver):
 
     def poll(self, cfg):
         o = self._cli(cfg, ['show system-info', 'show interface status', 'show power inline information interface',
-                            'show mac address-table', 'show running-config'])
+                            'show mac address-table', 'show running-config', 'show loopback-detection global', 'show loopback-detection interface'])
         info = {}
         for l in o['show system-info'].splitlines():
             m = re.match(r'\s*([A-Za-z][A-Za-z ]+?)\s+-\s+(.*)', l)
@@ -121,15 +158,19 @@ class TPLinkJetStream(Driver):
                 s = Snmp(cfg['host'], cfg['snmpCommunity'], timeout=2, retries=1)
                 descr = s.table('1.3.6.1.2.1.2.2.1.2')
                 hin, hout = s.table('1.3.6.1.2.1.31.1.1.1.6'), s.table('1.3.6.1.2.1.31.1.1.1.10')
-                errs = error_counters(s)
+                errs, bc = error_counters(s), bcast_counters(s)
                 for idx, d in descr.items():
                     m = re.search(r'1/0/(\d+)$', text(d))
                     if m and int(m.group(1)) in ports:
-                        ports[int(m.group(1))].update(rxBytes=hin.get(idx), txBytes=hout.get(idx), **errs.get(idx, {}))
+                        ports[int(m.group(1))].update(rxBytes=hin.get(idx), txBytes=hout.get(idx), bcastPkts=bc.get(idx), **errs.get(idx, {}))
             except SnmpError:
                 pass
         up = sum(1 for p in plist if p['link'])
-        return {'status': 'online',
+        guard = parse_loop(o.get('show loopback-detection global'), o.get('show loopback-detection interface'))       # the switch's own loop protection
+        for n, v in ((guard or {}).get('ports') or {}).items():
+            if n in ports:
+                ports[n].update(loopOn=v['on'], loopDetected=v['loop'], loopBlocked=v['blocked'])
+        return {'status': 'online', 'loopGuard': guard,
                 'summary': {'model': info.get('System Description') or info.get('Hardware Version'), 'fw': info.get('Software Version'),
                             'uptime': uptime_seconds(info.get('Running Time')), 'ip': cfg['host'],
                             'mac': (info.get('Mac Address') or '').replace('-', ':').lower()},
@@ -150,7 +191,44 @@ class TPLinkJetStream(Driver):
             raise DriverError('коммутатор не отдал конфигурацию')
         return '\n'.join(lines) + '\n'
 
+    def _save(self, cfg):
+        """copy running-config startup-config: a protection that vanishes at the next reboot is no protection"""
+        out = ''.join(self._cli(cfg, ['copy running-config startup-config'], wait=4).values())
+        if re.search(r'fail|error', out, re.I) and not re.search(r'succeed|success|ok', out, re.I):
+            raise DriverError('настройка применена, но сохранить её в коммутаторе не удалось — после перезагрузки она пропадёт')
+
+    def loop_guard(self, cfg, on, only=None):
+        """Loop protection of the switch itself (loopback-detection): every port except the protected (uplink) ones; a looped port is blocked and
+        comes back after the recovery time. only=[ports] limits it (used by tests)."""
+        txt = ''.join(self._cli(cfg, ['show interface status']).values())
+        allp = sorted({int(m.group(1)) for l in txt.splitlines() for m in [re.match(r'\s*Gi1/0/(\d+)\s+(LinkUp|LinkDown)', l)] if m})
+        prot = {int(x) for x in str(cfg.get('protectedPorts') or '').replace(' ', '').split(',') if x.isdigit()}
+        ports = [p for p in allp if p not in prot and (not only or p in only)]
+        if not allp:
+            raise DriverError('коммутатор не показал список портов')
+        if not on:
+            self._run_checked(cfg, ['no loopback-detection'])
+            self._save(cfg)
+            return 'Защита от петель выключена'
+        cmds = ['loopback-detection']
+        for a, b in runs(ports):
+            cmds += [f'interface range gigabitEthernet 1/0/{a}-{b}' if a != b else f'interface gigabitEthernet 1/0/{a}',
+                     'loopback-detection', 'loopback-detection config process-mode port-based recovery-mode auto', 'exit']
+        self._run_checked(cfg, cmds)
+        o = self._cli(cfg, ['show loopback-detection global', 'show loopback-detection interface'])
+        g = parse_loop(o.get('show loopback-detection global'), o.get('show loopback-detection interface'))
+        missing = [p for p in ports if not ((g or {}).get('ports') or {}).get(p, {}).get('on')]
+        if not g or not g['enabled'] or missing:
+            raise DriverError('коммутатор не включил защиту' + (f' на портах {", ".join(map(str, missing))}' if missing else ''))
+        self._save(cfg)
+        span = ', '.join(f'{a}–{b}' if a != b else str(a) for a, b in runs(ports))
+        return f"Защита от петель включена на портах {span}" + (f" (порты {', '.join(map(str, sorted(prot)))} — uplink, не трогаем)" if prot else '')
+
     def action(self, cfg, action_id, params):
+        if action_id == 'loop_guard':
+            return self.loop_guard(cfg, True, params.get('only'))
+        if action_id == 'loop_guard_off':
+            return self.loop_guard(cfg, False)
         port = int(params.get('port') or 0)
         if not 1 <= port <= 64:
             raise DriverError('неверный номер порта')
@@ -159,6 +237,9 @@ class TPLinkJetStream(Driver):
         iface = f'interface gigabitEthernet 1/0/{port}'
         if action_id == 'cable_test':
             return self.cable_test(cfg, port)
+        if action_id == 'loop_recover':
+            self._run_checked(cfg, [iface, 'loopback-detection recover'])
+            return f'Порт {port}: возврат после петли выполнен'
         if action_id == 'poe_cycle':
             self._run_checked(cfg, [iface, 'power inline supply disable'])
             time.sleep(8)

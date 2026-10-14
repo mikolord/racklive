@@ -332,6 +332,49 @@ function AskAi({ q, label = 'Спросить Frank', size = 'sm' }) {
   return <button type="button" className={'btn ' + size + ' frank-ask'} onClick={() => askAi(q)}><FrankEye size={18} round={6} />{label}</button>;
 }
 
+/* «Советы Frank»: every few days Frank reviews the network and writes what he would add, what he dislikes and what he would change (rackd/advisor.py) */
+const ADVICE_KIND = { add: ['plus', 'var(--green)', 'Добавить'], dislike: ['alert', 'var(--orange)', 'Не нравится'], idea: ['eye', 'var(--accent)', 'Идея'] };
+const adviceWhen = t => { const d = Math.round((t - Date.now() / 1000) / 86400); return d <= 0 ? 'сегодня' : d === 1 ? 'завтра' : `через ${d} ${ruPlural(d, 'день', 'дня', 'дней')}`; };
+
+function AdviceWidget() {
+  const { data, admin, refresh, askAi } = useApp(); const toast = useToast();
+  const a = data.advice;
+  if (!admin || !a) return <Card title="Советы Frank"><div className="dim" style={{ fontSize: 13 }}>Войдите, чтобы увидеть советы помощника.</div></Card>;
+  const close = async (x, done) => { try { await api('/api/advice/close', { method: 'POST', body: { id: x.id, done } }); refresh(); } catch (e) { toast(e.message, true); } };
+  const again = async () => { try { const r = await api('/api/advice/refresh', { method: 'POST', body: {} }); if (!r.started) toast(r.why, true); refresh(); } catch (e) { toast(e.message, true); } };
+  return <Card title={<span className="row" style={{ gap: 8 }}><FrankEye size={20} round={6} />Советы Frank</span>}
+    right={a.ready && a.on ? <Btn size="sm" icon="refresh" disabled={a.running} onClick={again}>{a.running ? 'Думаю…' : 'Обновить'}</Btn> : null}>
+    {!a.ready ? <div className="dim" style={{ fontSize: 13 }}>Включите Frank в Настройках — раз в {a.days} {ruPlural(a.days, 'день', 'дня', 'дней')} он будет смотреть вашу сеть и подсказывать, что добавить, что ему не нравится и что бы он изменил.</div>
+      : !a.on ? <div className="dim" style={{ fontSize: 13 }}>Советы выключены (Настройки → Frank).</div>
+      : <>
+        {a.error ? <div className="dim" style={{ fontSize: 12.5, color: 'var(--orange)', marginBottom: 6 }}>Не вышло подготовить советы: {a.error}. Попробую снова позже.</div> : null}
+        {!a.items.length ? <div className="dim" style={{ fontSize: 13 }}>{a.running ? 'Frank изучает сеть, это займёт минуту…' : a.last ? 'Новых советов нет — всё прочитано.' : 'Первые советы появятся в ближайшие минуты.'}</div> : null}
+        <div className="list advice-list">{a.items.map(x => { const k = ADVICE_KIND[x.kind] || ADVICE_KIND.idea; return <div className="advice" key={x.id}>
+          <span className="advice-ic" style={{ color: k[1] }}><Icon name={k[0]} size={16} /></span>
+          <div className="grow"><div className="advice-t"><b>{x.title}</b><span className="advice-k" style={{ color: k[1] }}>{k[2]}</span></div>
+            <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>{x.text}</div>
+            <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>
+              {x.ask ? <Btn size="sm" onClick={() => askAi(x.ask)}>Спросить подробнее</Btn> : null}
+              <Btn size="sm" onClick={() => close(x, true)}>Сделано</Btn><Btn size="sm" onClick={() => close(x, false)}>Скрыть</Btn></div></div></div>; })}</div>
+        {a.last ? <div className="dim3" style={{ fontSize: 11.5, marginTop: 8 }}>Совет от {fmt.ago(a.last, data.now)}{a.next ? ` · следующий ${adviceWhen(a.next)}` : ''}</div> : null}
+      </>}
+  </Card>;
+}
+
+function AdviceSettings({ ai }) {
+  const { data, refresh } = useApp(); const toast = useToast();
+  const a = data.advice || { on: true, days: 3, telegram: false };
+  const save = async part => { try { await api('/api/advice/settings', { method: 'PUT', body: part }); refresh(); } catch (e) { toast(e.message, true); } };
+  return <div className="col" style={{ gap: 10 }}>
+    <div className="row"><Switch on={!!a.on} onChange={v => save({ on: v })} /><div className="grow"><div>Советы Frank раз в несколько дней</div>
+      <div className="dim3" style={{ fontSize: 12.5 }}>Frank сам изучает сеть и пишет, что добавил бы, что ему не нравится и что бы изменил. Виджет «Советы Frank» на главной. Один запрос — как один вопрос.</div></div></div>
+    {a.on ? <div className="row wrap" style={{ gap: 8 }}><span className="dim" style={{ fontSize: 13 }}>Как часто:</span>
+      {[1, 3, 7, 14].map(n => <button key={n} type="button" className={'chip' + (a.days === n ? ' on' : '')} onClick={() => save({ days: n })}>{n === 1 ? 'каждый день' : `раз в ${n} ${ruPlural(n, 'день', 'дня', 'дней')}`}</button>)}</div> : null}
+    {a.on ? <div className="row"><Switch on={!!a.telegram} onChange={v => save({ telegram: v })} /><div className="grow"><div>Присылать в Telegram</div>
+      <div className="dim3" style={{ fontSize: 12.5 }}>Короткий список заголовков, когда появились новые советы.</div></div></div> : null}
+  </div>;
+}
+
 function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
@@ -360,6 +403,7 @@ function AiCard() {
             Для Synology включите SSH (Панель управления → Терминал); вход — тем же пользователем DSM.</div> : null}</div></div> : null}
         <div className="row"><Switch on={!!s.telegram} onChange={v => set('telegram', v)} /><div className="grow"><div>Отвечать в Telegram</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Напишите вопрос боту Rack Live в личку — ответит Frank. Только привязанным аккаунтам (Настройки → Уведомления → «Привязать Telegram»); /new — новый разговор. Разговоры видны и в приложении Frank.</div></div></div>
+        <AdviceSettings ai={ai} />
         <Field label="Сервис">
           <div className="row wrap" style={{ gap: 6 }}>{ai.presets.map(x => <button key={x.id} type="button" className={'chip' + (s.preset === x.id ? ' on' : '')} onClick={() => pick(x.id)}>{x.title}</button>)}</div></Field>
         {!p.noKey ? <Field label="Ключ API" hint={p.keyUrl ? <>Получить: <a href={p.keyUrl} target="_blank" rel="noreferrer">{p.keyUrl.replace(/^https:\/\//, '')}</a></> : null}>

@@ -281,13 +281,29 @@ class DemoOpenWrt(DemoBase):
                 'url': f"http://10.0.0.3/cgi-bin/luci/{plugins.OWRT_INSTALLERS[pid]['luci']}", 'message': f'{pid} 0.7.9-r1 установлен (демо)'}
 
 
+DEMO_LOOP = {'guard': False, 'sim': False}      # the demo switch: loop protection on/off, and a pretend loop on ports 15 and 17
+
+
 class DemoSwitch(DemoBase):
     id, title, kind = 'demo_switch', 'Демо: коммутатор', 'switch'
     actions = [{'id': 'poe_cycle', 'label': 'Перезапустить PoE', 'scope': 'port', 'needs': 'poe', 'confirm': 'Перезапустить PoE на порту {port}? (демо)'},
                {'id': 'port_bounce', 'label': 'Перезапустить порт', 'scope': 'port', 'confirm': 'Перезапустить порт {port}? (демо)'},
-               {'id': 'cable_test', 'label': 'Проверить кабель', 'scope': 'port', 'kind': 'cable', 'confirm': 'Измерить кабель на порту {port}? (демо)'}]
+               {'id': 'cable_test', 'label': 'Проверить кабель', 'scope': 'port', 'kind': 'cable', 'confirm': 'Измерить кабель на порту {port}? (демо)'},
+               {'id': 'loop_guard', 'label': 'Включить защиту от петель', 'scope': 'device', 'confirm': 'Включить защиту от петель? (демо)'},
+               {'id': 'loop_guard_off', 'label': 'Выключить защиту от петель', 'scope': 'device', 'confirm': 'Выключить защиту от петель? (демо)'},
+               {'id': 'loop_recover', 'label': 'Вернуть порт после петли', 'scope': 'port', 'confirm': 'Вернуть порт {port}? (демо)'},
+               {'id': 'loop_demo', 'label': 'Демо: показать/убрать петлю', 'scope': 'device', 'confirm': 'Показать в демо воображаемую петлю на портах 15 и 17?'}]
 
     def action(self, cfg, action_id, params):
+        if action_id in ('loop_guard', 'loop_guard_off'):
+            DEMO_LOOP['guard'] = action_id == 'loop_guard'
+            return 'Защита от петель включена на портах 1–23 (демо)' if DEMO_LOOP['guard'] else 'Защита от петель выключена (демо)'
+        if action_id == 'loop_demo':
+            DEMO_LOOP['sim'] = not DEMO_LOOP['sim']
+            return 'Воображаемая петля ' + ('появилась' if DEMO_LOOP['sim'] else 'убрана')
+        if action_id == 'loop_recover':
+            DEMO_LOOP['sim'] = False
+            return f"Порт {params.get('port')} возвращён (демо)"
         if action_id != 'cable_test':
             return super().action(cfg, action_id, params)
         time.sleep(1.5)
@@ -337,7 +353,17 @@ class DemoSwitch(DemoBase):
                 crc = int(1200 + (t - T0) / 60 * 2.5) if p['n'] == 11 else 3 if p['n'] == 10 else 0
                 p.update(inErrors=crc, outErrors=0, crc=crc)
         poe = sum(p['poeW'] for p in ports)
-        return {'status': 'online',
+        on, sim = DEMO_LOOP['guard'], DEMO_LOOP['sim']
+        gp = {}
+        for p in ports:
+            guarded = on and p['n'] <= 23                         # port 24 is the uplink: not touched
+            hit = sim and p['n'] in (15, 17)
+            p.update(loopOn=guarded, loopDetected=hit and guarded, loopBlocked=hit and guarded)
+            if hit:
+                p['bcastPps'] = 18000 + p['n'] * 130              # a storm: tens of thousands of broadcast frames a second
+            gp[p['n']] = {'on': guarded, 'mode': 'port-based' if guarded else 'alert', 'loop': p['loopDetected'], 'blocked': p['loopBlocked']}
+        guard = {'supported': True, 'enabled': on, 'interval': 30, 'recoveryTime': 90, 'ports': gp, 'onPorts': sum(1 for v in gp.values() if v['on'])}
+        return {'status': 'online', 'loopGuard': guard,
                 'summary': {'model': 'JetStream 24-Port Gigabit L2+ PoE+ Switch', 'fw': '4.0.5', 'uptime': int(t - T0 + 2_592_000), 'ip': '10.0.0.2', 'mac': MAC(2)},
                 'ports': ports, 'metrics': [{'label': 'Порты с линком', 'value': f"{sum(1 for p in ports if p['link'])}/28"}, {'label': 'PoE', 'value': round(poe, 1), 'unit': 'Вт'}],
                 'sections': [{'title': 'Коммутатор', 'rows': [['Модель', 'T2600G-28MPS'], ['PoE-бюджет', '384 Вт']]}]}

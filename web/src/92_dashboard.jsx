@@ -180,6 +180,8 @@ const WIDGETS = {
     go: ctx => ctx.openSpeed() },
   frank: { title: 'Frank', icon: 'eye', color: '#636366', size: 'M', sizes: ALL, once: true, desc: 'Задать вопрос помощнику прямо с главной', render: () => <FrankWidget />,
     tile: () => ({ v: '', s: 'спросить Frank' }), go: ctx => ctx.askAi('') },
+  advice: { title: 'Советы Frank', icon: 'eye', color: '#bf5af2', size: 'M', sizes: ALL, list: true, once: true, desc: 'Раз в несколько дней Frank советует, что добавить и что улучшить',
+    render: () => <AdviceWidget />, tile: d => { const n = ((d.advice || {}).items || []).length; return { v: n || '', s: n ? ruPlural(n, 'совет', 'совета', 'советов') + ' от Frank' : 'советов нет', bad: n > 0 }; } },
   shortcuts: { title: 'Настройки', icon: 'settings', color: '#8e8e93', size: 'M', sizes: ALL, once: true, desc: 'Быстрый переход в разделы настроек', render: () => <ShortcutsWidget />,
     tile: () => ({ v: '', s: 'открыть' }), go: ctx => ctx.setTab('settings') },
   note: { title: 'Заметка', icon: 'edit', color: '#ffd60a', size: 'S', sizes: ALL, list: true, desc: 'Свой текст: телефоны, пароль от гостевой сети…',
@@ -204,20 +206,19 @@ function useCols(ref) {                  // → [columns, width of one column]
 }
 
 function Dashboard() {
-  const ctx = useApp(); const { data, admin, edit } = ctx; const toast = useToast();
+  const ctx = useApp(); const { data, admin, edit, arrange } = ctx; const toast = useToast();
   const saved = ((data.dashboard || {}).widgets || []).filter(w => WIDGETS[w.type]);
   const norm = l => l.map(w => ({ ...w, size: sizeOf(w) }));
   const [list, setList] = useState(norm(saved.length ? saved : DASH_DEFAULT));
   const [drag, setDrag] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [arrange, setArrange] = useState(() => new URLSearchParams(location.search).get('arrange') === '1');
   const [full, setFull] = useState(null);
   const gridRef = useRef(null); const els = useRef({}); const rects = useRef({}); const flip = useRef(false);
   const follow = useRef(null);                       // while moving: re-pin the lifted widget under the finger after each re-layout
   const [cols, colW] = useCols(gridRef);
   const savedKey = JSON.stringify(saved);
   useEffect(() => { if (!drag && saved.length) setList(norm(saved)); }, [savedKey]);
-  useEffect(() => { if (!edit) setArrange(false); }, [edit]);
+  useEffect(() => { if (!edit) ctx.setArrange(false); }, [edit]);
   const save = async next => {
     setList(next);
     try { await api('/api/dashboard', { method: 'PUT', body: { widgets: next } }); } catch (e) { toast(e.message, true); }
@@ -303,10 +304,10 @@ function Dashboard() {
 
   const arranging = edit && admin && arrange;
   return <>
-    {edit && admin ? <div className="dash-bar">
-      <Switch on={arrange} onChange={setArrange} /><div className="grow" style={{ minWidth: 0 }}><b style={{ fontSize: 14 }}>Расстановка виджетов</b>
-        <div className="dim" style={{ fontSize: 12.5 }}>{arrange ? 'Долгое нажатие — поднять и перенести (мышью — сразу). Кнопка в углу виджета — размер: квадрат, половина, во всю ширину.' : 'Включите, чтобы двигать, менять размер, добавлять и убирать виджеты.'}</div></div>
-      {arrange ? <><Btn size="sm" onClick={() => { flip.current = true; save(DASH_DEFAULT); settle(); }}>Как было</Btn><Btn size="sm" kind="primary" icon="plus" onClick={() => setAdding(true)}>Виджет</Btn></> : null}
+    {arranging ? <div className="dash-bar">
+      <div className="grow" style={{ minWidth: 0 }}><b style={{ fontSize: 14 }}>Расстановка виджетов</b>
+        <div className="dim" style={{ fontSize: 12.5 }}>Долгое нажатие — поднять и перенести (мышью — сразу). Кнопка в углу виджета — размер: квадрат, половина, во всю ширину.</div></div>
+      <Btn size="sm" onClick={() => { flip.current = true; save(DASH_DEFAULT); settle(); }}>Как было</Btn><Btn size="sm" kind="primary" icon="plus" onClick={() => setAdding(true)}>Виджет</Btn>
     </div> : null}
     <div className={'dash' + (arranging ? ' arranging' : '')} ref={gridRef} style={{ '--cols': cols }}>
       {list.map(w => <DashItem key={w.id} w={w} cols={cols} colW={colW} edit={edit && admin} arranging={arranging} lifted={drag === w.id} elRef={el => { els.current[w.id] = el; }} onMove={e => startMove(w, e)} onTouch={e => startTouch(w, e)} onSize={size => setSize(w, size)}
@@ -508,6 +509,8 @@ const TILE_ART = {
   events: d => <div className="mini-events">{(d.events || []).slice(0, 3).map((e, i) => <div key={i}><i style={{ background: e.level === 'info' ? 'var(--accent)' : ST_COLOR(e.level) }} />
     <span className="ellipsis">{e.name}: {e.text}</span></div>)}</div>,
   frank: () => <div className="mini-frank"><FrankEye size={120} round={0} /></div>,
+  advice: d => <div className="mini-events">{((d.advice || {}).items || []).slice(0, 3).map((x, i) => <div key={i}><i style={{ background: (ADVICE_KIND[x.kind] || ADVICE_KIND.idea)[1] }} />
+    <span className="ellipsis">{x.title}</span></div>)}</div>,
   shortcuts: d => <div className="mini-grid4">{SET_SECTIONS.filter(x => !x.need || d[x.need]).slice(0, 4).map(x =>
     <span key={x.id} style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>)}</div>,
   note: (d, w) => <div className="mini-note">{((w.opts || {}).text || 'Пустая заметка').split('\n').slice(0, 4).map((l, i) => <div key={i} className="ellipsis">{l || ' '}</div>)}</div>,

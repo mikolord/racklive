@@ -188,6 +188,23 @@ def analyze(topo, devices, states, cable_tests):
         if d.get('enabled', True) and st.get('status') == 'offline' and d.get('kind') in INFRA + ('nas', 'server'):
             add('bad', f"{d.get('name')} не на связи", st.get('error') or '', deviceId=d['id'])
 
+    # ── loops: a live one is an emergency; a missing protection is a warning when the network has cables that can close a ring ──
+    for d in devices:
+        st = states.get(d['id']) or {}
+        lp, g = st.get('loops') or {}, st.get('loopGuard') or {}
+        if lp.get('active'):
+            add('bad', f"В сети похоже петля: {d.get('name')}", lp.get('why', '') + '. Из-за петли кадры ходят по кругу, сеть тормозит или встаёт целиком. '
+                'Найдите кабель, который воткнут в два порта одной сети (коммутатор в самого себя, два кабеля между двумя коммутаторами без STP) и отключите его.',
+                deviceId=d['id'], port=(lp.get('guard') or lp.get('storm') or [{}])[0].get('port'))
+        elif lp.get('recent'):
+            add('info', f"Недавно была петля: {d.get('name')}", 'Признаки уже пропали. Чтобы это не повторилось, найдите причину — кабель, который кто-то замкнул, — и включите защиту от петель.',
+                deviceId=d['id'])
+        if g.get('supported') and not g.get('enabled') and d.get('enabled', True) and st.get('status') != 'offline':
+            add('warn' if cycles else 'info', f"Защита от петель выключена: {d.get('name')}",
+                ('В сети есть резервные кабели (кольцо) — без защиты любой из них замкнёт сеть. ' if cycles else '') +
+                'Достаточно одного случайно воткнутого кабеля (коммутатор сам в себя), чтобы сеть встала. Коммутатор умеет отключать такой порт сам — '
+                'включите это в карточке коммутатора («Защита от петель»), связь не пропадёт.', deviceId=d['id'])
+
     for s in spof[:2]:
         if s['kind'] == 'router':
             text = 'Через него идёт весь интернет. Резервного канала нет — при сбое роутера или провайдера сеть останется без интернета.'

@@ -28,6 +28,7 @@ DEFAULT_NOTIFY = {
         'inet': {'on': True, 'pct': 50},
         'newdev': {'on': True},
         'config': {'on': True},
+        'loop': {'on': True},
     },
 }
 SECRETS = (('telegram', 'token'), ('email', 'password'))
@@ -161,6 +162,10 @@ class Alerter:
                     if t.get('role') == 'client' and t.get('routing') and not t.get('up'):
                         out[f"{did}:vpn:{t['id']}"] = (r['vpn']['minutes'] * 60, f"🛡 {name}: VPN «{t['name']}» не поднят — трафик идёт в обход",
                                                        f"✅ {name}: VPN «{t['name']}» снова работает", did)
+            lp = st.get('loops') or {}
+            if r['loop']['on'] and lp.get('active'):
+                out[f'{did}:loop'] = (0, f"🔁 {name}: похоже, в сети петля — {lp.get('why')}. Найдите кабель, воткнутый в два порта сети, и отключите его "
+                                         f"(или порт в карточке коммутатора)", f'✅ {name}: признаков петли больше нет', did)
             if r['errors']['on']:
                 for p in st.get('ports') or []:
                     if (p.get('errHour') or 0) >= max(1, r['errors']['count']):

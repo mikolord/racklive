@@ -10,7 +10,7 @@ const TABS = [
 const TAB_HINTS = {
   rack: ['Главная собрана из виджетов: шкаф, состояние сети, интернет, доступность… Нажмите на устройство — откроется карточка. ' +
     'Чтобы переставить, растянуть или добавить виджеты (карту, план, Frank, заметку…), включите «Редактирование» вверху (на телефоне — в меню «⋯»).',
-    'Включите «Расстановка виджетов», чтобы двигать виджеты, менять их размер (кнопка в углу виджета), добавлять и убирать. ' +
+    'Включите «Расстановка виджетов» (тумблер рядом с «Редактирование», на телефоне — в меню «⋯»), чтобы двигать виджеты, менять их размер (кнопка в углу виджета), добавлять и убирать. ' +
     'Пока расстановка выключена, редактируется содержимое: в шкафу двигается оборудование, «+ Место» добавит стойку, щиток или комнату.'],
   map: ['Карта строится сама по данным роутера и коммутатора: кто к какому порту подключён. Цвет линии — скорость: зелёный — 1 Гбит, ' +
     'жёлтый — 100 Мбит. Кнопка «Анализ» покажет слабые места сети: точки отказа, медленные кабели, ошибки.',
@@ -57,12 +57,14 @@ function App() {
   const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else setTabRaw(t); };
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
+  const [arrange, setArrange] = useState(() => new URLSearchParams(location.search).get('arrange') === '1');     // «Расстановка виджетов» on the home page (switch beside «Редактирование»)
   const [editor, setEditor] = useState(() => new URLSearchParams(location.search).get('add') === '1' ? null : undefined);    // ?add=1 → «Новое устройство»
   const [login, setLogin] = useState(false);
   const [speed, setSpeed] = useState(() => new URLSearchParams(location.search).get('speedtest'));      // '1' open · 'run' open and start
   const [pinTest, setPinTest] = useState(null);             // speed test id waiting for a tap on the plan
   const [menu, setMenu] = useState(() => new URLSearchParams(location.search).get('hmenu') === '1');   // phone header menu «⋯»
   const [ai, setAi] = useState(() => new URLSearchParams(location.search).get('ai') ? { n: 0 } : null);     // assistant panel: {q, n}
+  const [tour, setTour] = useState(() => new URLSearchParams(location.search).get('tour') === '1');      // Frank's welcome tour (95_tour.jsx); ?tour=1 starts it
   const [theme, setTheme] = useTheme();
   const toast = useToast();
   // opened from the Telegram bot: log in with the signed launch data, no password
@@ -79,6 +81,8 @@ function App() {
     catch (e) { setErr(e.message); }
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
+  // the very first visit of the administrator: the server says tourDone=false (an installation that already has an administrator never gets it)
+  useEffect(() => { if (!APP_MODE && data && data.authed && data.settings && data.settings.tourDone === false) setTour(true); }, [data && data.authed, data && data.settings && data.settings.tourDone]);
   useEffect(() => {                                       // ?editdev=<id> opens that device's settings form (needs admin)
     const id = new URLSearchParams(location.search).get('editdev'); const d = id && data && data.devices.find(x => x.id === id);
     if (d) setEditor(d);
@@ -122,11 +126,16 @@ function App() {
     try { await api('/api/plan', { method: 'PUT', body: plan }); } catch (e) { toast(e.message, true); refresh(); }
   };
   const logout = async () => { await api('/api/logout', { method: 'POST' }); ssSet('rl_tok', null); setMode('view'); refresh(); };
+  const finishTour = async () => {                          // done or skipped: it is not shown again by itself
+    setTour(false);
+    if (data.settings.tourDone !== true) { try { await api('/api/tour', { method: 'POST', body: {} }); } catch (e) { } refresh(); }
+  };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
+  const ctx = { data, admin, edit, arrange, setArrange, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
+    startTour: () => { setMode('view'); setTour(true); },
     askAi: q => setAi({ q, n: Date.now() }) };
   if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
   if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
@@ -153,21 +162,22 @@ function App() {
       <div className="brand"><AppIcon size={34} radius={10} style={{ boxShadow: '0 4px 14px rgba(0,60,200,.25)' }} />
         <div className="brand-text"><div className="brand-title ellipsis">{data.settings.title}</div>
           <div className={'live' + (stale ? ' stale' : '')}><i />{stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)}</div></div></div>
-      <nav className="tabs">{tabs.map(t => <button key={t.id} className={'tab' + (cur === t.id ? ' on' : '')} title={t.label} onClick={() => setTab(t.id)}>
+      <nav className="tabs">{tabs.map(t => <button key={t.id} data-tour={'tab-' + t.id} className={'tab' + (cur === t.id ? ' on' : '')} title={t.label} onClick={() => setTab(t.id)}>
         <Icon name={t.icon} size={15} /><span className="tab-label">{t.label}</span>{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
       <div className="grow" />
       <div className="hdr-tools hide-sm">
-        {admin ? <Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
-          { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
-        {admin ? <button type="button" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}><FrankEye size={26} round={8} /></button> : null}
+        {admin ? <span data-tour="edit-toggle" style={{ display: 'inline-flex' }}><Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
+          { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /></span> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
+        {admin && edit && cur === 'rack' ? <label className="arrange-sw" title="Двигать, менять размер, добавлять и убирать виджеты на главной"><Switch on={arrange} onChange={setArrange} /><span>Расстановка виджетов</span></label> : null}
+        {admin ? <button type="button" data-tour="frank-btn" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}><FrankEye size={26} round={8} /></button> : null}
         <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
         <Btn size="sm" icon={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} title={'Тема: ' + ({ auto: 'как в системе', dark: 'тёмная', light: 'светлая' })[theme]}
           onClick={() => setTheme(theme === 'auto' ? 'dark' : theme === 'dark' ? 'light' : 'auto')} />
       </div>
       {/* phones: everything above folds into one «⋯» button with a menu, like iOS */}
-      <button type="button" className={'hdr-more only-sm' + (edit ? ' editing' : '')} title="Меню" onClick={() => setMenu(true)}><Icon name="more" size={22} stroke={2.6} /></button>
+      <button type="button" data-tour="hdr-more" className={'hdr-more only-sm' + (edit ? ' editing' : '')} title="Меню" onClick={() => setMenu(true)}><Icon name="more" size={22} stroke={2.6} /></button>
     </header>
-    {menu ? <HeaderMenu admin={admin} mode={mode} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
+    {menu ? <HeaderMenu admin={admin} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
       onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
     <main className="page">
       <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
@@ -185,17 +195,18 @@ function App() {
       {cur === 'events' ? <EventsView /> : null}
       {cur === 'settings' && admin ? <SettingsView /> : null}
     </main>
-    <nav className="bottombar">{tabs.map(t => <button key={t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
+    <nav className="bottombar">{tabs.map(t => <button key={t.id} data-tour={'tab-' + t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
       <Icon name={t.icon} size={24} />{t.label}{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
     {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={() => setSheet(null)} /> : null}
     {editor !== undefined ? <DeviceEditor device={editor && editor.__preset ? null : editor} preset={editor && editor.__preset} onClose={() => setEditor(undefined)} /> : null}
     {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={() => setAi(null)} /> : null}
     {speed ? <SpeedTestModal autoRun={speed === 'run'} onClose={() => setSpeed(null)} /> : null}
+    {tour && admin ? <Tour onDone={finishTour} /> : null}
   </AppCtx.Provider>;
 }
 
 /* phone header menu: tiles on top (Frank, speed test, refresh), rows below (editing, theme, sign in / out) — like an iOS context menu */
-function HeaderMenu({ admin, mode, setMode, theme, setTheme, onClose, onFrank, onSpeed, onRefresh, onLogin, onLogout }) {
+function HeaderMenu({ admin, mode, arrange, setArrange, setMode, theme, setTheme, onClose, onFrank, onSpeed, onRefresh, onLogin, onLogout }) {
   useEffect(() => { const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
   const go = fn => () => { onClose(); fn(); };
   return <div className="hdr-menu-wrap" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -207,6 +218,7 @@ function HeaderMenu({ admin, mode, setMode, theme, setTheme, onClose, onFrank, o
       </div>
       {admin ? <div className="hdr-row">
         <Icon name="edit" size={20} /><span className="grow">Редактирование</span><Switch on={mode === 'edit'} onChange={v => setMode(v ? 'edit' : 'view')} /></div> : null}
+      {arrange != null ? <div className="hdr-row"><Icon name="list" size={20} /><span className="grow">Расстановка виджетов</span><Switch on={arrange} onChange={setArrange} /></div> : null}
       <div className="hdr-row"><Icon name={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} size={20} /><span className="grow">Тема</span>
         <Seg value={theme} onChange={setTheme} options={[{ value: 'auto', label: 'Авто' }, { value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} /></div>
       {admin ? <button type="button" className="hdr-row" onClick={go(onLogout)}><Icon name="logout" size={20} /><span className="grow">Выйти</span></button>

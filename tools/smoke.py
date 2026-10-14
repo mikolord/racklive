@@ -4,7 +4,7 @@ opens every tab / sheet / editor in a headless browser, failing on any interface
 
     python tools/smoke.py            # needs a Chromium-based browser for the UI part (Edge / Chrome), skipped otherwise
 """
-import gzip, json, os, shutil, socket, subprocess, sys, tempfile, time, urllib.request
+import gzip, json, os, re, shutil, socket, subprocess, sys, tempfile, time, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BROWSERS = [r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
@@ -70,6 +70,134 @@ def main():
             check('a remote device cannot be put into a rack', False)
         except urllib.error.HTTPError as e:
             check('a remote device cannot be put into a rack', e.code == 400)
+        # ── Советы Frank ──
+        sys.path.insert(0, ROOT)
+        from rackd import advisor as adv
+        tips = adv.parse('Вот советы:\n[{"kind":"add","title":"ИБП","text":"Поставить","prio":1,"ask":"как?"},{"kind":"???","title":"X","text":"y","prio":9},{"title":"","text":"z"}]')
+        check('advice: the answer is parsed strictly', len(tips) == 2 and tips[0]['kind'] == 'add' and tips[1]['kind'] == 'idea' and tips[1]['prio'] == 3, str(tips))
+        for bad in ('Всё хорошо, советов нет', '[не json]', '[]'):
+            try:
+                adv.parse(bad); check('advice: a broken answer is refused: ' + bad, False)
+            except ValueError:
+                check('advice: a broken answer is refused: ' + bad, True)
+        a0 = st.get('advice')
+        check('advice: the demo shows tips and is ready', a0 and a0['ready'] and len(a0['items']) >= 4 and a0['items'][0]['prio'] == 1, json.dumps(a0)[:200])
+        api('/api/advice/close', {'id': a0['items'][0]['id'], 'done': True}, 'POST')
+        a1 = api('/api/state')['advice']
+        check('advice: a closed tip disappears', len(a1['items']) == len(a0['items']) - 1)
+        api('/api/advice/settings', {'days': 7, 'telegram': True}, 'PUT')
+        a2 = api('/api/state')['advice']
+        check('advice: the interval and Telegram switch are saved', a2['days'] == 7 and a2['telegram'] is True)
+        api('/api/advice/settings', {'days': 3, 'telegram': False}, 'PUT')
+        class FakeApp:
+            pass
+        # a whole review with a stand-in for the assistant
+        import types
+        from rackd import assistant as asst
+        real_ask = asst.ask
+        asst.ask = lambda app, c, chat, progress=None: {'text': '[{"kind":"dislike","title":"Порт 3 без устройства","text":"Кабель висит","prio":2,"ask":"что с портом 3?"}]', 'usage': {'in': 10, 'out': 5}}
+        try:
+            class S:
+                cfg = {'ai': {'enabled': True, 'preset': 'ollama', 'model': 'm'}, 'devices': []}
+                def _load(self, n, d): return d
+                def _dump(self, n, d): self.saved = d
+                def bump(self): pass
+                def add_event(self, *a): pass
+                def save(self): pass
+            class Ap:
+                store = S(); ai = types.SimpleNamespace(_count=lambda u: None); tgbot = types.SimpleNamespace(notice=lambda t: None)
+            ad = adv.Advisor(Ap(), False)
+            check('advice: a review is due on a fresh install', ad.due())
+            ad.run()
+            check('advice: a review fills the list and sets the next date', len(ad.d['items']) == 1 and not ad.d.get('error') and not ad.due())
+            ad.close(ad.d['items'][0]['id'])
+            ad.d['last'] = 0; ad.run()
+            check('advice: a dismissed tip is not offered again', not [x for x in ad.d['items'] if x.get('state') == 'new'])
+            asst.ask = lambda *a, **k: {'text': 'мысли вслух без списка', 'usage': {'in': 1, 'out': 1}}
+            ad.d['last'] = 0; ad.run()
+            check('advice: a bad answer becomes an error and a retry in hours, not at once', ad.d.get('error') and not ad.due())
+        finally:
+            asst.ask = real_ask
+        # ── network loops: the switch output parser, the watcher and the whole chain in the demo ──
+        sys.path.insert(0, ROOT)
+        from rackd import loops as lw
+        from rackd.drivers.tplink import parse_loop, runs as port_runs
+        g = parse_loop(' Loopback detection global status : enable\n Loopback detection interval      : 30 s\n Loopback detection recovery time : 90 s\n',
+                       ' Port      Enable   Process Mode   Recovery Mode   Loopback   Block         LAG\n ----      ------   ------------   -------------   --------   -----         ---\n'
+                       ' Gi1/0/3   enable   port-based     auto             Yes        Block        N/A\n Gi1/0/4   disable  alert          auto             N/A        N/A          N/A\n')
+        check('loop guard: switch output is understood', g and g['enabled'] and g['interval'] == 30 and g['recoveryTime'] == 90 and g['ports'][3]['loop'] and g['ports'][3]['blocked']
+              and not g['ports'][4]['on'] and g['onPorts'] == 1, json.dumps(g))
+        check('loop guard: a switch without the command gives nothing', parse_loop('Error: Invalid parameter', '') is None)
+        check('loop guard: ports are grouped into ranges', port_runs([1, 2, 3, 5, 7, 8]) == [(1, 3), (5, 5), (7, 8)])
+
+        class Ev:
+            def __init__(self): self.items = []
+            def add_event(self, did, name, level, text): self.items.append((level, text))
+        def poll(t, moves=None, pps=None, guard=False):
+            ports = [{'n': n, 'peers': [], 'link': True} for n in range(1, 9)]
+            for mac, port in (moves or {}).items():
+                ports[port - 1]['peers'].append({'mac': mac})
+            for n, v in (pps or {}).items():
+                ports[n - 1]['bcastPps'] = v
+            if guard:
+                ports[4].update(loopDetected=True, loopBlocked=True)
+            return {'status': 'online', 'updated': t, 'ports': ports}
+        ev = Ev(); w = lw.LoopWatch(ev); dd = {'id': 's1', 'name': 'SW'}
+        s1 = poll(1000, pps={3: 40}); w.observe(dd, s1)
+        check('loop watch: a quiet switch is quiet', not s1['loops']['active'])
+        s2 = poll(1060, pps={3: 20000}); w.observe(dd, s2)
+        check('loop watch: one noisy poll is not yet an alarm', not s2['loops']['active'])
+        s3 = poll(1120, pps={3: 21000}); w.observe(dd, s3)
+        check('loop watch: a broadcast storm on two polls in a row is', s3['loops']['active'] and s3['loops']['storm'][0]['port'] == 3 and any('петля' in t for _, t in ev.items))
+        s4 = poll(1180, pps={3: 30}); w.observe(dd, s4)
+        s5 = poll(1180 + lw.CALM + 60, pps={3: 30}); w.observe(dd, s5)
+        check('loop watch: after a calm period the loop is declared gone', not s5['loops']['active'] and any('больше нет' in t for _, t in ev.items))
+        ev = Ev(); w = lw.LoopWatch(ev)
+        macs = ['aa:00:00:00:00:0%d' % i for i in range(1, 4)]
+        out = None
+        for i in range(7):
+            out = poll(2000 + i * 60, moves={m: 1 + (i % 2) * 3 for m in macs}); w.observe(dd, out)
+        check('loop watch: three devices jumping between the same ports are a loop', out['loops']['active'] and len(out['loops']['flap']) == 3)
+        w2 = lw.LoopWatch(Ev()); out2 = None
+        for i in range(7):
+            out2 = poll(3000 + i * 60, moves={'bb:00:00:00:00:01': 1 + (i % 3 == 0) * 3}); w2.observe(dd, out2)
+        check('loop watch: one roaming phone is not a loop', not out2['loops']['active'])
+        w4 = lw.LoopWatch(Ev()); o4 = None                                       # the same devices listed on two ports in every poll (an uplink sees the whole network)
+        for i in range(8):
+            o4 = poll(3500 + i * 60, moves=None)
+            for m in macs:
+                o4['ports'][0]['peers'].append({'mac': m}); o4['ports'][7]['peers'].append({'mac': m})
+            w4.observe(dd, o4)
+        check('loop watch: devices listed on an uplink and on their own port are not «jumping»', not o4['loops']['active'])
+        w5 = lw.LoopWatch(Ev()); o5 = None                                       # a phone that cannot decide between two access points all the time (real case)
+        for i in range(14):
+            o5 = poll(3800 + i * 60, moves={'b4:ed:d5:07:5a:44': 6 if i % 2 else 7}); w5.observe(dd, o5)
+        check('loop watch: one phone roaming between two access points all the time is not a loop', not o5['loops']['active'])
+        w6 = lw.LoopWatch(Ev()); o6 = None                                       # even many Wi-Fi devices roaming at once are ignored
+        wf = set(macs)
+        for i in range(8):
+            o6 = poll(3900 + i * 60, moves={m: 1 + (i % 2) * 3 for m in macs}); w6.observe(dd, o6, wf)
+        check('loop watch: Wi-Fi devices are not counted at all', not o6['loops']['active'])
+        w3 = lw.LoopWatch(Ev()); o3 = poll(4000, guard=True); w3.observe(dd, o3)
+        check('loop watch: the switch\'s own detection counts at once', o3['loops']['active'] and 'сам нашёл петлю' in o3['loops']['why'])
+
+        swd = next(d for d in st['devices'] if d['driver'] == 'demo_switch')
+        check('loop guard: the demo switch offers it (off at first), with a warning in the health analysis',
+              (swd['state'].get('loopGuard') or {}).get('enabled') is False and any('Защита от петель выключена' in c['title'] for c in st['health']['checks']))
+        api(f"/api/devices/{swd['id']}/action", {'action': 'loop_demo', 'params': {}}, 'POST')
+        api(f"/api/devices/{swd['id']}/poll", {}, 'POST')
+        api(f"/api/devices/{swd['id']}/poll", {}, 'POST')                        # a storm counts after two polls in a row
+        st2 = api('/api/state'); sw2 = next(d for d in st2['devices'] if d['id'] == swd['id'])
+        check('loop guard: a loop is seen in the state, in the analysis and in the journal',
+              sw2['state']['loops']['active'] and any(c['level'] == 'bad' and 'петля' in c['title'] for c in st2['health']['checks'])
+              and any('возможна петля' in e['text'] for e in st2['events']), json.dumps(sw2['state'].get('loops'))[:200])
+        api(f"/api/devices/{swd['id']}/action", {'action': 'loop_guard', 'params': {}}, 'POST')
+        api(f"/api/devices/{swd['id']}/poll", {}, 'POST')
+        st3 = api('/api/state'); sw3 = next(d for d in st3['devices'] if d['id'] == swd['id'])
+        check('loop guard: turned on, the ports are blocked by the switch itself', sw3['state']['loopGuard']['enabled'] and any(p.get('loopBlocked') for p in sw3['state']['ports']))
+        api(f"/api/devices/{swd['id']}/action", {'action': 'loop_demo', 'params': {}}, 'POST')
+        api(f"/api/devices/{swd['id']}/action", {'action': 'loop_guard_off', 'params': {}}, 'POST')
+        api(f"/api/devices/{swd['id']}/poll", {}, 'POST')
         try:
             api('/api/devices', {'driver': 'ups', 'name': 'x', 'location': 'remote'}, 'POST'); check('a remote UPS is refused', False)
         except urllib.error.HTTPError as e:
@@ -274,6 +402,9 @@ def main():
                  'OpenWrt · Forkop': f'?device={dev["demo_openwrt"]}&tab=plugins&plugin=forkop',
                  'OpenWrt · модем': f'?device={dev["demo_openwrt"]}&tab=plugins&plugin=modem',
                  'Новое устройство (автоопределение)': '?add=1#devices',
+                 'Обучение Frank — приветствие': '?tour=1#rack', 'Обучение Frank — устройства': '?tour=1&tourstep=1#rack',
+                 'Обучение Frank — определить': '?tour=1&tourstep=3&add=1#devices', 'Обучение — в настройках': '?section=general#settings',
+                 'Коммутатор — защита от петель': f'?device={dev["demo_switch"]}',
                  'Устройства — удалённые': '#devices', 'Доступ — вход и устройства': '?section=access#settings',
                  'Доступ — подключение приложения': '?section=access&mfa=totp#settings',
                  'Новое устройство — группы': '?add=1#devices', 'Новое устройство — роутеры': '?add=1&addgrp=router#devices',
@@ -321,6 +452,18 @@ def main():
                 check('доступ: второй фактор, устройства, время сессий', all(x in out for x in ('Двухфакторная защита', 'Устройства с доступом', 'Как долго живёт вход')))
             if name == 'Доступ — подключение приложения':
                 check('доступ: окно подключения приложения', 'Приложение с кодами' in out and 'Установите на телефон' in out)
+            if name == 'Обучение Frank — приветствие':
+                check('обучение: Frank, градиент, «Пропустить»', all(x in out for x in ('tour-layer', 'Привет! Я Frank', 'Пропустить обучение', 'tf-bob')))
+            if name == 'Обучение Frank — устройства':
+                check('обучение: подсветка вкладки «Устройства»', 'Начнём с устройств' in out and 'tour-ring' in out and 'Нажмите на подсвеченное' in out)
+            if name == 'Обучение Frank — определить':
+                check('обучение: шаг внутри окна добавления', 'Проще всего — по адресу' in out)
+            if name == 'Обучение — в настройках':
+                check('обучение: кнопка повтора в настройках', 'Показать обучение' in out)
+            if name == 'Коммутатор — защита от петель':
+                i = out.find('Защита от петель')
+                check('карточка «Защита от петель» у коммутатора', 'Защита от петель' in out and 'Выключена' in out and 'Включить защиту от петель' in out,
+                      re.sub(r'<[^>]+>', ' ', out[i: i + 900]) if i >= 0 else 'карточки нет; длина ' + str(len(out)))
             if name == 'Устройства — удалённые':
                 check('вкладки Все / Локальные / Удалённые', all(x in out for x in ('Все · ', 'Локальные · ', 'Удалённые · ')))
             if name == 'Новое устройство — группы':
@@ -372,6 +515,13 @@ def main():
                 out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
                                       '--dump-dom', base + '/' + q], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
                 check('панель помощника: подсказки и поле ввода', 'ai-suggest' in out and 'ai-foot' in out)
+                # a phone (600 px): Settings as an iOS list, a section opens with «‹ Настройки»; a computer keeps the two columns
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=600,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/#settings'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('телефон: настройки списком как в iOS', 'ios-list' in out and out.count('ios-cell') >= 6 and 'set-nav' not in out and 'data-js-error="' not in out)
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=600,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/?section=access#settings'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('телефон: раздел открыт со стрелкой «Настройки»', 'ios-back' in out and 'Двухфакторная защита' in out and 'ios-list' not in out)
     finally:
         srv.terminate()
         try:

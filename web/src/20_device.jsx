@@ -106,13 +106,14 @@ function Overview({ device, drv }) {
   if (s.uptime != null) stats.push(<Stat key="up" k="Аптайм" v={fmt.uptime(s.uptime)} />);
   (st.ups ? [] : st.metrics || []).forEach((m, i) => stats.push(<Stat key={'m' + i} k={m.label} v={m.value} unit={m.unit} level={m.level}
     spark={m.label === 'Задержка' || m.label === 'PoE' ? hist : null} sparkField={m.label === 'Задержка' ? 'ms' : 'poe'} color="var(--green)" />));
-  const devActions = (drv?.actions || []).filter(a => a.scope === 'device' && a.kind !== 'speed');
+  const devActions = (drv?.actions || []).filter(a => a.scope === 'device' && a.kind !== 'speed' && !/^loop_/.test(a.id));      // loop protection has its own card
   const speedAction = (drv?.actions || []).find(a => a.kind === 'speed');
   return <>
     {st.error ? <div className="card pad" style={{ borderColor: 'var(--red)', color: 'var(--red)' }}><b>Нет связи:</b> {st.error}
       {st.updated && st.summary ? <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>Показаны последние известные данные</div> : null}</div> : null}
     {stats.length ? <div className="stats">{stats}</div> : null}
     {st.ups ? <UpsCard ups={st.ups} /> : null}
+    {(st.loopGuard && st.loopGuard.supported) || (st.loops && (st.loops.active || st.loops.recent)) ? <LoopGuardCard device={device} drv={drv} /> : null}
     {admin ? <WebAccess device={device} /> : null}
     <Card title="Сведения">
       <KV rows={[['Модель', s.model], ['Прошивка', s.fw], ['IP-адрес', s.ip ? <span className="mono">{s.ip}</span> : null],
@@ -128,6 +129,33 @@ function Overview({ device, drv }) {
       <Btn key={a.id} kind="danger" icon="power" onClick={() => runAction(device, a)}>{a.label}</Btn>)}</div></Card> : null}
     <EventsList events={data.events.filter(e => e.device === device.id).slice(0, 8)} compact />
   </>;
+}
+
+/* «Защита от петель»: a cable plugged into two ports of one network makes frames circle for ever and the network stops. The switch can notice it and
+   switch the looped port off by itself; Rack Live also watches for the signs (rackd/loops.py) and warns. */
+function LoopGuardCard({ device, drv }) {
+  const { admin } = useApp(); const runAction = useAction();
+  const st = device.state, g = st.loopGuard, lp = st.loops || {};
+  const act = id => (drv?.actions || []).find(a => a.id === id);
+  const blocked = (st.ports || []).filter(p => p.loopBlocked);
+  const on = !!(g && g.enabled);
+  return <Card title="Защита от петель" right={lp.active ? <span className="badge offline">Петля!</span>
+    : g ? <span className={'badge ' + (on ? 'online' : 'warning')}>{on ? 'Включена' : 'Выключена'}</span> : null}>
+    {lp.active ? <div className="loop-alarm"><Icon name="alert" size={18} /><div><b>Похоже, в сети петля</b><div>{lp.why}.</div>
+      <div className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>Что делать: найдите кабель, который воткнут в два порта одной сети (чаще всего — коммутатор или розетка сам в себя, или два кабеля между
+        двумя коммутаторами), и выньте его. {on ? 'Если защита включена, коммутатор уже отключил порт сам — после починки он вернётся.' : 'Включите защиту ниже, чтобы коммутатор делал это сам.'}</div></div></div>
+      : lp.recent ? <div className="dim" style={{ fontSize: 13, marginBottom: 8 }}>Недавно были признаки петли, сейчас всё спокойно. Найдите причину — кабель, который кто-то замкнул, — чтобы это не повторилось.</div> : null}
+    {g ? <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{on
+      ? <>Коммутатор проверяет петли на {g.onPorts} {ruPlural(g.onPorts, 'порту', 'портах', 'портах')} (каждые {g.interval} с). Если порт замкнут, он <b>сам отключается</b> и возвращается через {g.recoveryTime} с — вся сеть не встанет.</>
+      : <>Сейчас защита выключена: достаточно одного случайно воткнутого кабеля (коммутатор в самого себя), чтобы <b>вся сеть встала</b>. Коммутатор умеет находить такой порт и отключать его сам — связь при включении не пропадёт.</>}</div> : null}
+    {blocked.length ? <div className="list" style={{ marginTop: 10 }}>{blocked.map(p => <div className="li" key={p.n}>
+      <span className="dot offline" /><div className="grow"><b style={{ fontSize: 14 }}>Порт {p.n}{p.label ? ' · ' + p.label : ''}</b><div className="dim3" style={{ fontSize: 12 }}>отключён: на нём нашли петлю</div></div>
+      {admin && act('loop_recover') ? <Btn size="sm" onClick={() => runAction(device, act('loop_recover'), { port: p.n })}>Вернуть</Btn> : null}</div>)}</div> : null}
+    {admin && g ? <div className="row wrap" style={{ marginTop: 12 }}>
+      {on ? <Btn size="sm" onClick={() => runAction(device, act('loop_guard_off'))}>Выключить защиту</Btn>
+        : <Btn size="sm" kind="primary" icon="shield" onClick={() => runAction(device, act('loop_guard'))}>Включить защиту от петель</Btn>}</div> : null}
+    {!g ? <div className="dim3" style={{ fontSize: 12.5 }}>Этот коммутатор не сообщает о защите от петель. Rack Live следит за признаками (прыгающие устройства, шторм широковещательных кадров) и предупредит. Включите STP или loop protection в самом коммутаторе.</div> : null}
+  </Card>;
 }
 
 const fmtMin = m => m == null ? '—' : m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
@@ -253,7 +281,7 @@ function PortsTab({ device, drv, initialPort }) {
   const [testing, setTesting] = useState(null);
   const doCableTest = async (a, n) => { setTesting(n); try { const r = await runAction(device, a, { port: n }); if (r && r.cable) setCableRes(c => ({ ...c, [n]: r.cable })); } finally { setTesting(null); } };
   const traffic = useHistory(device.id, hasTraffic && p && p.rxBytes != null, sel);
-  const allPortActions = (drv?.actions || []).filter(a => a.scope === 'port' && (!a.needs || (a.needs === 'poe' && p && p.poe)));
+  const allPortActions = (drv?.actions || []).filter(a => a.scope === 'port' && (!a.needs || (a.needs === 'poe' && p && p.poe)) && (a.id !== 'loop_recover' || (p && (p.loopBlocked || p.loopDetected))));
   const portActions = allPortActions.filter(a => a.kind !== 'cable'), cableAction = allPortActions.find(a => a.kind === 'cable');
   const cab = p ? (cableRes[p.n] && (!p.cable || cableRes[p.n].t >= p.cable.t) ? cableRes[p.n] : p.cable) : null;
   const slow = p && p.link && p.kind !== 'sfp' && p.speed > 0 && p.speed < 1000 && ports.some(x => x.speed >= 1000);
@@ -276,6 +304,8 @@ function PortsTab({ device, drv, initialPort }) {
         ['VLAN (tagged)', (p.vlansT || []).map(v => vlanName(v, vlans)).join(', ')], ...(p.ip ? [['IP', p.ip]] : []), ['Интерфейс', p.name],
         ...(p.lldp ? [['Сосед (LLDP)', p.lldp]] : []),
         ...(p.errDay != null ? [['Ошибки (CRC)', <span style={{ color: ERR_COLOR[errLevel(p)] }}>{p.errHour} за час · {p.errDay} за сутки</span>]] : []),
+        ...(p.bcastPps != null && p.link ? [['Широковещательные кадры', <span style={{ color: p.bcastPps >= 5000 ? 'var(--red)' : undefined }}>{p.bcastPps} в секунду{p.bcastPps >= 5000 ? ' — похоже на шторм из-за петли' : ''}</span>]] : []),
+        ...(p.loopOn != null ? [['Защита от петель', p.loopDetected ? <span style={{ color: 'var(--red)' }}>найдена петля{p.loopBlocked ? ' — порт отключён' : ''}</span> : p.loopOn ? 'включена' : 'выключена']] : []),
         ...patchesFor(data, device.id, p.n).map(x => [x.unit.type === 'cross' ? 'Оптический кросс' : 'Патч-панель',
           `${x.unit.name}, порт ${x.n}${x.m.label ? ' → ' + x.m.label : ''}${x.m.color ? ' · ' + x.m.color : ''}`]), ...(p.rxBytes != null ? [['Всего передано', `↓ ${fmt.bytes(p.txBytes)} · ↑ ${fmt.bytes(p.rxBytes)}`]] : [])]} />
       {['warn', 'bad'].includes(errLevel(p)) ? <div className="err-note">
@@ -304,7 +334,7 @@ function PortsTab({ device, drv, initialPort }) {
     </Card> : null}
     <Card title="Все порты" pad={false}><div style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>#</th><th>Подпись</th><th>Линк</th>{hasTraffic ? <th>Трафик ↓/↑</th> : null}{hasErr ? <th title="Повреждённые кадры (CRC) за сутки">Ошибки</th> : null}<th>PoE</th><th>VLAN</th><th>Устройства</th></tr></thead>
       <tbody>{ports.map(x => <tr key={x.n} onClick={() => setSel(x.n)} style={{ cursor: 'pointer' }}>
-        <td className="mono">{x.n}</td><td>{x.label}{(x.cable && ['warn', 'bad'].includes(x.cable.verdict)) || ['warn', 'bad'].includes(errLevel(x)) ? <span title={x.cable ? x.cable.text : 'Ошибки передачи — проверьте кабель'} style={{ marginLeft: 6, color: 'var(--orange)' }}><Icon name="alert" size={13} /></span> : null}</td><td>{x.link ? <span className="row" style={{ gap: 6 }}><span className={'dot ' + (x.speed >= 1000 ? 'online' : 'warning')} />{fmt.speedShort(x.speed)}</span> : <span className="dim3">—</span>}</td>
+        <td className="mono">{x.n}</td><td>{x.label}{x.loopDetected || x.loopBlocked ? <span className="badge offline" style={{ marginLeft: 6 }}>петля</span> : null}{(x.cable && ['warn', 'bad'].includes(x.cable.verdict)) || ['warn', 'bad'].includes(errLevel(x)) ? <span title={x.cable ? x.cable.text : 'Ошибки передачи — проверьте кабель'} style={{ marginLeft: 6, color: 'var(--orange)' }}><Icon name="alert" size={13} /></span> : null}</td><td>{x.link ? <span className="row" style={{ gap: 6 }}><span className={'dot ' + (x.speed >= 1000 ? 'online' : 'warning')} />{fmt.speedShort(x.speed)}</span> : <span className="dim3">—</span>}</td>
         {hasTraffic ? <td className="mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{x.txBps != null ? `${fmt.bps(x.txBps)} / ${fmt.bps(x.rxBps)}` : ''}</td> : null}
         {hasErr ? <td className="mono" style={{ fontSize: 12, color: ERR_COLOR[errLevel(x)] }}>{x.errDay ? x.errDay : ''}</td> : null}
         <td>{x.poeW ? x.poeW + ' Вт' : ''}</td><td>{[...(x.vlansU || []), ...(x.vlansT || []).map(v => v + 't')].join(', ')}</td>

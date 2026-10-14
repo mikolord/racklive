@@ -43,7 +43,7 @@ function DevicesView() {
       </div>
       {changed ? <span className="dim" style={{ fontSize: 13 }}>{[onlyBad ? 'только с проблемами' : '', sort !== 'group' ? DEV_SORTS.find(x => x[0] === sort)[1].toLowerCase() : ''].filter(Boolean).join(' · ')}</span> : null}
       <div className="grow" />
-      {admin ? <Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить</Btn> : null}
+      {admin ? <span data-tour="add-dev" style={{ display: 'inline-flex' }}><Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить</Btn></span> : null}
     </div>
     {!data.devices.length ? <Card><div className="empty" style={{ padding: 50 }}>
       <div style={{ fontSize: 40, marginBottom: 10 }}>🛰️</div><div style={{ fontSize: 17, fontWeight: 600, color: 'var(--text)' }}>Пока нет ни одного устройства</div>
@@ -150,7 +150,7 @@ function CatalogPick({ grp, setGrp, onPick }) {
     <div className="dev-cat-list">{cur.items.map((i, k) => <button type="button" key={k} className="dev-cat-item" onClick={() => onPick(i)}>
       <KindIcon kind={(i.preset && i.preset.kind) || (data.drivers.find(d => d.id === i.driver) || {}).kind} size={40} />
       <div style={{ minWidth: 0 }}><b>{i.title}</b>{i.proof ? <span className="dev-cat-proof">{i.proof}</span> : null}<small>{i.text}</small></div></button>)}</div></div>;
-  return <div className="dev-cat">{groups.map(g => <button type="button" key={g.id} className="dev-cat-grp" onClick={() => setGrp(g.id)}>
+  return <div className="dev-cat" data-tour="dev-cat">{groups.map(g => <button type="button" key={g.id} className="dev-cat-grp" onClick={() => setGrp(g.id)}>
     <span className="set-ic" style={{ background: g.color, width: 38, height: 38 }}><Icon name={g.icon} size={19} color="#fff" /></span>
     <div style={{ minWidth: 0 }}><b>{g.title}</b><small>{g.text}</small></div><Icon name="chevron" size={15} color="var(--text3)" /></button>)}</div>;
 }
@@ -349,7 +349,7 @@ function DetectBox({ onPick }) {
     try { setFound((await api('/api/detect', { method: 'POST', body: { host } })).found); } catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   const title = id => (data.drivers.find(d => d.id === id) || {}).title || id;
-  return <form className="detect" onSubmit={run}>
+  return <form className="detect" data-tour="detect-box" onSubmit={run}>
     <div className="row" style={{ gap: 8 }}><Icon name="search" size={18} color="var(--accent)" /><b>Определить автоматически</b></div>
     <div className="row wrap" style={{ gap: 8 }}>
       <input className="input grow" style={{ minWidth: 180 }} value={host} onChange={e => setHost(e.target.value)} placeholder="Адрес устройства, например 192.168.1.1" />

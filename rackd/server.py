@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -31,6 +31,9 @@ class App:
     def __init__(self):
         load_all()
         self.store = Store(DATA)
+        s = self.store.cfg['settings']
+        if 'tourDone' not in s:                    # Frank's welcome tour: only for a brand-new installation (no administrator yet); never for one that already works
+            s['tourDone'] = bool(self.store.cfg.get('auth')) or DEMO
         self.sessions = auth.Sessions(DATA, policy=lambda: self.mfa.policy())
         self.states = {}
         self.running = set()
@@ -51,6 +54,8 @@ class App:
         self.ai = assistant.Assistant(self)
         self.routers = routers.RouterScan(self)
         self.uptime = uptime.Uptime(self.store)
+        self.loops = loops.LoopWatch(self.store)
+        self.advisor = advisor.Advisor(self, DEMO)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
@@ -95,6 +100,8 @@ class App:
                     if drx >= 0 and dtx >= 0:
                         p['rxBps'], p['txBps'] = round(drx * 8 / dt), round(dtx * 8 / dt)
                         point.update(rx=p['rxBps'], tx=p['txBps'])
+                if fresh and p.get('bcastPkts') is not None and o.get('bcastPkts') is not None and p['bcastPkts'] >= o['bcastPkts']:
+                    p['bcastPps'] = round((p['bcastPkts'] - o['bcastPkts']) / dt)         # broadcast + multicast frames per second: a loop makes it explode
                 e, eo = port_errors(p), port_errors(o)
                 if fresh and e is not None and eo is not None and e >= eo:     # e < eo: counters reset (reboot)
                     point['err'] = e - eo
@@ -104,6 +111,12 @@ class App:
                     h = self.store.history.get(key) or []
                     p['errHour'] = sum(x.get('err', 0) for x in h if x['t'] >= st['updated'] - 3600)
                     p['errDay'] = sum(x.get('err', 0) for x in h)
+            try:
+                wifi = {(c.get('mac') or '').lower() for s in self.states.values() for c in s.get('clients') or []
+                        if c.get('ap') or c.get('rssi') is not None or c.get('wifi')}      # Wi-Fi devices walk between access points: not a loop sign
+                self.loops.observe(d, st, wifi)            # signs of a network loop (adds st['loops'], writes the journal)
+            except Exception:
+                traceback.print_exc()
             self.states[d['id']] = st
             self.store.bump()
             try:
@@ -178,6 +191,8 @@ class App:
             self.extscan.start()
         if self.routers.due():
             self.routers.run()
+        if time.time() - self.started > advisor.FIRST_DELAY and self.advisor.due():     # Frank's review every few days
+            self.advisor.start()
         if not self.backup_busy:
             d = next((d for d in self.store.cfg['devices'] if d.get('enabled', True) and hasattr(REGISTRY.get(d.get('driver')), 'backup')
                       and (self.states.get(d['id']) or {}).get('status') == 'online' and self.backups.due(d['id'])), None)
@@ -336,7 +351,7 @@ class App:
         except Exception:
             traceback.print_exc()
             sec = None
-        admin_extra = {'ai': self.ai.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
+        admin_extra = {'ai': self.ai.public(), 'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
@@ -843,6 +858,25 @@ class Handler(BaseHTTPRequestHandler):
                     APP.sessions.drop_all()                 # everyone else is signed out and forgotten — they sign in with the new password
                     st.save()
                     return self.signed_in('password', True)
+                st.save()
+                return self.send({'ok': True})
+            if path.startswith('/api/advice/'):                  # Советы Frank
+                act = path[len('/api/advice/'):]
+                if act == 'refresh' and method == 'POST':
+                    ok, why = APP.advisor.start(manual=True)
+                    return self.send({'ok': True, 'started': ok, 'why': why})
+                if act == 'close' and method == 'POST':
+                    APP.advisor.close(str(body.get('id')), bool(body.get('done')))
+                    return self.send({'ok': True})
+                if act == 'settings' and method == 'PUT':
+                    try:
+                        APP.advisor.set_cfg(body)
+                    except (TypeError, ValueError) as e:
+                        return self.err(str(e), 400)
+                    return self.send({'ok': True})
+                return self.err('не найдено', 404)
+            if path == '/api/tour' and method == 'POST':
+                st.cfg['settings']['tourDone'] = True
                 st.save()
                 return self.send({'ok': True})
             # ── two-factor and devices (Настройки → Доступ) ──
