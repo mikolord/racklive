@@ -5,14 +5,14 @@ const snap = v => Math.round(v / PG) * PG;
 const clampK = k => Math.min(3, Math.max(.25, k));
 
 function placeStatus(rack, devById) {
-  const s = (rack.units || []).map(u => devById[u.deviceId] && devById[u.deviceId].state && devById[u.deviceId].state.status).filter(Boolean);
+  const s = (rack.units || []).flatMap(u => unitDevIds(u)).map(id => devById[id] && devById[id].state && devById[id].state.status).filter(Boolean);
   return s.includes('offline') ? 'offline' : s.includes('warning') ? 'warning' : s.length ? 'online' : '';
 }
 function floorDevices(f, data, devById) {
   const out = [];
   (f.items || []).forEach(it => {
     if (it.kind === 'device' && devById[it.ref]) out.push(devById[it.ref]);
-    if (it.kind === 'place') { const r = data.racks.find(x => x.id === it.ref); (r ? r.units : []).forEach(u => devById[u.deviceId] && out.push(devById[u.deviceId])); }
+    if (it.kind === 'place') { const r = data.racks.find(x => x.id === it.ref); (r ? r.units : []).forEach(u => unitDevIds(u).forEach(id => devById[id] && out.push(devById[id]))); }
   });
   return out;
 }

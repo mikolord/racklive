@@ -38,6 +38,29 @@ function incoming(data, unitId, n) {
     if (m && m.dev === 'u:' + unitId && String(m.port) === String(n)) out.push({ unit: u, n: k, m }); }));
   return out;
 }
+/* live state of port n of a passive unit: the device port it is patched to, or — along cross → ONT → router chains — the far end.
+   → {link, speed} | null (nothing live behind it) */
+function portLive(data, unit, n, seen = new Set()) {
+  const key = unit.id + ':' + n; if (seen.has(key)) return null; seen.add(key);
+  const m = ((unit.portmap || {}).ports || {})[n];
+  const lp = linkedPort(data, m);
+  if (lp && lp.p) return { link: !!lp.p.link, speed: lp.p.speed || 0 };
+  const via = (u, k) => (u.type === 'modem' ? ontLive(data, u) : portLive(data, u, k, seen));
+  if (lp && lp.unit) { const r = via(lp.unit, m.port); if (r) return r; }
+  for (const x of incoming(data, unit.id, n)) { const r = via(x.unit, x.n); if (r) return r; }
+  if (unit.type === 'modem' && String(n) === '1') return ontLive(data, unit);   // PON: up while the ONT passes traffic
+  return null;
+}
+/* an ONT is up when the router port behind any of its LAN sockets has a link */
+function ontLive(data, unit) {
+  const pm = unit.portmap || {}; let r = null;
+  for (let n = 2; n <= (pm.count || 0); n++) { const lp = linkedPort(data, (pm.ports || {})[n]);
+    if (lp && lp.p) { if (lp.p.link) return { link: true, speed: lp.p.speed || 0 }; r = { link: false, speed: 0 }; } }
+  return r;
+}
+const pmLeds = (data, unit) => (unit.portmap ? Array.from({ length: unit.portmap.count }, (_, i) => { const l = portLive(data, unit, i + 1);
+  return { n: i + 1, kind: 'rj45', link: !!(l && l.link), speed: l ? l.speed || 1000 : 0, live: !!l }; }) : null);
+
 /* backbones on the floor plan that physically run through port n of this unit */
 function backbonesFor(data, unitId, n) {
   const plan = data.plan || {}; const nodes = [...(plan.buildings || []), ...(plan.poles || [])];
@@ -60,8 +83,8 @@ function PortMapView({ unit, compact }) {
   const cross = unit.type === 'cross', modem = unit.type === 'modem';
   const used = n => { const m = (pm.ports || {})[n]; return (m && (m.label || m.dev || m.color)) || incoming(data, unit.id, n).length || backbonesFor(data, unit.id, n).length; };
   const rows = Array.from({ length: pm.count }, (_, i) => i + 1).filter(used);
-  const cell = n => { const m = (pm.ports || {})[n]; const lp = linkedPort(data, m); const inc = incoming(data, unit.id, n);
-    const st = !used(n) ? 'pm-empty' : lp && lp.p ? (lp.p.link ? (lp.p.speed >= 1000 ? 'g' : 'y') : 'down') : 'set';
+  const cell = n => { const m = (pm.ports || {})[n]; const lp = linkedPort(data, m); const inc = incoming(data, unit.id, n); const live = portLive(data, unit, n);
+    const st = !used(n) ? 'pm-empty' : live ? (live.link ? (live.speed >= 1000 || !live.speed ? 'g' : 'y') : 'down') : 'set';
     const fc = cross && m && m.color ? fiberHex(m.color) : null;
     return <button type="button" key={n} className={'pm-port ' + st + (sel === n ? ' sel' : '') + (modem ? ' named' : '')} onClick={() => setSel(sel === n ? null : n)}
       title={[m && m.label, lp && lp.text, ...inc.map(x => '← ' + x.unit.name)].filter(Boolean).join(' · ') || 'не подписан'}>
@@ -112,6 +135,57 @@ function LinkTarget({ m, onDev, onPort, selfId }) {             // device or ano
     <td>{ports.length ? <select className="select pm-sel" style={{ width: 110 }} value={m.port || ''} onChange={e => onPort(e.target.value)}>
       <option value="">—</option>{ports.map(p => <option key={p.v} value={p.v}>{p.t}</option>)}</select>
       : <input className="input pm-in" style={{ width: 70 }} value={m.port || ''} placeholder="№" onChange={e => onPort(e.target.value)} />}</td></>;
+}
+
+/* ONT / modem: who the provider is, where the fibre comes from (a fibre of an optical cross, or straight in),
+   and which router (port) each LAN socket feeds — the map draws internet → ONT → routers from this */
+const ROUTER_DRV = ['keenetic', 'openwrt', 'demo_router'];
+function OntSetup({ pm, onChange, selfId }) {
+  const { data } = useApp();
+  const ports = pm.ports || {}; const pon = ports[1] || {};
+  const lans = Math.max(1, (pm.count || 2) - 1);
+  const crosses = allUnits(data).filter(u => u.type === 'cross' && u.id !== selfId);
+  const targets = data.devices.filter(d => ((d.state || {}).ports || []).length)
+    .sort((a, b) => (ROUTER_DRV.includes(b.driver) - ROUTER_DRV.includes(a.driver)) || a.name.localeCompare(b.name));
+  const setPort = (n, v) => onChange({ ...pm, ports: { ...ports, [n]: { ...(ports[n] || {}), ...v } } });
+  const setLans = k => { const next = { ...ports };
+    for (let i = 2; i <= k + 1; i++) next[i] = { name: 'LAN' + (i - 1), ...(next[i] || {}) };
+    for (let i = k + 2; i <= (pm.count || 0); i++) delete next[i];
+    onChange({ ...pm, count: k + 1, ports: next }); };
+  const [src, setSrc] = useState(pon.dev && String(pon.dev).startsWith('u:') ? 'cross' : 'isp');
+  const cross = src === 'cross' && pon.dev ? crosses.find(u => 'u:' + u.id === pon.dev) : null;
+  const pickDev = (n, id) => { const d = data.devices.find(x => x.id === id);
+    const w = d && ((d.state || {}).ports || []).find(p => p.kind === 'wan');      // a router: its WAN port is the usual place
+    setPort(n, { dev: id, port: w ? String(w.n) : '' }); };
+  return <div className="ont-setup">
+    <Field label="Провайдер"><input className="input" value={pm.provider || ''} placeholder="Например, Оптик Телеком"
+      onChange={e => onChange({ ...pm, provider: e.target.value })} /></Field>
+    <Field label="Откуда приходит оптика">
+      <Seg value={src} onChange={v => { setSrc(v); setPort(1, v === 'isp' ? { dev: '', port: '' } : { dev: crosses[0] ? 'u:' + crosses[0].id : '', port: '' }); }}
+        options={[{ value: 'isp', label: 'Прямо от провайдера' }, { value: 'cross', label: 'С оптического кросса' }]} /></Field>
+    {src === 'cross' ? crosses.length ? <div className="row wrap" style={{ gap: 8 }}>
+      <select className="select grow" value={pon.dev || ''} onChange={e => setPort(1, { dev: e.target.value, port: '' })}>
+        {crosses.map(u => <option key={u.id} value={'u:' + u.id}>{u.name} ({u.rackName})</option>)}</select>
+      {cross ? <select className="select" style={{ width: 170 }} value={pon.port || ''} onChange={e => setPort(1, { port: e.target.value })}>
+        <option value="">волокно —</option>
+        {Array.from({ length: cross.portmap.count }, (_, i) => { const pp = cross.portmap.ports[i + 1] || {};
+          return <option key={i} value={i + 1}>{'Волокно ' + (i + 1) + (pp.color ? ' · ' + pp.color : '') + (pp.label ? ' · ' + pp.label.slice(0, 14) : '')}</option>; })}</select> : null}
+    </div> : <div className="dim" style={{ fontSize: 13 }}>Оптического кросса пока нет. Добавьте его в шкаф («Без данных → Оптический кросс»), и здесь можно будет выбрать волокно.</div> : null}
+    <Field label="LAN-порты ONT" hint="Куда включён каждый LAN-порт. Если роутеров несколько, укажите каждый — на карте интернет пойдёт к ним всем.">
+      <div className="row wrap" style={{ gap: 6 }}>{[1, 2, 3, 4, 5, 6, 8].map(k => <button key={k} type="button" className={'chip' + (lans === k ? ' on' : '')} onClick={() => setLans(k)}>{k}</button>)}</div></Field>
+    <div className="ont-lans">{Array.from({ length: lans }, (_, i) => { const n = i + 2, m = ports[n] || {};
+      const d = m.dev && data.devices.find(x => x.id === m.dev); const dp = d ? (d.state || {}).ports || [] : [];
+      return <div className="row" key={n} style={{ gap: 8 }}>
+        <input className="input" style={{ width: 82 }} value={m.name || ''} placeholder={'LAN' + (n - 1)} onChange={e => setPort(n, { name: e.target.value })} />
+        <span className="dim">→</span>
+        <select className="select grow" value={d ? m.dev : ''} onChange={e => pickDev(n, e.target.value)}>
+          <option value="">не подключён</option>
+          {targets.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+        {d ? <select className="select" style={{ width: 120 }} value={m.port || ''} onChange={e => setPort(n, { port: e.target.value })}>
+          <option value="">порт —</option>
+          {dp.map(p => <option key={p.n} value={p.n}>{'порт ' + p.n + (p.kind === 'wan' ? ' · WAN' : '') + (p.link ? ' ●' : '')}</option>)}</select> : null}
+      </div>; })}</div>
+  </div>;
 }
 
 function PortMapEditor({ unit, onClose, onSave }) {

@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, routers, security, speedtest, tgbot, topology, uptime
+from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -60,7 +60,7 @@ class App:
         t = time.time()
         try:
             # drivers like the UPS look at other devices' live data (PoE watts, disks)
-            st = drv.poll(dict(d, _ctx={'states': self.states, 'devices': self.store.cfg['devices']}) if getattr(drv, 'wants_ctx', False) else d)
+            st = drv.poll(dict(d, _ctx={'states': self.states, 'devices': self.store.cfg['devices'], 'racks': self.store.cfg['racks']}) if getattr(drv, 'wants_ctx', False) else d)
             st['error'] = None
             if st.pop('_retry', False) and d['id'] not in self.retried:
                 self.retried.add(d['id'])
@@ -343,7 +343,7 @@ class App:
                 'tgLogin': self.tgbot.login_available(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
-                'devices': devices, 'racks': cfg['racks'], 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
+                'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
                 'events': self.store.events[-60:][::-1], 'now': time.time()}
 
@@ -773,6 +773,12 @@ class Handler(BaseHTTPRequestHandler):
                 out = []
                 for r in racks:
                     units = r.get('units') if isinstance(r.get('units'), list) else []
+                    for u in units:                             # a shelf: up to 5 devices; deviceId stays the first one for older code
+                        if isinstance(u, dict):
+                            u.pop('powerLoad', None)            # computed for the interface (rackd/power.py), never stored
+                        if isinstance(u, dict) and isinstance(u.get('deviceIds'), list):
+                            u['deviceIds'] = [str(x) for x in u['deviceIds'] if x][:5]
+                            u['deviceId'] = u['deviceIds'][0] if u['deviceIds'] else None
                     kind = r.get('kind') if r.get('kind') in ('rack', 'box', 'place') else 'rack'
                     total = max(1, min(60, int(r.get('totalU') or 18)))
                     if kind == 'rack':                          # only a real rack has a fixed U height to respect
@@ -1066,6 +1072,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'ok': True})
             if path == '/api/detect' and method == 'POST':
                 return self.send({'ok': True, 'found': detect.detect(body.get('host'))})
+            if path == '/api/ups/find' and method == 'POST':
+                # smart UPS: NUT servers (UPS on USB to a NAS / server) and network cards (UPS-MIB) among our devices and the routers' clients
+                hosts = [d.get('host') for d in st.cfg['devices'] if d.get('location') != 'remote']
+                hosts += [c.get('ip') for s in list(APP.states.values()) for c in (s or {}).get('clients') or []]
+                if body.get('host'):
+                    hosts.insert(0, body['host'])
+                from .drivers import ups as ups_drv
+                return self.send({'ok': True, 'found': ups_drv.find(hosts)})
             if path == '/api/test' and method == 'POST':
                 drv = REGISTRY.get(body.get('driver'))
                 if not drv:
@@ -1073,12 +1087,12 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = dict(body)
                 if body.get('id'):
                     old = st.device(body['id']) or {}
-                    for k in ('password', 'token', 'privateKey'):
+                    for k in ('password', 'token', 'privateKey', 'tokenSecret'):
                         if not cfg.get(k):
                             cfg[k] = old.get(k)
                 try:
                     if getattr(drv, 'wants_ctx', False):
-                        cfg['_ctx'] = {'states': APP.states, 'devices': st.cfg['devices']}
+                        cfg['_ctx'] = {'states': APP.states, 'devices': st.cfg['devices'], 'racks': st.cfg['racks']}
                     res = drv.poll(cfg)
                     s = res.get('summary') or {}
                     return self.send({'ok': True, 'summary': s, 'ports': len(res.get('ports') or []), 'clients': len(res.get('clients') or [])})

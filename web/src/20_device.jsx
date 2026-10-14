@@ -42,6 +42,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
   if ((st.clients || []).length) tabs.push({ id: 'clients', label: `Клиенты · ${st.clients.length}` });
   if ((st.vpn || []).length) tabs.push({ id: 'vpn', label: `VPN · ${st.vpn.filter(t => t.up).length}` });
   if (st.storage) tabs.push({ id: 'storage', label: 'Хранилище' });
+  if ((st.vms || []).length) tabs.push({ id: 'vms', label: `Виртуалки · ${st.vms.filter(v => v.status === 'running').length}/${st.vms.length}` });
   if ((st.services || []).length || (st.entities || []).length) tabs.push({ id: 'services', label: st.entities ? 'Управление' : `Сервисы · ${st.services.length}` });
   if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигурация' });
   if (admin && drv && drv.plugins) tabs.push({ id: 'plugins', label: 'Плагины' });
@@ -58,6 +59,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
     {tab === 'clients' ? <ClientsTab clients={st.clients} children={st.children} device={device} drv={drv} /> : null}
     {tab === 'vpn' ? <VpnTab vpn={st.vpn} /> : null}
     {tab === 'storage' ? <StorageTab storage={st.storage} /> : null}
+    {tab === 'vms' ? <VmsTab device={device} drv={drv} /> : null}
     {tab === 'services' ? <ServicesTab device={device} drv={drv} /> : null}
     {tab === 'plugins' ? <PluginsTab device={device} /> : null}
     {tab === 'config' ? <BackupsTab device={device} /> : null}
@@ -129,6 +131,15 @@ function Overview({ device, drv }) {
 }
 
 const fmtMin = m => m == null ? '—' : m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
+/* discharge curve: battery % over the minutes it lasts (lead-acid drops faster at the end) */
+function UpsCurve({ min, charge }) {
+  const start = charge != null ? charge : 100;
+  const pts = Array.from({ length: 21 }, (_, i) => { const t = i / 20; return [t * 300, 70 - (start * (1 - Math.pow(t, .85))) * .66]; });
+  const d = 'M' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
+  return <div className="ups-curve"><div className="dim3" style={{ fontSize: 11.5, marginBottom: 4 }}>Как будет садиться батарея без света</div>
+    <svg viewBox="0 0 300 72" preserveAspectRatio="none"><path d={d + ' L300,72 L0,72 Z'} className="area" /><path d={d} className="line" /></svg>
+    <div className="row between dim3" style={{ fontSize: 11 }}><span>сейчас · {Math.round(start)}%</span><span>{fmtMin(Math.round(min / 2))}</span><span>{fmtMin(min)} · 0%</span></div></div>;
+}
 function UpsCard({ ups }) {
   const { data, openDevice } = useApp();
   const chargeCol = ups.charge == null ? '' : ups.charge > 50 ? 'var(--green)' : ups.charge > 20 ? 'var(--orange)' : 'var(--red)';
@@ -146,16 +157,23 @@ function UpsCard({ ups }) {
     {ups.charge != null ? <div style={{ marginTop: 10 }}><div className="dim3" style={{ fontSize: 11.5, marginBottom: 4 }}>Заряд {Math.round(ups.charge)}%{ups.charging ? ' · заряжается' : ''}</div>
       <div className="bar"><i style={{ width: ups.charge + '%', background: chargeCol }} /></div></div> : null}
     {ups.lowBattery || ups.replace ? <div className="badge offline" style={{ marginTop: 10 }}>{ups.replace ? 'Пора менять аккумулятор' : 'Батарея почти разряжена'}</div> : null}
+    {ups.runtimeMin ? <UpsCurve min={ups.runtimeMin} charge={ups.charge} /> : null}
     <div style={{ marginTop: 12 }}><KV rows={[['Аккумулятор', `${ups.batteryDesc} · ≈ ${ups.batteryWh} Вт·ч`],
+      ...(ups.supply ? [['Питается от', `${ups.supply.name}${ups.supply.outlet ? ', розетка ' + ups.supply.outlet : ''}${ups.supply.error ? ' — ' + ups.supply.error : ''}`]] : []),
+      ...(ups.nominalVA ? [['Мощность', `${ups.nominalVA} ВА${ups.nominalW ? ' / ' + Math.round(ups.nominalW) + ' Вт' : ''}`]] : []),
+      ...(ups.estimated && ups.efficiency ? [['КПД', ups.efficiency + '%']] : []),
+      ...(ups.outlets ? [['Гнёзда с батареей', `занято ${Math.min(ups.connected.length, ups.outlets)} из ${ups.outlets}${ups.connected.length > ups.outlets ? ` · строк больше, чем гнёзд — есть удлинитель?` : ''}`]] : []),
       ...(ups.inputV != null ? [['Вход / выход', `${ups.inputV ?? '—'} В / ${ups.outputV ?? '—'} В`]] : []),
       ['Данные', ups.mode === 'nut' ? 'по USB через NUT' : ups.mode === 'snmp' ? 'сетевая карта (SNMP)' : 'расчёт по подключённым устройствам']]} /></div>
     <div className="card-title" style={{ margin: '14px 0 4px' }}>Подключено · {ups.connected.length + (ups.extraW ? 1 : 0)}</div>
-    <div className="list">{ups.connected.map(c => { const d = data.devices.find(x => x.id === c.id);
-      return <div className="li" key={c.id} style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && openDevice(d)}>
+    <div className="list">{ups.connected.map((c, i) => { const d = data.devices.find(x => x.id === c.id);
+      return <React.Fragment key={c.id || c.unit || 'r' + i}><div className="li" style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && openDevice(d)}>
+        {c.outlet ? <span className="pt-out">{c.outlet}</span> : null}
         <KindIcon kind={c.kind || 'other'} size={30} round={8} />
         <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{c.status ? <span className={'dot ' + c.status} /> : null}<b style={{ fontSize: 14 }} className="ellipsis">{c.name}</b></div>
-          <div className="dim3" style={{ fontSize: 12 }}>{c.src}</div></div>
-        <b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>; })}
+          <div className="dim3" style={{ fontSize: 12, color: c.missing ? 'var(--orange)' : undefined }}>{c.src}</div></div>
+        <b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
+        {c.children && c.children.length ? <PowerTree items={c.children} depth={1} /> : null}</React.Fragment>; })}
       {ups.extraW ? <div className="li"><div className="ico-circle"><Icon name="bolt" size={16} /></div><div className="grow"><b style={{ fontSize: 14 }}>Прочее</b>
         <div className="dim3" style={{ fontSize: 12 }}>{ups.extraNote || 'без описания'}</div></div><b className="mono" style={{ fontSize: 13 }}>{ups.extraW} Вт</b></div> : null}
       {!ups.connected.length && !ups.extraW ? <div className="empty" style={{ fontSize: 13 }}>Укажите в настройках, что подключено к ИБП</div> : null}
@@ -391,6 +409,29 @@ function StorageTab({ storage }) {
         <StatusBadge status={d.status === 'normal' ? 'online' : d.status === 'not_use' ? '' : 'warning'} text={d.status === 'not_use' ? 'не используется' : d.status} /></div>
     </div>)}</div></Card>
   </>;
+}
+
+/* Proxmox: virtual machines and LXC containers with start / shut down / reboot */
+function VmsTab({ device, drv }) {
+  const { admin } = useApp(); const runAction = useAction();
+  const [q, setQ] = useState('');
+  const act = id => (drv?.actions || []).find(a => a.id === id);
+  const gb = b => (b ? (b / 2 ** 30 >= 10 ? Math.round(b / 2 ** 30) : (b / 2 ** 30).toFixed(1)) + ' ГБ' : '—');
+  const vms = (device.state.vms || []).filter(v => !q || (v.name + ' ' + v.vmid).toLowerCase().includes(q.toLowerCase()));
+  const btn = (v, id, icon) => { const a = act(id); return a ? <Btn size="sm" icon={icon} title={a.label} onClick={() => runAction(device, a, { id: v.id, name: v.name })} /> : null; };
+  return <>
+    {(device.state.vms || []).length > 8 ? <SearchBox value={q} onChange={setQ} /> : null}
+    <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{vms.map(v => { const on = v.status === 'running';
+      return <div className="li" key={v.id}>
+        <div className="ico-circle"><Icon name={v.type === 'ct' ? 'box' : 'server'} size={17} color={on ? 'var(--green)' : undefined} /></div>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 6 }}><span className={'dot ' + (on ? 'online' : v.status === 'paused' ? 'warning' : 'offline')} />
+            <b className="ellipsis" style={{ fontSize: 14 }}>{v.name}</b></div>
+          <div className="dim3" style={{ fontSize: 12 }}>{v.type === 'ct' ? 'Контейнер' : 'ВМ'} {v.vmid}{v.node ? ' · ' + v.node : ''}
+            {on ? ` · CPU ${v.cpu}% · RAM ${gb(v.mem)} из ${gb(v.maxmem)}${v.uptime ? ' · ' + fmt.uptime(v.uptime) : ''}` : ` · ${v.status === 'stopped' ? 'выключена' : v.status}`}</div></div>
+        {admin ? on ? <>{btn(v, 'vm_reboot', 'refresh')}{btn(v, 'vm_shutdown', 'power')}</> : btn(v, 'vm_start', 'play') : null}
+      </div>; })}
+      {!vms.length ? <div className="empty">Ничего не найдено</div> : null}</div></Card></>;
 }
 
 function ServicesTab({ device, drv }) {

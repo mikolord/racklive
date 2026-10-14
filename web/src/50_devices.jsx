@@ -112,8 +112,18 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
     if (fl.type === 'select') return <Field key={fl.name} label={fl.label} hint={fl.hint}>
       <select className="select" value={f[fl.name] || fl.default || ''} onChange={e => set(fl.name, e.target.value)}>
         {fl.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>;
+    if (fl.type === 'device') return <Field key={fl.name} label={fl.label} hint={fl.hint}>
+      <select className="select" value={f[fl.name] || ''} onChange={e => set(fl.name, e.target.value)}>
+        <option value="">— выберите —</option>
+        {data.devices.filter(d => !device || d.id !== device.id).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>;
     if (fl.type === 'textarea') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}>
       <textarea className="textarea mono" style={{ fontSize: 12, minHeight: 90 }} value={f[fl.name] || ''} placeholder={ph} onChange={e => set(fl.name, e.target.value)} autoComplete="off" spellCheck={false} /></Field></div>;
+    if (fl.type === 'loads') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}>
+      <LoadsField value={f.loads || legacyLoads(f)} self={device && device.id} outlets={Math.max(0, Math.min(24, parseInt(f.outlets) || 0))} powerFrom={f.powerFrom} onChange={v => set('loads', v)} /></Field></div>;
+    if (fl.type === 'powerfrom') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}><PowerFrom f={f} set={set} /></Field></div>;
+    if (fl.type === 'upsfind') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}>
+      <UpsFind onPick={c => setF(x => ({ ...x, mode: c.mode, host: c.host, ...(c.upsName ? { upsName: c.upsName } : {}), ...(c.community ? { community: c.community } : {}),
+        name: x.name || c.model }))} /></Field></div>;
     if (fl.type === 'devices') { const cur = f[fl.name] || [];
       const opts = data.devices.filter(d => !device || d.id !== device.id);
       return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={`${fl.label}${cur.length ? ' · ' + cur.length : ''}`} hint={fl.hint}>
@@ -128,6 +138,8 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
   const save = async () => {
     const missing = drv.fields.filter(fl => fl.required && visible(fl) && !f[fl.name] && !(device && device[fl.name + 'Set']));
     if (!f.name.trim()) return toast('Укажите название', true);
+    const noPower = drvId === 'ups' ? rowsMissing(f.loads) : [];
+    if (noPower.length) return toast(`У своих устройств нужно указать потребление (В и А или Вт): ${noPower.join(', ')}`, true);
     if (missing.length) return toast('Заполните: ' + missing.map(m => m.label).join(', '), true);
     try {
       const r = device ? await api('/api/devices/' + device.id, { method: 'PUT', body: payload() }) : await api('/api/devices', { method: 'POST', body: payload() });
@@ -157,6 +169,10 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       <Field label="Площадка / объект" hint="Например «Дача» или «Офис» — устройства группируются по площадкам"><input className="input" value={f.site || ''} onChange={e => set('site', e.target.value)} /></Field>
     </div>
     <Field label="Заметки"><textarea className="textarea" value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
+    {drvId !== 'ups' && drvId !== 'remote_web' ? <details className="guide" open={!!specW(f.pwr)}>
+      <summary>Потребление питания (для расчёта ИБП и блоков розеток){specW(f.pwr) ? ` · ${Math.round(specW(f.pwr) * 10) / 10} Вт` : ''}</summary>
+      <div style={{ margin: '8px 0' }}><MeasureHint kind={f.kind || drv.kind} /></div>
+      <SpecInputs spec={f.pwr} onChange={s => set('pwr', s)} /></details> : null}
     {drvId !== 'remote_web' ? <details className="guide" open={!!(f.webUrl || f.webUser || (device && device.webPasswordSet))}>
       <summary>Вход в веб-интерфейс (необязательно)</summary>
       <div className="dim" style={{ fontSize: 12.5, margin: '6px 0 10px', lineHeight: 1.45 }}>В карточке устройства появятся кнопка «Открыть» и логин с паролем с кнопкой «Скопировать».
@@ -177,6 +193,57 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
           {test.ports ? ` · портов: ${test.ports}` : ''}{test.clients ? ` · клиентов: ${test.clients}` : ''}</div></>
         : <div style={{ color: 'var(--red)' }}><b>Не получилось:</b> {test.error}</div>}</div> : null}
   </Modal>;
+}
+
+/* UPS load rows: a device (draw estimated by itself, or own watts) or a free line «Камеры, 20 Вт».
+   Older configs kept connected (ids) + extraW / extraNote. */
+const legacyLoads = f => [...(f.connected || []).map(id => ({ dev: id })), ...(+f.extraW ? [{ label: f.extraNote || 'Прочая нагрузка', w: f.extraW }] : [])];
+function LoadsField({ value, onChange, self, outlets, powerFrom }) {
+  const { data } = useApp();
+  const rows = value.length ? value : [];
+  const [open, setOpen] = useState(null);                         // an outlet block whose outlets are edited right here
+  const upd = (i, patch) => onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  const skipPdu = powerFrom ? [powerFrom, ...pduAbove(data, powerFrom)] : [];       // the block feeding this UPS cannot hang on it
+  const taken = rows.map(r => r.outlet).filter(Boolean);
+  const nextFree = () => { for (let n = 1; n <= (outlets || 99); n++) if (!taken.includes(String(n))) return String(n); return ''; };
+  const dup = rows.some((r, i) => r.outlet && rows.findIndex(x => x.outlet === r.outlet) !== i);
+  const blocks = pduUnits(data).filter(u => !skipPdu.includes(u.id));
+  return <div className="loads">
+    <MeasureHint id="pw-ups" />
+    {rows.map((r, i) => { const k = rowKey(r);
+      return <div className="load-row" key={i}>
+        {outlets ? <select className="select" style={{ width: 92 }} value={r.outlet || ''} onChange={e => upd(i, { outlet: e.target.value })}>
+          <option value="">гнездо</option>{Array.from({ length: outlets }, (_, n) => <option key={n} value={n + 1}>{'№ ' + (n + 1)}</option>)}</select> : null}
+        <RowPick value={k || 'l'} skipPdu={skipPdu} skipDev={[self]} onChange={v => upd(i, rowPick(v))} />
+        {k === 'l' || !k ? <input className="input grow" value={r.label || ''} placeholder="Название, например «Камеры»" onChange={e => upd(i, { label: e.target.value })} /> : null}
+        {k[0] === 'p' ? <Btn size="sm" onClick={() => setOpen(r.pdu)} title="Что включено в розетки этого блока — меняется и в самом блоке">Розетки…</Btn>
+          : <SpecInputs spec={r} auto={k[0] === 'd'} onChange={s => upd(i, { v: s.v, a: s.a, w: s.w })} />}
+        <button type="button" className="icon-link" title="Убрать" onClick={() => onChange(rows.filter((_, n) => n !== i))}><Icon name="x" size={16} /></button>
+      </div>; })}
+    {dup ? <div style={{ color: 'var(--orange)', fontSize: 12.5 }}>Одно гнездо указано у двух строк — проверьте номера (к гнезду можно подключить удлинитель, тогда выберите блок розеток).</div> : null}
+    <div className="row wrap" style={{ gap: 8 }}>
+      <Btn size="sm" icon="plus" onClick={() => onChange([...rows, { dev: (data.devices.find(d => d.id !== self && !rows.some(r => r.dev === d.id)) || {}).id, outlet: nextFree() }])}>Устройство</Btn>
+      <Btn size="sm" icon="plus" disabled={!blocks.length} onClick={() => onChange([...rows, { pdu: (blocks.find(u => !rows.some(r => r.pdu === u.id)) || blocks[0]).id, outlet: nextFree() }])}
+        title={blocks.length ? '' : 'Сначала добавьте юнит «Блок розеток» в шкаф или щиток'}>Блок розеток</Btn>
+      <Btn size="sm" icon="plus" onClick={() => onChange([...rows, { label: '', outlet: nextFree() }])}>Своё устройство</Btn></div>
+    {open ? <PduPortsModal unitId={open} onClose={() => setOpen(null)} /> : null}
+  </div>;
+}
+
+/* «Найти умный ИБП»: NUT servers and UPS network cards among our devices and the routers' clients */
+function UpsFind({ onPick }) {
+  const [st, setSt] = useState(null);
+  const go = async () => { setSt({ busy: true });
+    try { const r = await api('/api/ups/find', { method: 'POST', body: {} }); setSt({ found: r.found }); } catch (e) { setSt({ error: e.message }); } };
+  return <div>
+    <Btn icon="search" onClick={go} busy={st && st.busy}>Найти умный ИБП в сети</Btn>
+    {st && st.found ? <div className="ups-found">{st.found.length ? st.found.map((c, i) => <button type="button" key={i} className="up-opt" onClick={() => onPick(c)} disabled={!!c.error}>
+      <KindIcon kind="ups" size={32} round={9} /><div><b>{c.model}</b><small>{c.mode === 'nut' ? `USB через ${c.host} (NUT${c.upsName ? ' · ' + c.upsName : ''})` : `сетевая карта ${c.host}`}
+        {c.charge != null ? ` · заряд ${Math.round(c.charge)}%` : ''}{c.error ? ' · ' + c.error : ''}</small></div></button>)
+      : <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>Умный ИБП не найден. Если он подключён по USB к Synology — включите там «Панель управления → Оборудование и питание →
+        ИБП → Сетевой ИБП-сервер» и разрешите адрес Rack Live. Иначе заполните данные вручную ниже.</div>}</div> : null}
+    {st && st.error ? <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 6 }}>{st.error}</div> : null}
+  </div>;
 }
 
 /* «Определить автоматически»: the server knocks on the address (no login, nothing changed) and suggests the type */

@@ -281,8 +281,9 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
   useEffect(() => { if (!menu) return; const close = e => { if (!e.target.closest('.wg-size-menu, .wg-size-btn')) setMenu(false); };
     document.addEventListener('pointerdown', close); return () => document.removeEventListener('pointerdown', close); }, [menu]);
   const size = w.size;
-  useEffect(() => {
+  useLayoutEffect(() => {                  // measured before the first paint, then kept in sync — no first-frame overlap
     const el = inner.current; if (!el) return;
+    setHIn(el.offsetHeight);
     const ro = new ResizeObserver(() => setHIn(el.offsetHeight)); ro.observe(el); return () => ro.disconnect();
   }, [size]);
   const hh = size === 'S' && colW ? colW : hIn;          // a square is as tall as a column is wide — no need to measure
@@ -370,29 +371,47 @@ function MiniBars({ days }) {
   return <div className="mini-bars">{list.map((p, i) => <i key={i} style={{ background: pctColor(p), height: p == null ? '25%' : Math.max(30, 100 - (100 - p) * 8) + '%' }} />)}</div>;
 }
 
-function MiniTopo({ data }) {        // a flat hub-and-spoke: the router in the middle, devices around, coloured by status
+function MiniTopo({ data }) {        // the «star» scheme from the network map: a hub in the middle, devices on the rays — all blue (an offline one turns red)
   const nodes = ((data.topology || {}).nodes || []).filter(n => n.deviceId && n.kind !== 'router').slice(0, 6);
-  const router = ((data.topology || {}).nodes || []).find(n => n.kind === 'router' && n.deviceId);
-  const pts = nodes.map((n, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / Math.max(1, nodes.length); return [50 + 36 * Math.cos(a), 50 + 36 * Math.sin(a), n]; });
+  const count = Math.max(nodes.length, 5);
+  const pts = Array.from({ length: count }, (_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / count;
+    return [50 + 35 * Math.cos(a), 50 + 35 * Math.sin(a), nodes[i]]; });
+  const col = n => (n && n.status === 'offline' ? 'var(--red)' : '#0a84ff');
   return <svg viewBox="0 0 100 100" className="mini-svg">
-    <circle cx="50" cy="50" r="36" fill="none" stroke="var(--fill2)" strokeWidth="2" strokeDasharray="3 5" />
-    {pts.map(([x, y, n]) => <line key={'l' + n.id} x1="50" y1="50" x2={x} y2={y} stroke={ST_COLOR(n.status)} strokeWidth="4" strokeLinecap="round" opacity=".55" />)}
-    {pts.map(([x, y, n]) => <circle key={n.id} cx={x} cy={y} r="9" fill={ST_COLOR(n.status)} />)}
-    <circle cx="50" cy="50" r="15" fill="#0a84ff" /><circle cx="50" cy="50" r="15" fill="none" stroke={router ? ST_COLOR(router.status) : '#fff'} strokeWidth="3" opacity=".9" />
-    <circle cx="50" cy="50" r="6" fill="none" stroke="#fff" strokeWidth="3" /><circle cx="50" cy="50" r="2" fill="#fff" />
+    <defs><radialGradient id="mtg" cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="#0a84ff" stopOpacity=".32" /><stop offset="1" stopColor="#0a84ff" stopOpacity="0" /></radialGradient></defs>
+    <circle cx="50" cy="50" r="48" fill="url(#mtg)" />
+    <circle cx="50" cy="50" r="35" fill="none" stroke="#0a84ff" strokeOpacity=".28" strokeWidth="1.6" strokeDasharray="2.5 4.5" />
+    {pts.map(([x, y, n], i) => <line key={'l' + i} x1="50" y1="50" x2={x} y2={y} stroke={col(n)} strokeWidth="3.4" strokeLinecap="round" opacity=".6" />)}
+    {pts.map(([x, y, n], i) => <g key={i}><circle cx={x} cy={y} r="10" fill={col(n)} opacity=".2" /><circle cx={x} cy={y} r="6.5" fill={col(n)} /><circle cx={x} cy={y} r="2.4" fill="#fff" opacity=".9" /></g>)}
+    <circle cx="50" cy="50" r="16" fill="#0a84ff" /><circle cx="50" cy="50" r="16" fill="none" stroke="#fff" strokeOpacity=".35" strokeWidth="2" />
+    <circle cx="50" cy="50" r="7" fill="none" stroke="#fff" strokeWidth="3" /><circle cx="50" cy="50" r="2.2" fill="#fff" />
   </svg>;
 }
 
-function MiniPlan({ data }) {         // flat rooms (like the Home app) with a Wi-Fi glow
+function MiniPlan({ data }) {         // a floor plan like a drawing: walls, doors, windows, furniture and a wall being drawn with a pencil
   const tests = (data.speedtests || []).filter(t => t.where).length;
   return <svg viewBox="0 0 100 100" className="mini-svg">
-    <defs><radialGradient id="mpw" cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="#30d158" stopOpacity=".75" /><stop offset="1" stopColor="#30d158" stopOpacity="0" /></radialGradient></defs>
-    <rect x="8" y="10" width="50" height="44" rx="10" fill="#ff9f0a" opacity=".85" />
-    <rect x="62" y="10" width="30" height="44" rx="10" fill="#ff9f0a" opacity=".5" />
-    <rect x="8" y="58" width="34" height="32" rx="10" fill="#ff9f0a" opacity=".38" />
-    <rect x="46" y="58" width="46" height="32" rx="10" fill="#ff9f0a" opacity=".65" />
-    <circle cx="44" cy="52" r={tests ? 26 : 20} fill="url(#mpw)" />
-    <circle cx="44" cy="52" r="6" fill="#fff" /><circle cx="44" cy="52" r="3" fill="#30d158" />
+    <defs>
+      <radialGradient id="mpw" cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="#30d158" stopOpacity=".55" /><stop offset="1" stopColor="#30d158" stopOpacity="0" /></radialGradient>
+      <pattern id="mpg" width="8" height="8" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".9" fill="#ff9f0a" opacity=".3" /></pattern>
+    </defs>
+    <rect x="3" y="3" width="94" height="94" rx="9" fill="url(#mpg)" />
+    <rect x="12" y="13" width="76" height="72" fill="#ff9f0a" opacity=".12" />
+    <circle cx="72" cy="68" r={tests ? 24 : 17} fill="url(#mpw)" />
+    {/* furniture: a bed, a table */}
+    <rect x="17" y="18" width="22" height="15" rx="3" fill="#ff9f0a" opacity=".38" /><rect x="17" y="18" width="7" height="15" rx="3" fill="#ff9f0a" opacity=".55" />
+    <circle cx="71" cy="31" r="7.5" fill="none" stroke="#ff9f0a" strokeWidth="2" opacity=".6" />
+    {/* outer walls, then the partitions with a doorway */}
+    <path d="M12 13 H88 V85 H12 Z" fill="none" stroke="#ff9f0a" strokeWidth="5" strokeLinejoin="round" />
+    <path d="M54 13 V52 M12 52 H40 M54 52 H88" fill="none" stroke="#ff9f0a" strokeWidth="3.4" strokeLinecap="round" />
+    <path d="M40 52 V38.5 A13.5 13.5 0 0 1 53.5 52" fill="none" stroke="#ff9f0a" strokeWidth="1.3" opacity=".75" />
+    {/* windows */}
+    <path d="M24 13 H38 M66 13 H80" stroke="#fff" strokeWidth="2.4" opacity=".9" /><path d="M88 62 V76" stroke="#fff" strokeWidth="2.4" opacity=".9" />
+    {/* a new wall being drawn: dashed, handles at the ends, a pencil */}
+    <path d="M26 52 V74" stroke="#0a84ff" strokeWidth="2.4" strokeDasharray="3 3.4" strokeLinecap="round" />
+    <circle cx="26" cy="52" r="3.2" fill="#fff" stroke="#0a84ff" strokeWidth="1.8" /><circle cx="26" cy="74" r="3.2" fill="#fff" stroke="#0a84ff" strokeWidth="1.8" />
+    <g transform="translate(33 80) rotate(38)"><rect x="-3" y="-17" width="6" height="15" rx="1.4" fill="#fff" stroke="#ff9f0a" strokeWidth="1.2" />
+      <path d="M-3 -2 L3 -2 L0 5 Z" fill="#ffd60a" stroke="#ff9f0a" strokeWidth="1" strokeLinejoin="round" /></g>
   </svg>;
 }
 

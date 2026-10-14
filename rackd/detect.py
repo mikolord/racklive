@@ -143,8 +143,8 @@ def p_proxmox(host):
     except Exception:
         return None
     if 'proxmox' in body.lower():
-        return {'driver': 'ssh', 'score': 92, 'what': 'Proxmox VE — следить по SSH (CPU, память, диски, контейнеры); веб-панель на :8006',
-                'kind': 'server', 'webUrl': f'https://{host}:8006'}
+        return {'driver': 'proxmox', 'score': 92, 'what': 'Proxmox VE — виртуалки и контейнеры, хранилища, диски (вход логином Proxmox)',
+                'kind': 'server', 'host': host, 'webUrl': f'https://{host}:8006'}
 
 
 def _open(host, port, timeout=1.2):

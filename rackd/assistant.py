@@ -376,7 +376,7 @@ def run_tool(app, name, args):
                                handshake=_ago(v.get('handshake')),
                                peers=[dict({k: x.get(k) for k in ('name', 'online', 'subnet')}, handshake=_ago(x.get('handshake')))
                                       for x in (v.get('peers') or [])[:30]]) for v in st['vpn']]
-        units = [dict(u, rack=r.get('name')) for r in cfg['racks'] for u in r['units'] if u.get('deviceId') == d['id']]
+        units = [dict(u, rack=r.get('name')) for r in cfg['racks'] for u in r['units'] if u.get('deviceId') == d['id'] or d['id'] in (u.get('deviceIds') or [])]
         if units:
             out['placement'] = [{'rack': u['rack'], 'unit': u.get('name'), 'u': u.get('uStart')} for u in units]
         return out

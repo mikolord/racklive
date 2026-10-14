@@ -255,7 +255,8 @@ def analyze(topo, devices, states, cable_tests):
             src = nodes.get(e.get('source'), {})
             add('info', f"Неуправляемый узел: {nodes[i]['label']}",
                 f"За портом {e.get('sourcePort')} на «{src.get('label', '')}» видно {nodes[i].get('sub', '').split()[0]} устройств — "
-                'там стоит простой коммутатор или хаб. Rack Live не видит, что за ним.', deviceId=src.get('deviceId'), port=e.get('sourcePort'))
+                'там стоит простой коммутатор или хаб. Добавьте его в «Устройства» как «Неуправляемый коммутатор» (куда подключён и в какой порт) — '
+                'тогда на карте будет видно, что за ним.', deviceId=src.get('deviceId'), port=e.get('sourcePort'))
 
     weak = []
     for d in devices:

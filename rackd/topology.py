@@ -14,13 +14,21 @@ ONT_RE = re.compile(r'(^|[^a-z])(g?e?x?pon|ont|onu)([^a-z]|$)|оптич\w*\s+т
 MODEM_RE = re.compile(r'модем|modem|lte|dsl|docsis', re.I)
 
 
+def unit_devices(u):
+    """devices of a rack unit: a shelf may hold up to 5 (deviceIds), any other unit — one (deviceId)"""
+    ids = [x for x in (u.get('deviceIds') or []) if x][:5]
+    return ids or ([u['deviceId']] if u.get('deviceId') else [])
+
+
 def wan_unit(units, wan):
     """the rack unit that is the ONT / modem: chosen by the user, else type «Модем / ONT», else guessed by its name"""
     wan = wan or {}
     if wan.get('unit') == 'none':                  # «не в шкафу» — the box is drawn above the rack
         return None
-    if wan.get('unit'):
-        return next((u for u in units if u.get('id') == wan['unit']), None)
+    picked = wan.get('unit') and next((u for u in units if u.get('id') == wan['unit']), None)
+    if picked:
+        return picked
+    # nothing chosen, or the chosen unit was removed (its rack deleted): look for the ONT again
     cands = [u for u in units if u.get('type') not in ('cross', 'patch', 'router', 'switch') and (u.get('side') or 'front') == 'front']
     return next((u for u in cands if u.get('type') == 'modem'), None) \
         or next((u for u in cands if ONT_RE.search(u.get('name') or '') or MODEM_RE.search(u.get('name') or '')), None)
@@ -32,6 +40,56 @@ def _is_ip(s):
         return True
     except ValueError:
         return False
+
+
+def ont_links(unit):
+    """LAN sockets of an ONT / modem wired to a device port (the ONT editor): [(device id, port | None)], PON (socket 1) skipped"""
+    pm = (unit or {}).get('portmap') or {}
+    out = []
+    for n in sorted((pm.get('ports') or {}), key=lambda k: int(k) if str(k).isdigit() else 0):
+        m = pm['ports'][n] or {}
+        if str(n) == '1' or not m.get('dev') or str(m['dev']).startswith('u:'):
+            continue
+        out.append((m['dev'], str(m.get('port') or '').strip() or None))
+    return out
+
+
+def _addrs(d, st):
+    """MACs and IPs a router is known by (to spot it among another router's clients)"""
+    s = (st or {}).get('summary') or {}
+    macs = {x.lower() for x in [s.get('mac'), d.get('mac')] + list(s.get('macs') or []) if x}
+    host = (d.get('host') or '').split('//')[-1].split('/')[0].split(':')[0]
+    ips = {x for x in (s.get('ip'), host) if x and _is_ip(x)}
+    return macs, ips
+
+
+def pick_main(routers, states, wan_cfg, ont_routers=()):
+    """The router the internet comes into. In order: chosen by hand (map.wan.main) → wired to the ONT's LAN socket →
+    a local router that is NOT a client of another one (OpenWrt behind Keenetic shows up in its client list) → Keenetic first."""
+    if not routers:
+        return None, 'нет роутеров'
+    by = {d['id']: d for d in routers}
+    m = (wan_cfg or {}).get('main')
+    if m in by:
+        return by[m], 'выбран вручную'
+    for rid in ont_routers:
+        if rid in by:
+            return by[rid], 'подключён к ONT'
+    local = [d for d in routers if d.get('location') != 'remote'] or routers
+    behind = set()
+    for d in local:
+        cl = (states.get(d['id']) or {}).get('clients') or []
+        cmacs = {(c.get('mac') or '').lower() for c in cl}
+        cips = {c.get('ip') for c in cl}
+        for o in local:
+            if o is d:
+                continue
+            macs, ips = _addrs(o, states.get(o['id']))
+            if macs & cmacs or ips & cips:
+                behind.add(o['id'])
+    cands = [d for d in local if d['id'] not in behind] or local
+    pick = next((d for d in cands if d.get('driver') in ('keenetic', 'demo_router')), cands[0])
+    return pick, ('единственный' if len(routers) == 1 else 'остальные подключены через него' if behind else 'первый в списке')
 
 
 def _wan_box(wan_cfg, units, nodes, add, wan_port):
@@ -58,12 +116,17 @@ def _wan_box(wan_cfg, units, nodes, add, wan_port):
     else:
         nid = add({'id': 'wan:box', 'label': wan_cfg.get('name') or title, 'sub': 'у провайдера' if via == 'ont' else '', 'kind': 'modem',
                    'status': status, 'wan': True})
-    return nid, wan_cfg.get('line') or line
+    pm = (u or {}).get('portmap') or {}
+    return nid, pm.get('provider') or wan_cfg.get('line') or line
 
 
 def build(devices, states, rack_units, manual_links, show_clients=True, drivers=None, wan_cfg=None):
     nodes, edges, attached = {}, [], set()
-    unit_by_dev = {u['deviceId']: u for u in rack_units if u.get('deviceId')}       # each unit carries rackId
+    unit_by_dev = {}                               # each unit carries rackId; a shelf holds up to 5 devices side by side
+    for u in rack_units:
+        ids = unit_devices(u)
+        for i, did in enumerate(ids):
+            unit_by_dev[did] = dict(u, slot=i, slots=len(ids))
 
     def add(n):
         nodes.setdefault(n['id'], n)
@@ -136,7 +199,10 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         return add({'id': 'h:' + mac, 'label': fallback_label or mac, 'sub': '', 'kind': 'other', 'status': 'unknown', 'client': True, 'mac': mac})
 
     routers = [d for d in active if d.get('driver') in ROUTER_DRIVERS and (states.get(d['id']) or {}).get('ports')]
-    main = next((d for d in routers if d.get('driver') in ('keenetic', 'demo_router')), routers[0] if routers else None)
+    via = (wan_cfg or {}).get('via') or 'auto'
+    ont = wan_unit(rack_units, wan_cfg) if via != 'direct' else None
+    ont_to = ont_links(ont)                         # ONT LAN sockets → router ports (may feed several routers)
+    main, why = pick_main(routers, states, wan_cfg, [d for d, _ in ont_to])
     main_id = 'd:' + main['id'] if main else None
     main_ports = (states.get(main['id']) or {}).get('ports', []) if main else []
     inet = None
@@ -147,16 +213,43 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
             inet = add({'id': 'inet', 'label': 'Интернет', 'sub': '', 'kind': 'internet', 'status': 'online'})
         return inet
 
-    wan = next((p for p in main_ports if p.get('kind') == 'wan'), None)
+    def port_of(dev_id, n):
+        return next((p for p in (states.get(dev_id) or {}).get('ports') or [] if n and str(p.get('n')) == str(n)), None)
+
+    # the router's port the ONT is plugged into (from the ONT editor), else its WAN port
+    main_link = next((n for d, n in ont_to if main and d == main['id']), None)
+    wan = port_of(main['id'], main_link) if main and main_link else next((p for p in main_ports if p.get('kind') == 'wan'), None)
     if main:
+        nodes[main_id]['main'] = why
         box = _wan_box(wan_cfg, rack_units, nodes, add, wan)
-        wan_kw = dict(targetPort=wan['n'] if wan else None, speed=(wan or {}).get('speed'), kind='wan', label=(wan or {}).get('ip') or '')
+        wan_kw = dict(targetPort=(wan or {}).get('n') or (int(main_link) if main_link and main_link.isdigit() else None),
+                      speed=(wan or {}).get('speed'), kind='wan', label=(wan or {}).get('ip') or '')
         if box:                                    # internet → ONT / modem (provider line) → cable → router WAN port
             edge(internet(), box[0], kind='isp', label=box[1])
             edge(box[0], main_id, **wan_kw)
+            for did, n in ont_to:                  # other routers on other LAN sockets of the same ONT
+                if did != main['id'] and 'd:' + did in nodes:
+                    p = port_of(did, n)
+                    edge(box[0], 'd:' + did, extra_ok=True, kind='wan', targetPort=(p or {}).get('n') or (int(n) if n and n.isdigit() else None),
+                         speed=(p or {}).get('speed'))
         else:
             edge(internet(), main_id, **wan_kw)
         attached.add(internet())
+
+    # unmanaged switches (rackd/drivers/unmanaged.py): «plugged into device X, port N» — what that port sees hangs on them
+    um = {(d['uplinkDevice'], str(d.get('uplinkPort') or '').strip()): 'd:' + d['id'] for d in active
+          if d.get('driver') == 'unmanaged' and d.get('uplinkDevice') and str(d.get('uplinkPort') or '').strip()}
+
+    def via_unmanaged(owner_id, port, nid_from, speed, peer_targets):
+        """→ True when port `port` of `owner_id` leads into an unmanaged switch: cable to it, the devices behind on it"""
+        u = um.get((owner_id, str(port)))
+        if not u or u not in nodes:
+            return False
+        edge(nid_from, u, sourcePort=int(port) if str(port).isdigit() else None, speed=speed, kind='wire')
+        for t in peer_targets:
+            if t and t != u:
+                edge(u, t, extra_ok=bool(t.startswith('d:')), kind='wire')
+        return True
 
     router_uplink_port = None
     for d in active:
@@ -186,6 +279,9 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
             if p is up:
                 continue
             peers = p.get('peers') or []
+            if (d['id'], str(p['n'])) in um:
+                via_unmanaged(d['id'], p['n'], sid, p.get('speed'), [mac_idx.get(x['mac'].lower()) or node_for_mac(x['mac']) for x in peers])
+                continue
             if not peers:
                 continue
             managed = [mac_idx[x['mac'].lower()] for x in peers if x['mac'].lower() in mac_idx]
@@ -207,6 +303,8 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
                 continue
             nid = node_for_mac(c.get('mac'))
             mp = next((p for p in main_ports if str(p['n']) == port), {})
+            if via_unmanaged(main['id'], port, main_id, mp.get('speed'), [nid]):
+                continue
             edge(main_id, nid, extra_ok=bool(nid and nid.startswith('d:')), sourcePort=int(port), speed=mp.get('speed'), kind='wire')
     for key, cid in ap_node.items():
         if cid not in attached and main:
@@ -231,6 +329,10 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         if n.get('remote'):
             edge(internet(), nid, kind='remote')
         elif n.get('deviceId'):
+            ud = next((d for d in active if d['id'] == n['deviceId'] and d.get('driver') == 'unmanaged' and d.get('uplinkDevice')), None)
+            if ud and 'd:' + ud['uplinkDevice'] in nodes:                 # an unmanaged switch on a port nobody reports: still under its uplink
+                edge('d:' + ud['uplinkDevice'], nid, kind='wire', sourcePort=int(ud['uplinkPort']) if str(ud.get('uplinkPort') or '').isdigit() else None)
+                continue
             c = next((c for c in clients.values() if c.get('ip') == n.get('sub')), None)
             parent = ('d:' + c['src']) if c else (main_id or internet())
             edge(parent, nid, kind='lan' if parent != inet else 'remote')

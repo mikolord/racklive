@@ -57,6 +57,30 @@ def main():
         check('UPS estimate present', ((ups.get('state') or {}).get('ups') or {}).get('runtimeMin') is not None)
         t = api('/api/test', {'driver': 'ups', 'mode': 'manual', 'name': 'x', 'connected': [st['devices'][0]['id']]}, 'POST')
         check('device test endpoint', t.get('ok'), json.dumps(t)[:200])
+        u = ups['state']['ups']
+        blk = next((c for c in u['connected'] if c.get('kind') == 'pdu'), {})
+        check('UPS: outlet block counts in the load', blk.get('outlet') == '3' and any(x['w'] == 95 for x in blk.get('children') or [])
+              and any(not c.get('id') and c['w'] == 15 for c in u['connected']) and u['outlets'] == 6, json.dumps(u['connected'])[:400])
+        check('UPS: ONT by its 12 V × 1 A, custom line by V × A',
+              any(c.get('unit') == 'uont' and c['w'] == 12 and c['src'] == '12 В × 1 А' for c in u['connected'])
+              and any(c['name'].startswith('Камеры') and c['w'] == 24 for c in u['connected']), json.dumps(u['connected'])[:500])
+        sys.path.insert(0, ROOT)
+        from rackd import power as pw
+        loop = [{'id': 'r', 'name': 'r', 'units': [{'id': 'A', 'type': 'pdu', 'power': {'ports': {'1': {'pdu': 'B'}}}},
+                                                  {'id': 'B', 'type': 'pdu', 'power': {'ports': {'1': {'pdu': 'A'}, '2': {'label': 'x', 'w': '10'}}}}]}]
+        check('outlet blocks plugged into each other do not loop', pw.load(pw.Net(loop, [], {}), 'A')['w'] == 10)
+        ghost = [{'id': 'u1', 'driver': 'ups', 'name': 'U', 'powerFrom': 'A', 'loads': [{'pdu': 'A', 'outlet': '1'}]}]
+        check('a block never feeds the UPS it hangs on', not [i for i in pw.load(pw.Net(loop, ghost, {}), 'A')['items'] if i.get('kind') == 'ups'])
+        panel = next(x for r in st['racks'] for x in r['units'] if x.get('id') == 'upduB')
+        check('UPS is fed from the panel block (its draw counts there)', (u.get('supply') or {}).get('outlet') == '2'
+              and any(i.get('kind') == 'ups' and i['w'] > u['loadW'] for i in panel['powerLoad']['items']), json.dumps(panel.get('powerLoad'))[:400])
+        check('computed power is not stored', 'powerLoad' not in json.dumps(api('/api/racks', {'racks': st['racks']}, 'PUT') and open(os.path.join(data, 'config.json'), encoding='utf-8').read()))
+        topo = st.get('topology') or api('/api/topology')
+        mains = [n for n in topo['nodes'] if n.get('main')]
+        check('main router picked with a reason', len(mains) == 1 and mains[0]['label'] == 'Роутер', json.dumps(mains)[:200])
+        check('ONT provider on the internet line', any(e.get('kind') == 'isp' and e.get('label') == 'Оптика-Демо' for e in topo['edges']))
+        pve = next(d for d in st['devices'] if d['driver'] == 'demo_proxmox')
+        check('Proxmox: virtual machines', len(pve['state'].get('vms') or []) == 5)
         sw = next(d for d in st['devices'] if d['driver'] == 'demo_switch')
         p11 = next(p for p in sw['state']['ports'] if p['n'] == 11)
         check('port errors counted (CRC)', (p11.get('errDay') or 0) > 100, json.dumps({k: p11.get(k) for k in ('errDay', 'errHour', 'crc')}))
@@ -239,7 +263,13 @@ def main():
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
                  'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings',
-                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map'}
+                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map',
+                 'Новый юнит — что ставим': '?mode=edit&editunit=new#rack', 'Переезд места': '?mode=edit&move=1#rack',
+                 'Карта — правка (магнит)': '?mode=edit#map',
+                 'Блок розеток — нагрузка': '?unit=upduA#rack', 'Блок розеток — розетки': '?mode=edit&editunit=upduA&pw=1#rack',
+                 'ИБП — форма': f'?editdev={dev["ups"]}',
+                 'Proxmox · виртуалки': f'?device={dev["demo_proxmox"]}&tab=vms', 'ИБП · кривая': f'?device={dev["ups"]}',
+                 'ONT — настройка': f'?mode=edit&editunit={units["modem"]}#rack', 'Кросс — живые порты': f'?unit={units["cross"]}#rack'}
         for name, q in pages.items():
             if name == 'Помощник — настроен':          # a provider nobody listens on: enough for the panel to show the chat
                 api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-test'}, 'PUT')
@@ -252,6 +282,8 @@ def main():
             if name == 'Размещение':
                 check('подсказка на вкладке', 'hint-box' in out)
                 check('главная из виджетов', out.count('data-wid=') >= 5)
+            if name == 'Блок розеток — нагрузка':
+                check('розетки блока и ИБП кружками на шкафу', 'leds round' in out and '<i class="r">' in out)
             if name == 'План — дом':
                 check('покрытие Wi-Fi на плане', 'cov-pin' in out)
             if name == 'Тест скорости':
@@ -260,6 +292,25 @@ def main():
                 check('настройки разбиты на разделы', out.count('set-item') >= 6 and 'set-head' in out)
             if name == 'Устройства · роутеры в сети':
                 check('карточка «Роутеры в сети»', 'router-row' in out and 'Гостевой домик' in out)
+            if name == 'Новый юнит — что ставим':
+                check('выбор устройства вместо «привязки»', out.count('up-opt') >= 8 and 'Связанное устройство' not in out)
+            if name == 'Proxmox · виртуалки':
+                check('список виртуалок', 'Windows Server' in out and 'pihole' in out)
+            if name == 'ИБП — форма':
+                check('форма ИБП: подсказка, как замерить', 'Как узнать, сколько берёт устройство' in out)
+                check('форма ИБП: гнёзда, блок розеток, откуда питается', 'Откуда питается ИБП' in out and 'Блоки розеток' in out and 'loads' in out)
+            if name == 'Блок розеток — нагрузка':
+                check('блок розеток: дерево нагрузки', 'ptree' in out and 'Питается от' in out and 'Мониторы в серверной' in out)
+            if name == 'Блок розеток — розетки':
+                check('блок розеток: таблица розеток', 'Что в каких розетках' in out or 'что в какой розетке' in out)
+            if name == 'ИБП · кривая':
+                check('кривая разряда ИБП', 'ups-curve' in out and 'занято' in out)
+            if name == 'ONT — настройка':
+                check('ONT: провайдер, кросс, LAN-порты', 'ont-setup' in out and 'Оптика-Демо' in out and 'Волокно 1' in out)
+            if name == 'Кросс — живые порты':
+                check('порт кросса светится через ONT', 'pm-port g' in out)
+            if name == 'Переезд места':
+                check('окно «Переезд»', 'Переезд' in out and out.count('place-opt') == 2)
             if name == 'Доступность':
                 check('доступность за 30 дней', 'up-bars' in out and 'сбо' in out)
             if name == 'Карта — ONT':

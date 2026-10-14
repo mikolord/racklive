@@ -79,6 +79,10 @@ function App() {
     catch (e) { setErr(e.message); }
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
+  useEffect(() => {                                       // ?editdev=<id> opens that device's settings form (needs admin)
+    const id = new URLSearchParams(location.search).get('editdev'); const d = id && data && data.devices.find(x => x.id === id);
+    if (d) setEditor(d);
+  }, [!!data]);
   const scrollerRef = useRef(null);
   useEffect(() => { if (APP_MODE) return; location.hash = tab === 'map' && mapView === 'plan' ? 'plan' : tab; lsSet('rl_tab', tab); window.scrollTo(0, 0); }, [tab, mapView]);
   // «События»: the badge counts new alarming events since the tab was last opened (not the devices that are down right now)

@@ -16,7 +16,7 @@ DEFAULT = {
     'plan': {'buildings': [], 'links': [], 'poles': []},
 }
 
-SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword')
+SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword', 'tokenSecret')
 
 
 class Store:
@@ -120,6 +120,9 @@ class Store:
             self.cfg['devices'] = [d for d in self.cfg['devices'] if d['id'] != did]
             for r in self.cfg['racks']:
                 for u in r['units']:
+                    if u.get('deviceIds'):
+                        u['deviceIds'] = [x for x in u['deviceIds'] if x != did]
+                        u['deviceId'] = (u['deviceIds'] or [None])[0]
                     if u.get('deviceId') == did:
                         u['deviceId'] = None
             self.save()

@@ -454,6 +454,29 @@ class DemoServer(DemoBase):
                 'services': [{'name': 'nginx', 'state': 'Up 12 days'}, {'name': 'wireguard', 'state': 'Up 12 days'}, {'name': 'uptime-kuma', 'state': 'Up 3 days'}]}
 
 
+class DemoProxmox(DemoBase):
+    id, title, kind = 'demo_proxmox', 'Демо: Proxmox', 'server'
+    actions = [{'id': 'vm_start', 'label': 'Запустить', 'scope': 'vm', 'confirm': ''},
+               {'id': 'vm_shutdown', 'label': 'Выключить', 'scope': 'vm', 'confirm': 'Выключить «{name}»?'},
+               {'id': 'vm_reboot', 'label': 'Перезагрузить', 'scope': 'vm', 'confirm': 'Перезагрузить «{name}»?'}]
+    VMS = [(100, 'vm', 'Windows Server · 1С', 'running', 4, 8), (101, 'ct', 'pihole', 'running', 1, .5), (102, 'ct', 'nextcloud', 'running', 2, 4),
+           (103, 'vm', 'Ubuntu · тесты', 'stopped', 2, 4), (104, 'ct', 'zabbix', 'running', 2, 2)]
+
+    def poll(self, cfg):
+        t = time.time()
+        g = 2 ** 30
+        vms = [{'id': f'pve/{"qemu" if k == "vm" else "lxc"}/{i}', 'vmid': i, 'name': n, 'type': k, 'node': 'pve', 'status': s,
+                'cpu': round((8 + 25 * wave(t, phase=i)) if s == 'running' else 0, 1), 'cpus': c, 'mem': m * g * .6 if s == 'running' else 0,
+                'maxmem': m * g, 'uptime': int(t - T0 + 86400 * (i - 98)) if s == 'running' else 0} for i, k, n, s, c, m in self.VMS]
+        return {'status': 'online', 'summary': {'model': 'Proxmox VE 9.0', 'fw': 'pve-manager/9.0.6', 'uptime': int(t - T0 + 2_592_000),
+                                                'cpu': round(15 + 25 * wave(t)), 'mem': 58, 'ip': cfg.get('host')},
+                'metrics': [{'label': 'Виртуалки', 'value': f"{sum(v['status'] == 'running' for v in vms)} из {len(vms)}"}], 'vms': vms,
+                'storage': {'volumes': [{'name': 'local-lvm', 'status': 'normal', 'used': 610e9, 'total': 900e9},
+                                        {'name': 'backup (NFS)', 'status': 'normal', 'used': 1.2e12, 'total': 4e12}],
+                            'disks': [{'name': '/dev/nvme0n1', 'model': 'Samsung 980 PRO 1TB', 'kind': 'nvme', 'sizeGB': 1000, 'temp': None, 'status': 'normal'}]},
+                'sections': [{'title': 'Proxmox', 'rows': [['Версия', 'Proxmox VE 9.0'], ['Процессор', 'Intel Xeon E-2236 · 12 потоков'], ['Память', '64 ГБ']]}]}
+
+
 class DemoSite(DemoBase):
     id, title, kind = 'demo_site', 'Демо: сайт', 'web'
 
@@ -472,11 +495,16 @@ def seed(store):
     s = D(name='Коммутатор ядра', driver='demo_switch', kind='switch', host='10.0.0.2')
     n = D(name='Хранилище', driver='demo_nas', kind='nas', host='10.0.0.5')
     h = D(name='Home Assistant', driver='demo_ha', kind='server', host='10.0.0.6')
-    D(name='Гостевой роутер · LTE', driver='demo_openwrt', kind='router', host='10.0.0.3')
+    o = D(name='Гостевой роутер · LTE', driver='demo_openwrt', kind='router', host='10.0.0.3')
+    um = D(name='Свитч в кабинете', driver='unmanaged', kind='switch', ports='8', uplinkDevice=s, uplinkPort='10')     # an unmanaged one on port 10 — the printer hangs on it
+    media = D(name='Медиасервер', driver='demo_server', kind='server', host='10.0.0.7')
     D(name='VPS · Франкфурт', driver='demo_server', kind='server', host='198.51.100.40', location='remote', site='Облако')
     D(name='Сайт компании', driver='demo_site', kind='web', host='https://example.com', location='remote', site='Облако')
-    ups = D(name='ИБП 1500 ВА', driver='ups', kind='ups', mode='manual', powerW='900', batteryV='12', batteryAh='9', batteryCount='2',
-            connected=[r, s, n], extraW='15', extraNote='оптический терминал и мелочь')
+    pve = D(name='Proxmox · виртуализация', driver='demo_proxmox', kind='server', host='10.0.0.8')
+    ups = D(name='ИБП 1500 ВА', driver='ups', kind='ups', mode='manual', powerVA='1500', powerW='900', batteryV='12', batteryAh='9', batteryCount='2',
+            efficiency='85', outlets='6', powerFrom='upduB', powerFromOutlet='2',      # fed from the outlet block in the panel, socket 2
+            loads=[{'dev': r, 'outlet': '1'}, {'dev': s, 'outlet': '2'}, {'pdu': 'upduA', 'outlet': '3'}, {'label': 'Модем и мелочь', 'w': '15', 'outlet': '4'},
+                   {'unit': 'uont', 'outlet': '5'}, {'label': 'Камеры (блок питания 12 В 2 А)', 'v': '12', 'a': '2', 'outlet': '6'}])
     U = lambda **k: dict({'id': 'u' + secrets.token_hex(3), 'side': 'front', 'notes': '', 'deviceId': None}, **k)
     rooms = ['Вход', 'Парковка', 'Склад', 'Двор', 'Холл', 'Офис', 'Двор, столб', 'Серверная', 'Серверная', 'Кабинет 1', 'Бухгалтерия', 'Директор']
     patch = {'count': 24, 'ports': {str(i): {'label': f'{rooms[i - 1]}' + (', розетка ' + str(i) if i > 9 else ''), 'dev': s, 'port': str(i)}
@@ -492,17 +520,24 @@ def seed(store):
         U(name='Коммутатор ядра', type='switch', uSize=1, uStart=4, color='#30d158', deviceId=s),
         U(name='Органайзер', type='organizer', uSize=1, uStart=5, color='#8e8e93'),
         U(name='Хранилище', type='nas', uSize=2, uStart=6, color='#64d2ff', deviceId=n),
-        U(name='Полка', type='shelf', uSize=1, uStart=8, color='#8e8e93'),
-        U(id='uont', name='Оптический терминал', type='modem', uSize=1, uStart=10, color='#bf5af2', portmap={'count': 5, 'ports': {
+        U(name='Полка', type='shelf', uSize=1, uStart=8, color='#8e8e93', deviceIds=[um, o], deviceId=um),     # two devices on one shelf
+        U(name='Proxmox', type='server', uSize=2, uStart=11, color='#5e5ce6', deviceId=pve),
+        U(id='uont', name='Оптический терминал', type='modem', uSize=1, uStart=10, color='#bf5af2', pwr={'v': '12', 'a': '1'}, portmap={'count': 5, 'provider': 'Оптика-Демо', 'ports': {
             '1': {'name': 'PON', 'label': 'оптика провайдера', 'dev': 'u:ucross', 'port': '1'},
             '2': {'name': 'LAN1', 'label': 'к роутеру', 'dev': r, 'port': '5'},
             '3': {'name': 'LAN2'}, '4': {'name': 'LAN3'}, '5': {'name': 'TEL'}}}),
-        U(name='ИБП 1500 ВА', type='ups', uSize=2, uStart=13, color='#ff9f0a', deviceId=ups)]},
+        U(name='ИБП 1500 ВА', type='ups', uSize=2, uStart=13, color='#ff9f0a', deviceId=ups),
+        U(id='upduA', name='Блок розеток 8', type='pdu', uSize=1, uStart=15, color='#8e8e93',                    # plugged into UPS socket 3
+          power={'count': 8, 'ports': {'1': {'dev': n}, '2': {'dev': pve, 'w': '95'}, '3': {'label': 'Мониторы в серверной', 'w': '40'}}})]},
         {'id': 'rack1', 'name': 'Этаж 2 · щиток', 'kind': 'box', 'totalU': 1, 'units': [
             U(name='Home Assistant', type='server', uStart=1, color='#5e5ce6', deviceId=h),
             U(name='Патч-панель 12', type='patch', uStart=2, color='#8e8e93'),
             U(name='PoE-инжектор', type='other', uStart=3, color='#ffd60a'),
-            U(name='ИБП 650 ВА', type='ups', uStart=4, color='#ff9f0a')]}]
+            U(name='ИБП 650 ВА', type='ups', uStart=4, color='#ff9f0a'),
+            U(id='upduB', name='Блок розеток · щиток', type='pdu', uStart=5, color='#8e8e93',                       # 220 V from the panel: feeds the UPS
+              power={'count': 6, 'ports': {'1': {'label': 'Освещение щитка', 'w': '25'}}})]},
+        {'id': 'rack2', 'name': 'Кабинет директора', 'kind': 'place', 'totalU': 1, 'units': [
+            U(name='Медиасервер', type='server', uStart=1, color='#bf5af2', deviceId=media)]}]
     store.cfg['settings'].update(title='Офис · серверная', publicView=True, vlans=[
         {'vid': 1, 'name': 'Основная', 'color': '#0A84FF'}, {'vid': 10, 'name': 'Камеры', 'color': '#FF453A'},
         {'vid': 20, 'name': 'IoT', 'color': '#30D158'}, {'vid': 30, 'name': 'Гости', 'color': '#BF5AF2'}])
