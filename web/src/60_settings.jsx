@@ -155,7 +155,7 @@ const SET_SECTIONS = [
     state: d => d.ai.ready ? 'включён · ' + d.ai.title.split(' ')[0] : d.ai.keySet ? 'выключен' : 'не настроен' },
   { id: 'apps', label: 'Приложения', icon: 'phone', color: '#007aff', desc: 'Frank и тест скорости на экран телефона, доменное имя',
     state: d => (d.apps || {}).url ? d.apps.url.replace(/^https:\/\//, '') : 'установка на телефон' },
-  { id: 'access', label: 'Доступ', icon: 'lock', color: '#34c759', desc: 'Пароль администратора и выход' },
+  { id: 'access', label: 'Доступ', icon: 'lock', color: '#34c759', desc: 'Пароль, второй фактор, устройства с доступом' },
   { id: 'backup', label: 'Резервная копия', icon: 'download', color: '#ff9500', desc: 'Скачать все настройки или восстановить из файла' },
   { id: 'about', label: 'О программе', icon: 'other', color: '#8e8e93', desc: 'Версия и ссылки', state: d => 'Rack Live ' + d.version },
 ];
@@ -184,6 +184,7 @@ function SettingsView() {
   const vl = s.vlans || [];
   const [sec, setSec] = useState(() => { const q = new URLSearchParams(location.search).get('section'); return SET_SECTIONS.some(x => x.id === q) ? q : lsGet('rl_set_sec', 'general'); });
   const pick = id => { setSec(id); lsSet('rl_set_sec', id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  useEffect(() => { const h = e => pick(e.detail); window.addEventListener('rl-section', h); return () => window.removeEventListener('rl-section', h); }, []);     // a window elsewhere sends the person to a section
   const secs = SET_SECTIONS.filter(x => !x.need || data[x.need]);
   const cur = secs.find(x => x.id === sec) || secs[0];
   useEffect(() => { const el = document.querySelector('.set-item.on'); if (el && innerWidth <= 900) el.scrollIntoView({ inline: 'center', block: 'nearest' }); }, [cur.id]);
@@ -237,7 +238,10 @@ function SettingsView() {
         <Btn onClick={changePw} disabled={!pw.old || pw.n1.length < 8}>Сменить пароль</Btn>
       </div>
     </Card>
-    <Card title="Сеанс"><div className="dim" style={{ fontSize: 13.5, marginBottom: 12 }}>Выйти из Rack Live в этом браузере. Вход — по паролю или через Telegram.</div>
+    <MfaCard />
+    <DevicesCard />
+    <SessionPolicyCard />
+    <Card title="Сеанс"><div className="dim" style={{ fontSize: 13.5, marginBottom: 12 }}>Выйти из Rack Live в этом браузере. Вход — по паролю (и второму фактору) или через Telegram.</div>
       <Btn icon="logout" onClick={logout}>Выйти</Btn></Card></> : null}
     {cur.id === 'backup' ? <Card title="Резервная копия и импорт">
       <div className="col" style={{ gap: 12 }}>
@@ -267,17 +271,36 @@ function EventsView() {
     <EventsList events={ev} /></>;
 }
 
-function AuthScreen({ setup, title, onDone, note, tgLogin }) {
+const LOGIN_ALT = { totp: ['Приложение', 'код из приложения', '#0a84ff', 'key'], email: ['Почта', 'код на почту', '#ff9f0a', 'mail'], sms: ['SMS', 'код по SMS', '#30d158', 'sms'] };
+function AuthScreen({ setup, title, onDone, note, tgLogin: tgReal, codeLogin: codeReal }) {
+  const peek = new URLSearchParams(location.search).get('mfapreview') === 'login';       // ?mfapreview=login — only the looks of the buttons
+  const tgLogin = tgReal || (peek ? { bot: 'bot' } : null), codeLogin = (codeReal && codeReal.length ? codeReal : null) || (peek ? ['totp', 'email', 'sms'] : []);
   const [tgMode, setTgMode] = useState(false);
   const [pw, setPw] = useState(''); const [pw2, setPw2] = useState(''); const [t, setT] = useState(title || 'Серверный шкаф');
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [remember, setRemember] = useState(true);     // after a right password the second step (rackd/mfa.py); ?mfapreview=1 shows only its looks, with no real ticket
+  const [mfa, setMfa] = useState(() => new URLSearchParams(location.search).get('mfapreview') === '1' && !setup
+    ? { ticket: 'preview', methods: [{ id: 'totp', label: 'Код из приложения' }, { id: 'telegram', label: 'Подтвердить в Telegram' }, { id: 'email', label: 'Код на почту', hint: 'm***@example.com' }, { id: 'recovery', label: 'Запасной код', hint: 'осталось 8' }] } : null);
   const submit = async e => {
     e.preventDefault(); setErr('');
     if (setup && pw !== pw2) return setErr('Пароли не совпадают');
     setBusy(true);
-    try { await api(setup ? '/api/setup' : '/api/login', { method: 'POST', body: { password: pw, title: t } }); onDone(); }
+    try {
+      const r = await api(setup ? '/api/setup' : '/api/login', { method: 'POST', body: { password: pw, title: t, remember } });
+      if (r && r.mfa) { setMfa(r); setPw(''); } else onDone();
+    }
     catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
+  const startCode = async m => {                      // a sign-in without the password: the code goes to the mailbox / phone first
+    setErr(''); setBusy(true);
+    try { const r = await api('/api/login/code/start', { method: 'POST', body: { method: m } }); setMfa({ ticket: r.ticket, primary: true, hint: r.hint, methods: [{ id: m, label: LOGIN_ALT[m][1] }] }); }
+    catch (er) { setErr(er.message); } finally { setBusy(false); }
+  };
+  if (mfa) return <div className="auth"><div className="app-bg" /><div className="card">
+    <AppIcon size={64} radius={16} style={{ margin: '0 auto', boxShadow: '0 8px 24px rgba(0,60,200,.3)' }} />
+    <h1>{mfa.primary ? 'Вход по коду' : 'Подтвердите вход'}</h1>
+    <div className="dim">{mfa.primary ? mfa.hint : 'Пароль верный. Теперь докажите, что это вы.'}</div>
+    <MfaStep ticket={mfa.ticket} methods={mfa.methods} onDone={onDone} onBack={() => setMfa(null)} already={!!mfa.primary} hint0={mfa.hint} /></div></div>;
   return <div className="auth"><div className="app-bg" /><form className="card" onSubmit={submit}>
     <AppIcon size={64} radius={16} style={{ margin: '0 auto', boxShadow: '0 8px 24px rgba(0,60,200,.3)' }} />
     <h1>{setup ? 'Добро пожаловать' : (title || 'Rack Live')}</h1>
@@ -288,10 +311,19 @@ function AuthScreen({ setup, title, onDone, note, tgLogin }) {
       <Field label="Пароль"><input className="input" type="password" autoFocus value={pw} onChange={e => setPw(e.target.value)} placeholder={setup ? 'Не короче 8 символов' : ''} /></Field>
       {setup ? <Field label="Ещё раз"><input className="input" type="password" value={pw2} onChange={e => setPw2(e.target.value)} /></Field> : null}
       {err ? <div style={{ color: 'var(--red)', fontSize: 14 }}>{err}</div> : null}
+      {!setup ? <label className="mfa-remember"><Switch on={remember} onChange={setRemember} />
+        <span style={{ fontSize: 13.5, minWidth: 0 }}>Запомнить это устройство<span className="dim3" style={{ display: 'block', fontSize: 12, lineHeight: 1.35 }}>Выключите на чужом компьютере — вход закончится сам.</span></span></label> : null}
       <button className={'btn primary' + (busy ? ' busy' : '')} type="submit" style={{ padding: 13, marginTop: 4 }}>{setup ? 'Начать' : 'Войти'}</button>
-      {!setup && tgLogin ? (tgMode ? <TgFlow kind="login" onOk={() => onDone()} onClose={() => setTgMode(false)} />
-        : <><div className="or-line"><span>или</span></div>
-          <button type="button" className="btn tg-btn" style={{ padding: 13 }} onClick={() => setTgMode(true)}><Icon name="send" size={17} />Войти через Telegram</button></>) : null}
+      {!setup && (tgLogin || (codeLogin || []).length) ? (tgMode ? <TgFlow kind="login" onOk={() => onDone()} onClose={() => setTgMode(false)} />
+        : <><div className="or-line"><span>или войти без пароля</span></div>
+          <div className="login-alts">
+            {[...(codeLogin || []).filter(m => m === 'totp'), tgLogin ? 'tg' : null, ...(codeLogin || []).filter(m => m !== 'totp')].filter(m => m === 'tg' || LOGIN_ALT[m]).map(m => m === 'tg'
+              ? <button type="button" key="tg" className="login-alt" onClick={() => setTgMode(true)}><span className="mi" style={{ background: '#29a9eb' }}><Icon name="send" size={18} color="#fff" stroke={2} /></span>
+                <span><b>Telegram</b><small>подтвердить в боте</small></span></button>
+              : <button type="button" key={m} className="login-alt" disabled={busy} onClick={() => startCode(m)}>
+                <span className="mi" style={{ background: LOGIN_ALT[m][2] }}><Icon name={LOGIN_ALT[m][3]} size={18} color="#fff" stroke={2} /></span>
+                <span><b>{LOGIN_ALT[m][0]}</b><small>{LOGIN_ALT[m][1]}</small></span></button>)}
+          </div></>) : null}
     </div>
   </form></div>;
 }

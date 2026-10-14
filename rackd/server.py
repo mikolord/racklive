@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import alerts, analysis, assistant, auth, backups, detect, extscan, inet, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -31,7 +31,7 @@ class App:
     def __init__(self):
         load_all()
         self.store = Store(DATA)
-        self.sessions = auth.Sessions(DATA)
+        self.sessions = auth.Sessions(DATA, policy=lambda: self.mfa.policy())
         self.states = {}
         self.running = set()
         self.last_start = {}
@@ -47,6 +47,7 @@ class App:
         self.alerter.inet = self.inet
         self.backup_busy = False
         self.tgbot = tgbot.TgBot(self)
+        self.mfa = mfa.Mfa(self)
         self.ai = assistant.Assistant(self)
         self.routers = routers.RouterScan(self)
         self.uptime = uptime.Uptime(self.store)
@@ -340,7 +341,7 @@ class App:
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
                 'tgBot': {'username': self.tgbot.username, 'error': self.tgbot.error} if authed else None,
-                'tgLogin': self.tgbot.login_available(),
+                'tgLogin': self.tgbot.login_available(), 'loginCodes': self.mfa.login_methods(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
@@ -389,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
         return c['rl_session'].value if 'rl_session' in c else None
 
     def authed(self):
-        return DEMO or APP.sessions.valid(self.token())
+        return DEMO or APP.sessions.valid(self.token(), self.client_ip(), self.headers.get('User-Agent') or '')
 
     def body(self):
         n = int(self.headers.get('Content-Length') or 0)
@@ -414,7 +415,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            for x in (v if isinstance(v, list) else [v]):          # Set-Cookie may come twice (session + device)
+                self.send_header(k, x)
         self.end_headers()
         self.wfile.write(b)
 
@@ -424,6 +426,28 @@ class Handler(BaseHTTPRequestHandler):
     def cookie(self, tok, max_age):
         secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
         return f'rl_session={tok}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}'
+
+    def dev_token(self):
+        c = SimpleCookie(self.headers.get('Cookie') or '')
+        return c['rl_dev'].value if 'rl_dev' in c else None
+
+    def dev_cookie(self, tok):
+        secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
+        return f'rl_dev={tok}; Path=/; HttpOnly; SameSite=Lax; Max-Age={365 * 86400}{secure}'
+
+    def signed_in(self, via, remember=True, extra=None):
+        """a person is in: a device record, a session, both cookies; a new device is told to the owner in Telegram"""
+        ip, ua = self.client_ip(), self.headers.get('User-Agent') or ''
+        tok, dtok, new, did = APP.sessions.create(ip, ua, remember, self.dev_token(), via)
+        if new and via in ('password', 'mfa'):
+            name = auth.device_name(ua)
+            APP.store.add_event(None, 'Вход', 'info', f'новое устройство: {name} ({ip})')
+            threading.Thread(target=APP.tgbot.notice, args=(f'👤 Новое устройство вошло в Rack Live: {name}, адрес {ip}.\nНе вы? Настройки → Доступ → отключите устройство и смените пароль.',), daemon=True).start()
+        max_age = int(APP.sessions.p('sessionDays', auth.SESSION_DAYS) * 86400) if remember else auth.ABS_HOURS * 3600
+        out = dict({'ok': True}, **(extra or {}))
+        if extra and 'token' in extra:
+            out['token'] = tok
+        return self.send(out, headers={'Set-Cookie': [self.cookie(tok, max_age), self.dev_cookie(dtok)]})
 
     def can_view(self):
         cfg = APP.store.cfg
@@ -585,7 +609,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not a and (not cfg.get('auth') or not cfg['settings'].get('publicView')):
                     return self.send({'authed': False, 'setupNeeded': not cfg.get('auth'), 'needLogin': bool(cfg.get('auth')),
                                       'settings': {'title': cfg['settings'].get('title')}, 'version': VERSION,
-                                      'tgLogin': APP.tgbot.login_available()})
+                                      'tgLogin': APP.tgbot.login_available(), 'loginCodes': APP.mfa.login_methods()})
                 return self.send(APP.view(a))
             if path.startswith('/api/speedtest/'):
                 if not self.can_view():
@@ -676,8 +700,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get('title'):
                     st.cfg['settings']['title'] = body['title'][:80]
                 st.save()
-                tok = APP.sessions.create()
-                return self.send({'ok': True}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+                return self.signed_in('setup')
             if path == '/api/login' and method == 'POST':
                 ip = self.client_ip()
                 if APP.sessions.throttled(ip):
@@ -688,9 +711,68 @@ class Handler(BaseHTTPRequestHandler):
                     time.sleep(1)
                     return self.err('неверный пароль', 401)
                 APP.sessions.ok(ip)
+                remember = body.get('remember') is not False
+                if APP.mfa.enabled() and not APP.sessions.trusted_device(self.dev_token()):
+                    # the password is right, but this device is not remembered: one more proof is needed before a session exists
+                    ticket = APP.mfa.begin(ip, self.headers.get('User-Agent') or '')
+                    st.add_event(None, 'Вход', 'info', f'пароль принят с адреса {ip}, ждём второй фактор')
+                    return self.send({'ok': False, 'mfa': True, 'ticket': ticket, 'methods': APP.mfa.methods()})
                 st.add_event(None, 'Вход', 'info', f'администратор вошёл с адреса {ip}')
-                tok = APP.sessions.create()
-                return self.send({'ok': True}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+                return self.signed_in('password', remember)
+            if path == '/api/login/code/start' and method == 'POST':
+                # a sign-in without the password: a code goes to the connected mailbox / phone
+                ip = self.client_ip()
+                if APP.sessions.throttled(ip):
+                    return self.err('слишком много попыток, подождите 5 минут', 429)
+                try:
+                    ticket, hint = APP.mfa.start_primary(ip, self.headers.get('User-Agent') or '', body.get('method'))
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                st.add_event(None, 'Вход', 'info', f"начат вход без пароля: {({'totp': 'код из приложения', 'email': 'код на почту', 'sms': 'код по SMS'}).get(body.get('method'), '?')} (адрес {ip})")
+                return self.send({'ok': True, 'ticket': ticket, 'hint': hint})
+            if path == '/api/login/mfa/send' and method == 'POST':
+                ip = self.client_ip()
+                if APP.sessions.throttled(ip):
+                    return self.err('слишком много попыток, подождите 5 минут', 429)
+                try:
+                    return self.send({'ok': True, 'hint': APP.mfa.send(body.get('ticket'), body.get('method'))})
+                except ValueError as e:
+                    return self.err(str(e), 400)
+            if path == '/api/login/mfa/verify' and method == 'POST':
+                ip = self.client_ip()
+                if APP.sessions.throttled(ip):
+                    return self.err('слишком много попыток, подождите 5 минут', 429)
+                method_id = body.get('method')
+                try:
+                    good = APP.mfa.verify(body.get('ticket'), method_id, body.get('code'))
+                except ValueError as e:
+                    APP.sessions.fail(ip)
+                    return self.err(str(e), 400)
+                if not good:
+                    APP.sessions.fail(ip)
+                    st.add_event(None, 'Вход', 'warning', f'неверный код второго фактора с адреса {ip}')
+                    time.sleep(0.7)
+                    return self.err('неверный код', 401)
+                APP.mfa.finish(body.get('ticket'))
+                APP.sessions.ok(ip)
+                st.add_event(None, 'Вход', 'info', f'администратор вошёл с адреса {ip} (второй фактор: {mfa.LABELS.get(method_id, method_id).lower()})')
+                if method_id == 'recovery':
+                    threading.Thread(target=APP.tgbot.notice, args=('⚠️ Вход в Rack Live по запасному коду. Если это не вы — смените пароль.',), daemon=True).start()
+                return self.signed_in('mfa', body.get('remember') is not False)
+            if path == '/api/login/mfa/poll' and method == 'POST':
+                try:
+                    status = APP.mfa.poll_telegram(body.get('ticket'))
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                if status == 'denied':
+                    APP.mfa.finish(body.get('ticket'))
+                    st.add_event(None, 'Вход', 'warning', 'вход отклонён в Telegram')
+                    return self.send({'status': 'denied'})
+                if status != 'ok':
+                    return self.send({'status': status})
+                APP.mfa.finish(body.get('ticket'))
+                st.add_event(None, 'Вход', 'info', f'администратор вошёл с адреса {self.client_ip()} (подтверждение в Telegram)')
+                return self.signed_in('mfa', body.get('remember') is not False, {'status': 'ok'})
             if path == '/api/tglogin' and method == 'POST':
                 # Telegram mini app: the launch data is signed with the bot token → no password needed for allowed accounts
                 ip = self.client_ip()
@@ -704,8 +786,7 @@ class Handler(BaseHTTPRequestHandler):
                 APP.sessions.ok(ip)
                 who = ' '.join(x for x in (user.get('first_name'), user.get('last_name')) if x) or str(user.get('id'))
                 st.add_event(None, 'Вход', 'info', f'вход через Telegram: {who} (id {user.get("id")})')
-                tok = APP.sessions.create()
-                return self.send({'ok': True, 'token': tok}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+                return self.signed_in('telegram', True, {'token': True})
             if path == '/api/tgauth/start' and method == 'POST':
                 # «Войти через Telegram» on the login page: a one-time code → the bot asks «это вы?»
                 ua = self.headers.get('User-Agent') or ''
@@ -725,8 +806,7 @@ class Handler(BaseHTTPRequestHandler):
                     APP.tgbot.consume(code)
                     u = c['user'] or {}
                     st.add_event(None, 'Вход', 'info', f"вход через Telegram: {u.get('first_name', '')} (id {u.get('id')}) с адреса {c['ip']}")
-                    tok = APP.sessions.create()
-                    return self.send({'status': 'ok', 'token': tok}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+                    return self.signed_in('telegram', True, {'status': 'ok', 'token': True})
                 if c['status'] == 'ok' and c['kind'] == 'link':
                     APP.tgbot.consume(code)
                     return self.send({'status': 'ok', 'user': c['user'], 'telegram': alerts.public(st.cfg.get('notify'))['telegram']})
@@ -760,16 +840,109 @@ class Handler(BaseHTTPRequestHandler):
                     if len(body['newPassword']) < 8:
                         return self.err('новый пароль должен быть не короче 8 символов')
                     st.cfg['auth'] = auth.hash_password(body['newPassword'])
-                    APP.sessions.drop_all()
-                    tok = APP.sessions.create()
+                    APP.sessions.drop_all()                 # everyone else is signed out and forgotten — they sign in with the new password
                     st.save()
-                    return self.send({'ok': True}, headers={'Set-Cookie': self.cookie(tok, auth.SESSION_DAYS * 86400)})
+                    return self.signed_in('password', True)
                 st.save()
                 return self.send({'ok': True})
+            # ── two-factor and devices (Настройки → Доступ) ──
+            if path.startswith('/api/mfa/') and method == 'POST':
+                act = path[len('/api/mfa/'):]
+                pw_ok = lambda: auth.check_password(st.cfg.get('auth'), body.get('password') or '')
+                try:
+                    if act == 'status':
+                        return self.send({'ok': True, **APP.mfa.status(bool(APP.tgbot.ready() and APP.tgbot.username)),
+                                          'telegramLinked': len(alerts.tg_allowed(APP.tgbot.tg())),
+                                          'routers': [{'id': d['id'], 'name': d.get('name')} for d in st.cfg['devices'] if d.get('driver') == 'openwrt'],
+                                          'mailReady': bool(alerts.merged(st.cfg.get('notify'))['email'].get('host'))})
+                    if act == 'totp/start':
+                        return self.send({'ok': True, **APP.mfa.totp_begin()})
+                    if act == 'totp/confirm':
+                        codes = APP.mfa.totp_confirm(body.get('code'))
+                        st.add_event(None, 'Защита', 'info', 'включён второй фактор: приложение с кодами')
+                        return self.send({'ok': True, 'recovery': codes})
+                    if act == 'target/start':
+                        return self.send({'ok': True, 'to': APP.mfa.target_begin(body.get('method'), body.get('target'), body.get('device'))})
+                    if act == 'target/confirm':
+                        codes = APP.mfa.target_confirm(body.get('method'), body.get('code'))
+                        st.add_event(None, 'Защита', 'info', f"включён второй фактор: {body.get('method')}")
+                        return self.send({'ok': True, 'recovery': codes})
+                    if act == 'telegram':
+                        if body.get('on') and not (APP.tgbot.ready() and alerts.tg_allowed(APP.tgbot.tg())):
+                            return self.err('сначала привяжите Telegram: Настройки → Уведомления')
+                        c = APP.mfa.cfg()
+                        c['telegram'] = bool(body.get('on'))
+                        if c['telegram']:
+                            c['enabled'] = True
+                            if not c.get('recovery'):
+                                plain, c['recovery'] = mfa.new_recovery()
+                                st.save()
+                                return self.send({'ok': True, 'recovery': plain})
+                        else:
+                            APP.mfa.remove('telegram')
+                        st.save()
+                        return self.send({'ok': True})
+                    if act == 'remove':
+                        if not pw_ok():
+                            return self.err('неверный пароль', 403)
+                        APP.mfa.remove(body.get('method'))
+                        st.add_event(None, 'Защита', 'warning', f"выключен способ второго фактора: {body.get('method')}")
+                        return self.send({'ok': True})
+                    if act == 'enable':
+                        c = APP.mfa.cfg()
+                        if body.get('enabled'):
+                            if not APP.mfa.methods(False):
+                                return self.err('сначала подключите хотя бы один способ')
+                            c['enabled'] = True
+                        else:
+                            if not pw_ok():
+                                return self.err('введите пароль, чтобы выключить защиту', 403)
+                            c['enabled'] = False
+                            st.add_event(None, 'Защита', 'warning', 'двухфакторная защита выключена')
+                        st.save()
+                        return self.send({'ok': True})
+                    if act == 'recovery':
+                        if not pw_ok():
+                            return self.err('неверный пароль', 403)
+                        return self.send({'ok': True, 'recovery': APP.mfa.recovery_new()})
+                    if act == 'loginbycode':
+                        APP.mfa.cfg()['loginByCode'] = bool(body.get('on'))
+                        st.save()
+                        st.add_event(None, 'Защита', 'info', 'вход без пароля по коду ' + ('разрешён' if body.get('on') else 'запрещён'))
+                        return self.send({'ok': True})
+                    if act == 'policy':
+                        p = APP.mfa.cfg()['policy']
+                        for k, lo, hi in (('idleMin', 5, 1440), ('trustDays', 1, 365), ('sessionDays', 1, 365)):
+                            if k in body:
+                                p[k] = max(lo, min(hi, int(body[k])))
+                        st.save()
+                        return self.send({'ok': True})
+                except (ValueError, TypeError) as e:
+                    return self.err(str(e), 400)
+                return self.err('не найдено', 404)
+            if path.startswith('/api/sessions/') and method == 'POST':
+                act = path[len('/api/sessions/'):]
+                cur = APP.sessions.device_of(self.token())
+                if act == 'list':
+                    return self.send({'ok': True, 'devices': APP.sessions.devices(self.token())})
+                if act == 'revoke':
+                    APP.sessions.revoke(str(body.get('id')))
+                    st.add_event(None, 'Защита', 'info', 'устройство отключено от Rack Live')
+                    return self.send({'ok': True, 'self': str(body.get('id')) == cur})
+                if act == 'others':
+                    APP.sessions.revoke_others(cur)
+                    st.add_event(None, 'Защита', 'info', 'все остальные устройства отключены')
+                    return self.send({'ok': True})
+                if act == 'trust':
+                    return self.send({'ok': APP.sessions.set_trusted(str(body.get('id')), bool(body.get('trusted')))})
+                return self.err('не найдено', 404)
             if path == '/api/racks' and method == 'PUT':
                 racks = body.get('racks')
                 if not isinstance(racks, list) or not racks:
                     return self.err('неверные данные')
+                bad = power.remote_placed(racks, st.cfg['devices'])
+                if bad:
+                    return self.err(f"«{bad[0]}» — удалённое устройство, его нельзя поставить в «{bad[1]}». Удалённые живут только в списке устройств.")
                 out = []
                 for r in racks:
                     units = r.get('units') if isinstance(r.get('units'), list) else []
@@ -881,6 +1054,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/devices' and method == 'POST':
                 if body.get('driver') not in REGISTRY:
                     return self.err('неизвестный тип устройства')
+                if body.get('driver') == 'ups' and body.get('location') == 'remote':
+                    return self.err(power.REMOTE_UPS)
                 d = st.upsert_device(body)
                 APP.last_start.pop(d['id'], None)
                 st.add_event(d['id'], d.get('name'), 'info', 'устройство добавлено')
@@ -892,6 +1067,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not d:
                     return self.err('устройство не найдено', 404)
                 if sub is None and method == 'PUT':
+                    if body.get('location') == 'remote':             # a remote device has no business with a local UPS / outlet block
+                        if d.get('driver') == 'ups':
+                            return self.err(power.REMOTE_UPS)
+                        where = power.plugged_where(st.cfg['devices'], st.cfg['racks'], did)
+                        if where:
+                            return self.err(f"Удалённое устройство не может питаться от местного ИБП / блока розеток. Сейчас оно подключено: {', '.join(where)}. Уберите его оттуда и повторите.")
+                        placed = power.placed_where(st.cfg['racks'], did)
+                        if placed:
+                            return self.err(f"Удалённое устройство не ставится в шкаф, щиток или комнату — оно живёт только в списке устройств. Сейчас оно стоит в: {', '.join(placed)}. Уберите его оттуда и повторите.")
                     d = st.upsert_device(body, did)
                     APP.last_start.pop(did, None)
                     return self.send({'ok': True, 'device': st.public_device(d)})

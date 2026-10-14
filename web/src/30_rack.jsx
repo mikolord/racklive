@@ -399,14 +399,17 @@ function UnitEditor({ unit, rack, onClose, fits }) {
     if (fillUps) setTimeout(() => { toast('Укажите данные ИБП с наклейки — мощность, аккумулятор, что подключено'); openEditor(fillUps); }, 250);
   };
   const del = async () => { if (await confirm(`Убрать «${unit.name}»?`, { danger: true, ok: 'Убрать' })) { saveRack({ ...rack, units: rack.units.filter(x => x.id !== unit.id) }); onClose(); } };
-  const newDev = addDev ? <DeviceEditor device={null} onClose={() => setAddDev(false)} onCreated={d => { refresh(); pickDev(d); }} /> : null;
+  const localDevs = data.devices.filter(d => d.location !== 'remote');           // remote devices live only in the «Устройства» list
+  const remoteCount = data.devices.length - localDevs.length;
+  const newDev = addDev ? <DeviceEditor device={null} onClose={() => setAddDev(false)} onCreated={d => {
+    refresh(); if (d.location === 'remote') toast('Удалённое устройство добавлено в «Устройства» — в шкаф, щиток и комнату оно не ставится', true); else pickDev(d); }} /> : null;
 
   // step 1: pick what stands here — one of your devices (live data comes by itself) or plain equipment
   if (picking) {
-    const devs = [...data.devices].sort((a, b) => (!!placedIn(a.id) - !!placedIn(b.id)) || a.name.localeCompare(b.name));
+    const devs = [...localDevs].sort((a, b) => (!!placedIn(a.id) - !!placedIn(b.id)) || a.name.localeCompare(b.name));
     const plain = PLAIN_TYPES.filter(t => isRack || !RACK_ONLY.includes(t));
     return <Modal title={isRack ? 'Что ставим в шкаф?' : 'Что ставим?'} wide onClose={unit.id ? () => setPicking(false) : onClose}>
-      <div className="up-sec">Ваши устройства <small>живые данные появятся сами</small></div>
+      <div className="up-sec">Ваши устройства <small>живые данные появятся сами{remoteCount ? ` · удалённые (${remoteCount}) сюда не ставятся — они в списке «Устройства»` : ''}</small></div>
       <div className="unit-pick">
         {devs.map(d => { const pl = placedIn(d.id);
           return <button key={d.id} className={'up-opt' + (pl ? ' placed' : '') + (f.deviceId === d.id ? ' on' : '')} onClick={() => pickDev(d)}>
@@ -431,7 +434,7 @@ function UnitEditor({ unit, rack, onClose, fits }) {
           : f.type === 'shelf' ? 'отметьте, что на ней стоит' : 'без данных — просто отметка'}</small></div>
       <Btn size="sm" onClick={() => setPicking(true)}>Заменить</Btn></div>
     {f.type === 'shelf' ? <Field label={`Устройства на полке · до ${SHELF_MAX}`} hint="Мелкие устройства рядом на одной полке (роутер, мини-ПК, модем…): в шкафу и на карте у каждого своя ячейка.">
-      <div className="shelf-pick">{data.devices.map(d => { const ids = unitDevIds(f); const on = ids.includes(d.id);
+      <div className="shelf-pick">{localDevs.map(d => { const ids = unitDevIds(f); const on = ids.includes(d.id);
         return <label key={d.id} className={'chip' + (on ? ' on' : '')} style={{ opacity: !on && ids.length >= SHELF_MAX ? .4 : 1 }}>
           <input type="checkbox" checked={on} disabled={!on && ids.length >= SHELF_MAX} style={{ display: 'none' }}
             onChange={() => { const next = on ? ids.filter(x => x !== d.id) : [...ids, d.id]; setF(x => ({ ...x, deviceIds: next, deviceId: next[0] || null })); }} />

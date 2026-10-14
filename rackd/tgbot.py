@@ -86,6 +86,41 @@ class TgBot:
         with self.lock:
             return self.codes.pop(code, None)
 
+    def ask_mfa(self, ip, ua):
+        """second factor: a sign-in whose password was right waits for «да» — the question goes to every allowed account"""
+        if not self.ready() or not self.username:
+            raise ValueError('Telegram-бот ещё не подключён')
+        ids = sorted(alerts.tg_allowed(self.tg()))
+        if not ids:
+            raise ValueError('нет привязанных аккаунтов Telegram')
+        code = re.sub(r'[^A-Za-z0-9]', '', secrets.token_urlsafe(24))[:22]
+        with self.lock:
+            now = time.time()
+            for k in [k for k, v in self.codes.items() if now - v['t'] > CODE_TTL]:
+                del self.codes[k]
+            self.codes[code] = {'kind': 'mfa', 't': now, 'ip': ip, 'ua': ua, 'status': 'asked', 'user': None, 'ids': ids}
+        title = self.store.cfg['settings'].get('title') or 'Rack Live'
+        sent = 0
+        for i in ids:
+            try:
+                self.say(i, f'🔐 Вход в Rack Live «{title}» с адреса {ip}' + (f' ({ua})' if ua else '') + '.\nПароль уже введён. Это вы?',
+                         [[{'text': '✅ Да, это я', 'callback_data': f'ok:{code}'}, {'text': '🚫 Нет', 'callback_data': f'no:{code}'}]])
+                sent += 1
+            except ValueError:
+                pass
+        if not sent:
+            raise ValueError('бот не смог написать — откройте его в Telegram и нажмите /start')
+        return code
+
+    def notice(self, text):
+        """a plain message to every allowed account (a new device signed in…)"""
+        if self.ready():
+            for i in alerts.tg_allowed(self.tg()):
+                try:
+                    self.say(i, text)
+                except ValueError:
+                    pass
+
     # ── linked accounts ──
     def _ids(self, s):
         return [x.strip() for x in str(s or '').split(',') if x.strip()]
@@ -331,7 +366,9 @@ class TgBot:
             if m:
                 with self.lock:
                     c = self.codes.get(m.group(2))
-                    if c and c['status'] == 'asked' and c['user'] and c['user']['id'] == user.get('id') and time.time() - c['t'] < CODE_TTL:
+                    mine = c and ((c['user'] and c['user']['id'] == user.get('id')) or (c['kind'] == 'mfa' and str(user.get('id')) in c.get('ids', [])))
+                    if c and c['status'] == 'asked' and mine and time.time() - c['t'] < CODE_TTL:
+                        c['user'] = user
                         c['status'] = 'ok' if m.group(1) == 'ok' else 'denied'
                         verdict = '✅ Вход подтверждён — можно вернуться в браузер' if m.group(1) == 'ok' else '🚫 Вход отклонён'
             self.call('answerCallbackQuery', {'callback_query_id': q['id'], 'text': verdict[:190]})

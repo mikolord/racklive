@@ -64,6 +64,21 @@ def main():
         check('UPS: ONT by its 12 V × 1 A, custom line by V × A',
               any(c.get('unit') == 'uont' and c['w'] == 12 and c['src'] == '12 В × 1 А' for c in u['connected'])
               and any(c['name'].startswith('Камеры') and c['w'] == 24 for c in u['connected']), json.dumps(u['connected'])[:500])
+        vps = next(d for d in st['devices'] if d.get('location') == 'remote')
+        try:
+            api('/api/racks', {'racks': [dict(st['racks'][0], units=st['racks'][0]['units'] + [{'id': 'ux', 'name': 'x', 'type': 'server', 'uStart': 9, 'uSize': 1, 'deviceId': vps['id']}])]}, 'PUT')
+            check('a remote device cannot be put into a rack', False)
+        except urllib.error.HTTPError as e:
+            check('a remote device cannot be put into a rack', e.code == 400)
+        try:
+            api('/api/devices', {'driver': 'ups', 'name': 'x', 'location': 'remote'}, 'POST'); check('a remote UPS is refused', False)
+        except urllib.error.HTTPError as e:
+            check('a remote UPS is refused', e.code == 400)
+        rt = next(d for d in st['devices'] if d['driver'] == 'demo_router')
+        try:
+            api(f"/api/devices/{rt['id']}", dict(name=rt['name'], location='remote'), 'PUT'); check('a device on a local UPS cannot become remote', False)
+        except urllib.error.HTTPError as e:
+            check('a device on a local UPS cannot become remote', e.code == 400)
         sys.path.insert(0, ROOT)
         from rackd import power as pw
         loop = [{'id': 'r', 'name': 'r', 'units': [{'id': 'A', 'type': 'pdu', 'power': {'ports': {'1': {'pdu': 'B'}}}},
@@ -243,6 +258,8 @@ def main():
         print('UI')
         st = api('/api/state'); dev = {d['driver']: d['id'] for d in st['devices']}
         units = {u['type']: u['id'] for r in st['racks'] for u in r['units']}
+        api('/api/dashboard', {'widgets': [{'id': t, 'type': t, 'size': 'M'} for t in ('rack', 'stats', 'problems', 'state', 'internet', 'uptime')]
+                               + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
                  'События': '#events', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
@@ -257,6 +274,9 @@ def main():
                  'OpenWrt · Forkop': f'?device={dev["demo_openwrt"]}&tab=plugins&plugin=forkop',
                  'OpenWrt · модем': f'?device={dev["demo_openwrt"]}&tab=plugins&plugin=modem',
                  'Новое устройство (автоопределение)': '?add=1#devices',
+                 'Устройства — удалённые': '#devices', 'Доступ — вход и устройства': '?section=access#settings',
+                 'Доступ — подключение приложения': '?section=access&mfa=totp#settings',
+                 'Новое устройство — группы': '?add=1#devices', 'Новое устройство — роутеры': '?add=1&addgrp=router#devices',
                  'VPS · 3x-ui': f'?device={dev["demo_server"]}&tab=plugins&plugin=3xui',
                  'VPS · Remnawave': f'?device={dev["demo_server"]}&tab=plugins&plugin=remnawave',
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
@@ -282,6 +302,7 @@ def main():
             if name == 'Размещение':
                 check('подсказка на вкладке', 'hint-box' in out)
                 check('главная из виджетов', out.count('data-wid=') >= 5)
+                check('виджет ИБП: широкий и квадрат', 'upsw-bat' in out and 't-ups' in out and 'хватит при отключении света' in out)
             if name == 'Блок розеток — нагрузка':
                 check('розетки блока и ИБП кружками на шкафу', 'leds round' in out and '<i class="r">' in out)
             if name == 'План — дом':
@@ -296,6 +317,16 @@ def main():
                 check('выбор устройства вместо «привязки»', out.count('up-opt') >= 8 and 'Связанное устройство' not in out)
             if name == 'Proxmox · виртуалки':
                 check('список виртуалок', 'Windows Server' in out and 'pihole' in out)
+            if name == 'Доступ — вход и устройства':
+                check('доступ: второй фактор, устройства, время сессий', all(x in out for x in ('Двухфакторная защита', 'Устройства с доступом', 'Как долго живёт вход')))
+            if name == 'Доступ — подключение приложения':
+                check('доступ: окно подключения приложения', 'Приложение с кодами' in out and 'Установите на телефон' in out)
+            if name == 'Устройства — удалённые':
+                check('вкладки Все / Локальные / Удалённые', all(x in out for x in ('Все · ', 'Локальные · ', 'Удалённые · ')))
+            if name == 'Новое устройство — группы':
+                check('типы устройств по группам', all(x in out for x in ('Роутеры', 'Коммутаторы', 'Серверы и хранилища', 'Питание', 'Проверка доступности')))
+            if name == 'Новое устройство — роутеры':
+                check('роутеры: Keenetic, OpenWrt, SNMP, веб-панель', all(x in out for x in ('Keenetic / Netcraze', 'OpenWrt', 'Другой роутер по SNMP', 'Роутер без управления')))
             if name == 'ИБП — форма':
                 check('форма ИБП: подсказка, как замерить', 'Как узнать, сколько берёт устройство' in out)
                 check('форма ИБП: гнёзда, блок розеток, откуда питается', 'Откуда питается ИБП' in out and 'Блоки розеток' in out and 'loads' in out)

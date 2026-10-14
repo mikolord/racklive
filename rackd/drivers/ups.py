@@ -194,7 +194,7 @@ class UPS(Driver):
         connected, est_w = [], 0
         own = {r['dev']: power.spec_w(r) for r in rows if r.get('dev')}          # hand-entered numbers (W, or V × A) win over the estimate
         outlet_of = {r['dev']: r.get('outlet') for r in rows if r.get('dev')}
-        ids = [x for x in own if x in devices]
+        ids = [x for x in own if x in devices and not power.is_remote(devices[x])]
         # devices powered over PoE by a switch that is itself on this UPS are already inside the switch's PoE draw
         poe_fed = {}
         for sid in ids:

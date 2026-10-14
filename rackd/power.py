@@ -48,6 +48,43 @@ class Net:
         return {i: u for i, u in self.units.items() if u.get('type') == 'pdu'}
 
 
+REMOTE_UPS = 'ИБП стоит рядом с оборудованием, поэтому не может быть удалённым устройством — выберите «Локальное».'
+
+
+def is_remote(d):
+    return (d or {}).get('location') == 'remote'
+
+
+def plugged_where(devices, racks, did):
+    """where a device is plugged in: [«ИБП X», «блок розеток Y»] — used to refuse making it remote"""
+    out = []
+    for d in devices or []:
+        if d.get('driver') == 'ups' and any(isinstance(r, dict) and r.get('dev') == did for r in d.get('loads') or []):
+            out.append(f"ИБП «{d.get('name')}»")
+    for r in racks or []:
+        for u in r.get('units') or []:
+            if u.get('type') == 'pdu' and any((p or {}).get('dev') == did for p in ((u.get('power') or {}).get('ports') or {}).values()):
+                out.append(f"блок розеток «{u.get('name')}»")
+    return out
+
+
+def placed_where(racks, did):
+    """places (rack / box / room) whose units hold this device: [«шкаф X»] — a remote device is never placed in one"""
+    return [f"«{r.get('name')}»" for r in racks or []
+            if any(did in ([x for x in (u.get('deviceIds') or []) if x] or [u.get('deviceId')]) for u in r.get('units') or [])]
+
+
+def remote_placed(racks, devices):
+    """→ (device name, place name) of the first remote device found in a place, or None"""
+    remote = {d['id']: d.get('name') for d in devices or [] if is_remote(d)}
+    for r in racks or []:
+        for u in r.get('units') or []:
+            for i in [x for x in (u.get('deviceIds') or []) if x] or [u.get('deviceId')]:
+                if i in remote:
+                    return remote[i], r.get('name')
+    return None
+
+
 def downstream(net, pdu_ids):
     """every outlet block reachable from these ones through the outlets (themselves included)"""
     out, todo = set(), list(pdu_ids)
@@ -94,7 +131,7 @@ def row_item(net, r, outlet, seen):
         w = spec_w(spec)
         return {'outlet': outlet, 'kind': u.get('type') or 'other', 'name': u.get('name'), 'unit': u['id'], 'w': round(w),
                 'src': spec_text(spec) or 'потребление не указано', 'missing': not w}
-    if r.get('dev') in net.devices:
+    if r.get('dev') in net.devices and not is_remote(net.devices[r['dev']]):          # a remote device is never on a local socket
         d = net.devices[r['dev']]
         if d.get('driver') == 'ups':
             w, src = ups_input_w(net, d), 'ИБП: нагрузка + собственное потребление'

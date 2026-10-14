@@ -20,16 +20,19 @@ function useLockPage() {
   }, []);
 }
 
-function Modal({ title, onClose, children, footer, wide, icon }) {
+/* onBack: a window with steps — «‹» in the header, Esc and a tap outside go one step back; the × still closes it all */
+function Modal({ title, onClose, onBack, children, footer, wide, icon }) {
   useLockPage();
+  const step = onBack || onClose;
   useEffect(() => {
-    const h = e => e.key === 'Escape' && onClose && onClose();
+    const h = e => e.key === 'Escape' && step && step();
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
-  }, [onClose]);
+  }, [step]);
   // always on top of the page: a window opened from inside another window / a blurred card would otherwise be pinned to it
-  return ReactDOM.createPortal(<div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose && onClose()}>
+  return ReactDOM.createPortal(<div className="overlay" onMouseDown={e => e.target === e.currentTarget && step && step()}>
     <div className={'modal' + (wide ? ' wide' : '')}>
-      <div className="modal-head">{icon}<h3>{title}</h3>{onClose ? <Btn icon="x" size="sm" onClick={onClose} /> : null}</div>
+      <div className="modal-head">{onBack ? <button type="button" className="modal-back" title="Назад" onClick={onBack}><Icon name="chevron" size={18} style={{ transform: 'rotate(180deg)' }} /></button> : null}
+        {icon}<h3>{title}</h3>{onClose ? <Btn icon="x" size="sm" onClick={onClose} /> : null}</div>
       <div className="modal-body">{children}</div>
       {footer ? <div className="modal-foot">{footer}</div> : null}
     </div>

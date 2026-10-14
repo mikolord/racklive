@@ -62,7 +62,7 @@ function RowPick({ value, onChange, skipPdu = [], skipDev = [] }) {
   const units = plainUnits(data); const pdus = pduUnits(data).filter(u => !skipPdu.includes(u.id));
   return <select className="select grow" value={value} onChange={e => onChange(e.target.value)}>
     {value === '' ? <option value="">— свободна —</option> : null}
-    <optgroup label="Устройства">{data.devices.filter(d => !skipDev.includes(d.id)).map(d => <option key={d.id} value={'d:' + d.id}>{d.name}</option>)}</optgroup>
+    <optgroup label="Устройства">{data.devices.filter(d => !skipDev.includes(d.id) && d.location !== 'remote').map(d => <option key={d.id} value={'d:' + d.id}>{d.name}</option>)}</optgroup>
     {units.length ? <optgroup label="Оборудование без устройства (ONT, инжектор…)">{units.map(u => <option key={u.id} value={'u:' + u.id}>{u.name} ({u.rackName})</option>)}</optgroup> : null}
     {pdus.length ? <optgroup label="Блоки розеток">{pdus.map(u => <option key={u.id} value={'p:' + u.id}>{u.name} ({u.rackName})</option>)}</optgroup> : null}
     <option value="l">Своё устройство (назвать и указать В и А)…</option></select>;

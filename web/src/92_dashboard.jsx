@@ -84,6 +84,54 @@ function NoteWidget({ w, edit, onOpts }) {
   </Card>;
 }
 
+/* UPS: which one runs out first is the one the square shows; the wide forms list every UPS with what it feeds */
+const upsList = d => d.devices.filter(x => x.driver === 'ups' && x.state && x.state.ups);
+const upsFirst = d => [...upsList(d)].sort((a, b) => (a.state.ups.runtimeMin == null ? 1e9 : a.state.ups.runtimeMin) - (b.state.ups.runtimeMin == null ? 1e9 : b.state.ups.runtimeMin))[0];
+const upsTone = u => (u.onBattery || u.lowBattery || u.replace || (u.loadPct || 0) > 85 || (u.charge != null && u.charge < 40) ? (u.lowBattery || (u.charge != null && u.charge < 20) ? 'red' : 'orange') : 'green');
+const upsColor = u => ({ green: 'var(--green)', orange: 'var(--orange)', red: 'var(--red)' }[upsTone(u)]);
+const fmtMinShort = m => (m == null ? '—' : m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60 ? m % 60 + ' м' : ''}`.trim() : `${m} мин`);
+
+/* a battery: filled by the charge (or full when the UPS has no data cable — it is a calculation then), a bolt in the middle */
+function BatteryArt({ u, vertical }) {
+  const f = u ? (u.charge != null ? Math.max(.06, Math.min(1, u.charge / 100)) : 1) : 0; const col = u ? upsColor(u) : 'var(--text3)';
+  const bolt = 'M0 -13 L-8 3 H-1.5 L-3 13 L8 -4 H1.5 Z';
+  return vertical ? <svg viewBox="0 0 100 100" className="mini-svg">
+    <rect x="42" y="7" width="16" height="9" rx="3.5" fill="var(--fill2)" />
+    <rect x="29" y="14" width="42" height="80" rx="11" fill="none" stroke="var(--fill2)" strokeWidth="5" />
+    <clipPath id="ubv"><rect x="33" y="18" width="34" height="72" rx="8" /></clipPath>
+    <g clipPath="url(#ubv)"><rect x="33" y={18 + 72 * (1 - f)} width="34" height={72 * f} fill={col} opacity=".92" /></g>
+    <path d={bolt} transform="translate(50 56) scale(1.25)" fill="#fff" stroke="#fff" strokeWidth="1.2" strokeLinejoin="round" />
+  </svg> : <svg viewBox="0 0 132 64" className="upsw-bat">
+    <rect x="124" y="21" width="7" height="22" rx="3" fill="var(--fill2)" />
+    <rect x="3" y="4" width="118" height="56" rx="15" fill="none" stroke="var(--fill2)" strokeWidth="5" />
+    <clipPath id="ubh"><rect x="8" y="9" width="108" height="46" rx="11" /></clipPath>
+    <g clipPath="url(#ubh)"><rect x="8" y="9" width={108 * f} height="46" fill={col} opacity=".92" /></g>
+    <path d={bolt} transform="translate(62 32) scale(1.35)" fill="#fff" stroke="#fff" strokeWidth="1.2" strokeLinejoin="round" />
+  </svg>;
+}
+
+function UpsWidget() {
+  const { data, openDevice, setTab } = useApp();
+  const list = upsList(data);
+  if (!list.length) return <Card title="ИБП"><div className="dim" style={{ fontSize: 13, lineHeight: 1.5 }}>ИБП ещё не добавлен. Добавьте его в «Устройства» (тип «ИБП») или юнитом в шкаф — здесь появится, на сколько хватит батареи.</div>
+    <div style={{ marginTop: 10 }}><Btn size="sm" onClick={() => setTab('devices')}>К устройствам</Btn></div></Card>;
+  return <div className="upsw-list">{list.map(d => { const u = d.state.ups; const tone = upsTone(u);
+    const feeds = [...u.connected].sort((a, b) => b.w - a.w); const shown = feeds.slice(0, 4);
+    return <div key={d.id} className={'card upsw ups-' + tone} onClick={() => openDevice(d)}>
+      <div className="row" style={{ gap: 8 }}><KindIcon kind="ups" size={28} round={8} /><b className="ellipsis grow" style={{ fontSize: 15 }}>{d.name}</b>
+        <span className={'badge ' + (tone === 'green' ? 'online' : tone === 'red' ? 'offline' : 'warning')}>{u.onBattery ? 'От батареи' : u.estimated ? 'Расчёт' : 'От сети'}</span></div>
+      <div className="upsw-main"><BatteryArt u={u} />
+        <div style={{ minWidth: 0 }}><div className="ups-big">{u.runtimeEstimated ? '≈ ' : ''}{fmtMinShort(u.runtimeMin)}</div>
+          <div className="dim" style={{ fontSize: 12.5 }}>хватит при отключении света{u.charge != null ? ` · заряд ${Math.round(u.charge)}%` : ''}</div></div></div>
+      <div className="dim3" style={{ fontSize: 11.5, margin: '2px 0 4px' }}>Нагрузка {u.loadW} Вт{u.nominalW ? ` из ${Math.round(u.nominalW)} Вт · ${u.loadPct}%` : ''}</div>
+      {u.loadPct != null ? <Bar value={u.loadPct} warnAt={70} badAt={85} /> : null}
+      {shown.length ? <div className="upsw-feeds">{shown.map((c, i) => <span key={i} className="upsw-chip" title={c.name}>
+        <Icon name={c.kind === 'pdu' ? 'bolt' : c.kind || 'other'} size={13} /><span className="ellipsis">{c.name}</span><b>{c.w} Вт</b></span>)}
+        {feeds.length > shown.length ? <span className="upsw-chip more">+{feeds.length - shown.length}</span> : null}</div> : <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Что подключено — не указано: откройте ИБП и заполните</div>}
+      {u.supply ? <div className="dim3" style={{ fontSize: 11.5, marginTop: 8 }}>Питается от: {u.supply.name}{u.supply.outlet ? `, розетка ${u.supply.outlet}` : ''}</div> : null}
+    </div>; })}</div>;
+}
+
 function ViewWidget({ which }) {
   const { setTab } = useApp();
   return <div className="wg-view">
@@ -110,6 +158,11 @@ const WIDGETS = {
   internet: { title: 'Интернет', icon: 'globe', color: '#64d2ff', size: 'M', sizes: ALL, once: true, desc: 'Скорость интернета по расписанию', render: () => <InternetCard />,
     tile: d => { const l = ((d.inet || {}).items || []).filter(x => x.source === 'racklive' && x.down != null).slice(-1)[0];
       return { v: l ? Math.round(l.down) + '↓' : '—', s: l ? `${Math.round(l.up)}↑ Мбит/с` : 'замеров нет' }; } },
+  ups: { title: 'ИБП', icon: 'ups', color: '#f5b800', size: 'M', sizes: ALL, list: true, once: true, desc: 'На сколько хватит батареи, нагрузка и что питается от ИБП', render: () => <UpsWidget />,
+    tile: d => { const u = upsFirst(d); const s = u && u.state.ups;
+      return s ? { v: fmtMinShort(s.runtimeMin), s: `${s.loadW} Вт${s.loadPct != null ? ' · ' + s.loadPct + '%' : ''}`, bad: upsTone(s) !== 'green', tone: upsTone(s) === 'green' ? undefined : upsTone(s) === 'red' ? 'red' : 'yellow' }
+        : { v: '', s: 'добавить ИБП' }; },
+    go: ctx => { const u = upsFirst(ctx.data); if (u) ctx.openDevice(u); else ctx.setTab('devices'); } },
   uptime: { title: 'Доступность', icon: 'pulse', color: '#34c759', size: 'M', sizes: ALL, once: true, desc: 'Кто пропадал за 30 дней', render: () => <UptimeCard />,
     tile: d => { const a = avgUptime(d); return { v: a == null ? '—' : pctText(a), s: 'за 30 дней' }; } },
   newdev: { title: 'Новые в сети', icon: 'plus', color: '#bf5af2', size: 'M', sizes: ALL, once: true, desc: 'Незнакомые устройства за неделю', render: () => <NewDevicesCard />,
@@ -448,6 +501,7 @@ const TILE_ART = {
     return <div className="mini-faces">{fresh.slice(0, 4).map((x, i) => <span key={i} style={{ background: ['#bf5af2', '#0a84ff', '#ff9f0a', '#30d158'][i] }}>
       <Icon name={x.random ? 'phone' : 'other'} size={16} color="#fff" /></span>)}{fresh.length > 4 ? <span className="more">+{fresh.length - 4}</span> : null}
       {!fresh.length ? <span style={{ background: 'var(--green)' }}><Icon name="check" size={18} color="#fff" stroke={3} /></span> : null}</div>; },
+  ups: d => { const u = upsFirst(d); return <BatteryArt u={u ? u.state.ups : null} vertical />; },
   map: d => <MiniTopo data={d} />,
   plan: d => <MiniPlan data={d} />,
   devices: d => <MiniKinds devices={d.devices} />,
