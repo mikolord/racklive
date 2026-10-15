@@ -23,6 +23,7 @@ function DevicesView() {
   const LOC_TABS = [{ value: 'all', label: `Все · ${counts.all}` }, { value: 'local', label: `Локальные · ${counts.local}` }, { value: 'remote', label: `Удалённые · ${counts.remote}` }];
   const routers = ((data.routerScan || {}).list || []).filter(r => !r.dismissed);
   const [showRouters, setShowRouters] = useState(() => new URLSearchParams(location.search).get('routers') === '1');
+  const [scan, setScan] = useState(() => new URLSearchParams(location.search).get('netscan') === '1');       // «Сканировать сеть» (?netscan=1)
   const changed = onlyBad || sort !== 'group';
   return <>
     <div className="dev-loc"><Seg value={loc} onChange={setLoc} options={LOC_TABS} /></div>
@@ -43,12 +44,15 @@ function DevicesView() {
       </div>
       {changed ? <span className="dim" style={{ fontSize: 13 }}>{[onlyBad ? 'только с проблемами' : '', sort !== 'group' ? DEV_SORTS.find(x => x[0] === sort)[1].toLowerCase() : ''].filter(Boolean).join(' · ')}</span> : null}
       <div className="grow" />
+      {admin ? <Btn icon="search" title="Найти устройства в сети" onClick={() => setScan(true)}>Сканировать сеть</Btn> : null}
       {admin ? <span data-tour="add-dev" style={{ display: 'inline-flex' }}><Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить</Btn></span> : null}
     </div>
+    {scan ? <NetScanModal onClose={() => setScan(false)} /> : null}
     {!data.devices.length ? <Card><div className="empty" style={{ padding: 50 }}>
       <div style={{ fontSize: 40, marginBottom: 10 }}>🛰️</div><div style={{ fontSize: 17, fontWeight: 600, color: 'var(--text)' }}>Пока нет ни одного устройства</div>
       <div style={{ margin: '6px 0 16px' }}>Добавьте роутер, коммутатор, NAS или любой сервер — данные начнут собираться автоматически.</div>
-      {admin ? <Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить устройство</Btn> : null}</div></Card> : null}
+      {admin ? <div className="row center wrap" style={{ gap: 10 }}><Btn kind="primary" icon="search" onClick={() => setScan(true)}>Сканировать сеть</Btn>
+        <Btn icon="plus" onClick={() => openEditor(null)}>Добавить вручную</Btn></div> : null}</div></Card> : null}
     {data.newDevices ? <div style={{ marginBottom: 10 }}><NewDevicesCard /></div> : null}
     {admin && data.routerScan && routers.length ? <div style={{ marginBottom: 14 }}>
       <button type="button" className="card newdev-row" onClick={() => setShowRouters(true)}>

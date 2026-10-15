@@ -22,6 +22,23 @@ const TG = (() => {
   return { initData: data, scheme: dark == null ? null : dark ? 'dark' : 'light' };
 })();
 
+/* diagnostics of the page itself (reloads, JS errors, lost connection, going to the background): kept in this browser and sent to the journal
+   («События» → «Страница») with the next successful request — so a phone that «jerks» tells why, even when it could not reach the server at that moment */
+const DIAG_KEY = 'rl_diag';
+function diag(text) { try { const a = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]'); a.push({ t: Date.now(), s: String(text).slice(0, 120) }); localStorage.setItem(DIAG_KEY, JSON.stringify(a.slice(-24))); } catch (e) { } }
+async function diagFlush() {
+  try {
+    const a = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]'); if (!a.length) return;
+    localStorage.setItem(DIAG_KEY, '[]');
+    // the journal gets only what looks wrong: a JS error, a lost connection, or the page loading anew several times in a minute (a reload loop);
+    // an ordinary launch or switching apps is not written down
+    const loads = a.filter(x => /^загружена/.test(x.s)).map(x => x.t);
+    const loop = loads.length >= 3 && loads[loads.length - 1] - loads[0] < 60000;
+    if (!a.some(x => /^(ошибка|связь)/.test(x.s)) && !loop) return;
+    const hm = t => new Date(t).toTimeString().slice(0, 8);
+    await api('/api/tour/log', { method: 'POST', body: { text: 'страница: ' + a.map(x => hm(x.t) + ' ' + x.s).join(' · ') } });
+  } catch (e) { }
+}
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
   const tok = ssGet('rl_tok'); if (tok) init.headers['X-RL-Session'] = tok;

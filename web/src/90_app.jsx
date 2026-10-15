@@ -64,7 +64,7 @@ function App() {
   const [pinTest, setPinTest] = useState(null);             // speed test id waiting for a tap on the plan
   const [menu, setMenu] = useState(() => new URLSearchParams(location.search).get('hmenu') === '1');   // phone header menu «⋯»
   const [ai, setAi] = useState(() => new URLSearchParams(location.search).get('ai') ? { n: 0 } : null);     // assistant panel: {q, n}
-  const [tour, setTour] = useState(() => new URLSearchParams(location.search).get('tour') === '1');      // Frank's welcome tour (95_tour.jsx); ?tour=1 starts it
+  const [tour, setTour] = useState(() => new URLSearchParams(location.search).get('tour') === '1' || tourResume());      // Frank's welcome tour (95_tour.jsx); ?tour=1 starts it; a tour that was in progress when the page blinked continues
   const [theme, setTheme] = useTheme();
   const toast = useToast();
   // opened from the Telegram bot: log in with the signed launch data, no password
@@ -77,8 +77,8 @@ function App() {
   }, [data && data.authed, data && data.setupNeeded]);
 
   const refresh = useCallback(async () => {
-    try { const d = await api('/api/state'); setData(d); setErr(null); }
-    catch (e) { setErr(e.message); }
+    try { const d = await api('/api/state'); setData(d); setErr(null); if (d.authed) diagFlush(); }
+    catch (e) { setErr(e.message); diag('связь: ' + String(e.message).slice(0, 60)); }
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
   // the very first visit of the administrator: the server says tourDone=false (an installation that already has an administrator never gets it)
@@ -88,7 +88,13 @@ function App() {
     if (d) setEditor(d);
   }, [!!data]);
   const scrollerRef = useRef(null);
-  useEffect(() => { if (APP_MODE) return; location.hash = tab === 'map' && mapView === 'plan' ? 'plan' : tab; lsSet('rl_tab', tab); window.scrollTo(0, 0); }, [tab, mapView]);
+  // the tab goes into the address (#devices): on iPhone / iPad (also the home-screen app) the address is rewritten in place — assigning location.hash there made the app
+  // load the page anew on every tab press (the journal showed «pagehide → загружена (navigate)» each time)
+  useEffect(() => {
+    if (APP_MODE) return; const h = tab === 'map' && mapView === 'plan' ? 'plan' : tab;
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.standalone) { try { history.replaceState(null, '', '#' + h); } catch (e) { location.hash = h; } } else location.hash = h;
+    lsSet('rl_tab', tab); window.scrollTo(0, 0);
+  }, [tab, mapView]);
   // «События»: the badge counts new alarming events since the tab was last opened (not the devices that are down right now)
   const [evSeen, setEvSeen] = useState(() => +lsGet('rl_ev_seen', 0));
   useEffect(() => { if (!data || evSeen) return; setEvSeen(data.now); lsSet('rl_ev_seen', String(data.now)); }, [data]);
@@ -135,7 +141,7 @@ function App() {
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
-    startTour: () => { setMode('view'); setTour(true); },
+    startTour: () => { lsSet('rl_tour_step', ''); setMode('view'); setTour(true); },       // «Показать обучение» always starts from the beginning
     askAi: q => setAi({ q, n: Date.now() }) };
   if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
   if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
@@ -229,8 +235,16 @@ function HeaderMenu({ admin, mode, arrange, setArrange, setMode, theme, setTheme
 
 /* a render error shows a readable message instead of a blank page (and marks <html data-js-error> for the smoke test) */
 const markError = msg => { document.documentElement.dataset.jsError = String(msg || 'error').slice(0, 300); };
-window.addEventListener('error', e => markError(e.message));
-window.addEventListener('unhandledrejection', e => { if (e.reason && !e.reason.status) markError(e.reason.message || e.reason); });
+window.addEventListener('error', e => { markError(e.message); diag('ошибка JS: ' + (e.message || '').slice(0, 90)); });
+window.addEventListener('unhandledrejection', e => { if (e.reason && !e.reason.status) { markError(e.reason.message || e.reason); diag('ошибка JS: ' + String(e.reason.message || e.reason).slice(0, 90)); } });
+try {                                                      // how the page came to be here: reload / opened / back-forward; and whether it is the home-screen app
+  const nav = performance.getEntriesByType('navigation')[0];
+  diag(`загружена (${nav ? nav.type : '?'}) ${innerWidth}×${innerHeight}${navigator.standalone ? ' приложение' : ''} ${location.pathname}${location.hash}`);
+  window.addEventListener('hashchange', () => diag('hashchange ' + location.hash));
+  window.addEventListener('pagehide', e => diag('pagehide' + (e.persisted ? ' (в кэше)' : '')));
+  window.addEventListener('pageshow', e => { if (e.persisted) diag('pageshow из кэша'); });
+  document.addEventListener('visibilitychange', () => diag(document.visibilityState === 'hidden' ? 'свёрнута' : 'снова видна'));
+} catch (e) { }
 class Crash extends React.Component {
   constructor(p) { super(p); this.state = { err: null }; }
   static getDerivedStateFromError(err) { return { err }; }

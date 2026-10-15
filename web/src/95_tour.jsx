@@ -75,20 +75,32 @@ const TOUR_STEPS = [
     text: 'Начните с «Устройства → Добавить». Если что-то забудете — я в шапке, а обучение можно повторить: Настройки → Основные → «Показать обучение».' },
 ];
 
+/* the tour in progress is remembered («step|time»): if the page blinks (reloads, is rebuilt) the tour comes back by itself where it was, for half an hour */
+const tourSaved = () => String(lsGet('rl_tour_step', '')).split('|');
+const tourResume = () => { const v = tourSaved(); return v[0] !== '' && Date.now() - (+v[1] || 0) < 30 * 60 * 1000; };
+
 function Tour({ onDone }) {
-  const [i, setI] = useState(() => { const n = +new URLSearchParams(location.search).get('tourstep'); return n >= 0 && n < TOUR_STEPS.length ? n : 0; });
+  // the step is remembered (a page reload — iOS likes to unload pages — continues the tour instead of starting it over or losing it)
+  const [i, setI] = useState(() => { const q = new URLSearchParams(location.search).get('tourstep'); const n = q != null ? +q : (tourResume() ? +tourSaved()[0] : 0); return n >= 0 && n < TOUR_STEPS.length ? n : 0; });
   const iRef = useRef(i); iRef.current = i;
   const el = useRef({}), fr = useRef({});                                   // DOM nodes and Frank's moving parts, both written to every frame
-  const S = useRef({ stepAt: Date.now(), tgt: null, chk: 0, hole: null, card: null, scrolled: false, skipped: false });
+  const S = useRef({ stepAt: Date.now(), tgt: null, chk: 0, hole: null, card: null, scrolled: false, lost: false });
   const step = TOUR_STEPS[i];
+  const [lost, setLost] = useState(false);                                  // the highlighted thing is not on the screen: the tour waits for «Дальше», it never skips on its own
+  const lostRef = useRef(setLost); lostRef.current = setLost;
+  const log = text => { try { const p = api('/api/tour/log', { method: 'POST', body: { text } }); if (p && p.catch) p.catch(() => { }); } catch (e) { } };   // a line in «События»: why the tour stopped
+  const logRef = useRef(log); logRef.current = log;
+  const finish = () => { lsSet('rl_tour_step', ''); onDone(); };
+  const quit = why => { log(`${why}: шаг ${iRef.current + 1} из ${TOUR_STEPS.length} «${TOUR_STEPS[iRef.current].title || ''}»`); finish(); };
+  const quitRef = useRef(quit); quitRef.current = quit;
   const go = d => {
     const n = iRef.current + d, cur = TOUR_STEPS[iRef.current];
     S.current.pass = true;                                                      // Frank's own clicks (closing a window) are not blocked
     try { if (cur.after) cur.after(); const m = document.querySelector('.hdr-menu-wrap'); if (m) m.click(); } catch (e) { }      // an open phone menu «⋯» must never stay over the next step
     S.current.pass = false;
-    if (n >= TOUR_STEPS.length) return onDone();
+    if (n >= TOUR_STEPS.length) return finish();
     if (n < 0) return;
-    iRef.current = n; setI(n);
+    iRef.current = n; setI(n); lsSet('rl_tour_step', n + '|' + Date.now());
   };
   const goRef = useRef(go); goRef.current = go;
 
@@ -105,7 +117,8 @@ function Tour({ onDone }) {
       const st = TOUR_STEPS[iRef.current], s = S.current;
       if (st.click && s.tgt && s.tgt.contains(e.target) && !s.advancing) { s.advancing = true; setTimeout(() => goRef.current(1), st.delay || 420); }      // once, even on a double click
     };
-    const k = e => { if (e.key === 'Escape') onDone(); };
+    const k = e => { if (e.key === 'Escape') quitRef.current('закрыто клавишей Esc'); };
+    logRef.current(`начато · ${/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone/iPad' : 'компьютер'}${navigator.standalone ? ' (приложение)' : ''} · экран ${innerWidth}×${innerHeight} · шаг ${iRef.current + 1}`);
     document.addEventListener('click', h, true); document.addEventListener('pointerdown', shield, true); document.addEventListener('mousedown', shield, true);
     window.addEventListener('keydown', k);
     document.documentElement.classList.add('tour-on');
@@ -121,9 +134,11 @@ function Tour({ onDone }) {
       raf = requestAnimationFrame(frame);
       const st = TOUR_STEPS[iRef.current], s = S.current, e = el.current, vw = innerWidth, vh = innerHeight;
       if (!e.card) return;
-      if (s.si !== iRef.current) Object.assign(s, { si: iRef.current, tgt: null, chk: 0, scrolled: false, skipped: false, advancing: false, stepAt: Date.now(), tries: 0, offAt: 0 });      // a new step: forget the old target at once
+      if (s.si !== iRef.current) { Object.assign(s, { si: iRef.current, tgt: null, chk: 0, scrolled: false, lost: false, advancing: false, stepAt: Date.now(), tries: 0, offAt: 0 }); lostRef.current(false); }      // a new step: forget the old target at once
       if (st.t) { if (!s.tgt || !document.contains(s.tgt) || t - s.chk > 200) { s.tgt = pick(st.t); s.chk = t; } } else s.tgt = null;
-      if (st.t && !s.tgt && !s.skipped && Date.now() - s.stepAt > 6000) { s.skipped = true; goRef.current(1); return; }     // that button is not on this screen — move on
+      // that button is not on this screen: do NOT skip (a skipped step breaks the next ones and the whole tour falls apart) — say so, write it to the journal, let the person press «Дальше»
+      const lose = why => { if (s.lost) return; s.lost = true; lostRef.current(true); logRef.current(`${why}: шаг ${iRef.current + 1} «${st.title || ''}» · экран ${vw}×${vh}`); };
+      if (st.t && !s.tgt && Date.now() - s.stepAt > 6000) lose('элемент не найден на экране');
       if (s.tgt) {                                          // bring the target into view — down the page AND along a row of chips that scrolls sideways (settings on a phone)
         const b = s.tgt.getBoundingClientRect(), offV = b.top < 70 || b.bottom > vh - 90, offH = b.left < 8 || b.right > vw - 8;
         if (!offV && !offH) s.offAt = 0;
@@ -133,6 +148,7 @@ function Tour({ onDone }) {
           s.scrolled = true;
           s.tgt.scrollIntoView({ block: offV ? 'center' : 'nearest', inline: offH ? 'center' : 'nearest', behavior: FAST ? 'auto' : 'smooth' });
         }
+        if ((offV || offH) && s.scrolled && s.tries >= 3 && t - s.offAt > 900) lose('элемент вне экрана, не прокручивается');      // the page would not scroll to it (it happens in Safari)
       }
       // the hole around the target (a point in the middle of the screen when there is no target) glides toward where the element is now
       let T = { x: vw / 2, y: vh / 2, w: 0, h: 0 };
@@ -186,18 +202,19 @@ function Tour({ onDone }) {
     </svg>
     {['bT', 'bB', 'bL', 'bR'].map(k => <div key={k} ref={put(k)} className="tour-block" />)}
     <div ref={put('ring')} className="tour-ring" />
-    <button type="button" className="tour-skip" onClick={onDone}>Пропустить обучение<Icon name="x" size={14} stroke={2.4} /></button>
+    <button type="button" className="tour-skip" onClick={() => quit('пропущено кнопкой «Пропустить обучение»')}>Пропустить обучение<Icon name="x" size={14} stroke={2.4} /></button>
     <div ref={put('card')} className={'tour-card' + (step.t ? '' : ' center') + (step.big ? ' big' : '')}>
       <div className="tour-frank-wrap" style={{ width: fsz, height: fsz }}><FrankHero size={fsz} mode={step.hand || 'point'} refs={fr.current} /></div>
       <div className="tour-bubble" key={i}>
         {step.title ? <b className="tour-title">{step.title}</b> : null}
         <div className="tour-text">{step.text}</div>
-        {step.click ? <div className="tour-hint"><i />Нажмите на подсвеченное</div> : null}
+        {step.click && !lost ? <div className="tour-hint"><i />Нажмите на подсвеченное</div> : null}
+        {step.click && lost ? <div className="tour-hint" style={{ color: 'var(--orange)' }}>Не вижу эту кнопку на экране — можно перейти дальше.</div> : null}
         <div className="tour-actions">
           <div className="tour-dots">{TOUR_STEPS.map((_, k) => <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />)}</div>
           <div className="grow" />
-          {!last && !step.click ? <button type="button" className="tour-link" onClick={onDone}>Пропустить</button> : null}
-          {!step.click ? <button type="button" className="tour-next" onClick={() => go(1)}>{step.next || 'Дальше'}</button> : null}
+          {!last && (!step.click || lost) ? <button type="button" className="tour-link" onClick={() => quit('пропущено кнопкой «Пропустить»')}>Пропустить</button> : null}
+          {!step.click || lost ? <button type="button" className="tour-next" onClick={() => go(1)}>{step.next || 'Дальше'}</button> : null}
         </div>
       </div>
     </div>

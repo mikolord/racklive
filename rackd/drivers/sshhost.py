@@ -2,7 +2,7 @@
 so it works on Debian, Ubuntu, Alpine, CentOS, OpenWrt/BusyBox and Synology alike.
 
 Transport: paramiko when it is installed (dev machines), otherwise the system ssh client
-(+ sshpass for passwords) — the Docker image ships openssh-client and sshpass.
+(+ sshpass for passwords, or OpenSSH's own SSH_ASKPASS helper when sshpass is missing) — the Docker image ships openssh-client and sshpass.
 """
 import json, os, random, re, secrets, shlex, shutil, subprocess, tempfile, time
 
@@ -112,10 +112,21 @@ class SSHHost(Driver):
                 os.chmod(keyfile, 0o600)
                 args += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes']
             elif pw:
-                if not shutil.which('sshpass'):
-                    raise DriverError('для входа по паролю нужен sshpass — или используйте ключ')
-                env['SSHPASS'] = pw
-                args = ['sshpass', '-e'] + args + ['-o', 'PubkeyAuthentication=no']
+                if shutil.which('sshpass'):                       # the Docker image has it: this path is unchanged
+                    env['SSHPASS'] = pw
+                    args = ['sshpass', '-e'] + args + ['-o', 'PubkeyAuthentication=no']
+                else:
+                    # no sshpass (Entware on a Keenetic, a bare OpenWrt): OpenSSH 8.4+ can ask a helper program for the password
+                    # (SSH_ASKPASS_REQUIRE=force) — the helper just prints it from the environment, nothing is written to disk but the tiny script
+                    askdir = os.environ.get('RL_DATA') or None
+                    if askdir and not os.path.isdir(askdir):
+                        askdir = None
+                    fd, keyfile = tempfile.mkstemp(prefix='rl-ask-', suffix='.sh', dir=askdir)
+                    with os.fdopen(fd, 'w') as f:
+                        f.write('#!/bin/sh\nprintf \'%s\\n\' "$RL_SSH_PW"\n')
+                    os.chmod(keyfile, 0o700)
+                    env.update(RL_SSH_PW=pw, SSH_ASKPASS=keyfile, SSH_ASKPASS_REQUIRE='force', DISPLAY=env.get('DISPLAY') or 'rl:0')
+                    args += ['-o', 'PubkeyAuthentication=no', '-o', 'NumberOfPasswordPrompts=1']
             else:
                 args += ['-o', 'BatchMode=yes']
             args += [f'{user}@{host}', 'sh -s']

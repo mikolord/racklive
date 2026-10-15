@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -56,6 +56,7 @@ class App:
         self.uptime = uptime.Uptime(self.store)
         self.loops = loops.LoopWatch(self.store)
         self.advisor = advisor.Advisor(self, DEMO)
+        self.netscan = netscan.NetScan(self, DEMO)
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
@@ -643,6 +644,10 @@ class Handler(BaseHTTPRequestHandler):
                 q = self.query()
                 key = m.group(1) + (f":p{int(q['port'])}" if q.get('port', '').isdigit() else '')
                 return self.send(APP.store.history.get(key, []))
+            if path == '/api/netscan':                      # «Сканировать сеть»: progress and what was found (admin only)
+                if not self.need_admin():
+                    return
+                return self.send(APP.netscan.public())
             m = re.match(r'/api/backups/(\w+)(?:/(\d+))?$', path)
             if m:                                           # versions list · diff · raw file (admin only: configs hold secrets)
                 if not self.need_admin():
@@ -875,6 +880,13 @@ class Handler(BaseHTTPRequestHandler):
                         return self.err(str(e), 400)
                     return self.send({'ok': True})
                 return self.err('не найдено', 404)
+            if path == '/api/tour/log' and method == 'POST':          # why the welcome tour started / stopped (shows up in «События»)
+                if not self.need_admin():
+                    return
+                text = re.sub(r'\s+', ' ', str(body.get('text') or ''))[:700]
+                if text:
+                    st.add_event(None, 'Страница' if text.startswith('страница') else 'Обучение', 'info', text)
+                return self.send({'ok': True})
             if path == '/api/tour' and method == 'POST':
                 st.cfg['settings']['tourDone'] = True
                 st.save()
@@ -1212,6 +1224,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path in ('/api/netscan/start', '/api/netscan/stop') and method == 'POST':
+                if not self.need_admin():
+                    return
+                if path.endswith('stop'):
+                    APP.netscan.stop()
+                    return self.send({'ok': True})
+                ok, err = APP.netscan.start(str(body.get('cidr') or ''))
+                return self.send({'ok': ok, 'error': err}) if ok else self.err(err or 'не удалось начать', 400)
             if path == '/api/routers/scan' and method == 'POST':
                 return self.send({'ok': True, 'started': APP.routers.run()})
             if path == '/api/routers/dismiss' and method == 'POST':

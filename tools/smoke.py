@@ -70,6 +70,31 @@ def main():
             check('a remote device cannot be put into a rack', False)
         except urllib.error.HTTPError as e:
             check('a remote device cannot be put into a rack', e.code == 400)
+        # ── «Сканировать сеть» ──
+        sys.path.insert(0, ROOT)
+        from rackd import netscan as nsc
+        check('netscan: a home network is accepted', nsc.check_cidr('192.168.1.0/24')[0] is not None and nsc.check_cidr('10.0.0.5/22')[0] is not None)
+        check('netscan: public, huge and nonsense networks are refused', all(nsc.check_cidr(x)[0] is None for x in ('8.8.8.0/24', '10.0.0.0/8', 'abc', '127.0.0.0/24', '169.254.0.0/24')))
+        mk = lambda ip, mac, ports=(), drv=None, own=False: {'ip': ip, 'mac': mac, 'ports': list(ports), 'driver': drv, 'self': own}
+        merged = nsc.NetScan._merge({'a': mk('10.0.0.7', 'aa:bb', [80]), 'b': mk('10.0.0.115', 'aa:bb', [80, 443, 23], 'keenetic'), 'c': mk('10.0.0.9', 'cc:dd'),
+                                     's1': mk('10.0.0.3', '', [22], None, True), 's2': mk('10.0.0.64', '', [22, 5000], 'synology', True)})
+        check('netscan: one device with several addresses is one row, the machine itself is one row (the recognised address stays, and it can be added)',
+              len(merged) == 3 and '10.0.0.115' in merged and merged['10.0.0.115'].get('also') == ['10.0.0.7'] and merged['10.0.0.64'].get('also') == ['10.0.0.3']
+              and merged['10.0.0.64']['driver'] == 'synology', str(list(merged)))
+        check('netscan: ports of cameras and printers are told apart', nsc.NetScan._guess([80, 554]) == 'camera' and nsc.NetScan._guess([9100]) == 'printer'
+              and nsc.NetScan._guess([445, 3389]) == 'pc' and nsc.NetScan._guess([]) == 'other')
+        api('/api/netscan/start', {'cidr': '10.0.0.0/24'}, 'POST')
+        for _ in range(40):
+            ns = api('/api/netscan')
+            if not ns['running']:
+                break
+            time.sleep(.25)
+        check('netscan: the demo scan finishes with results and suggests networks', not ns['running'] and len(ns['items']) >= 8 and ns['subnets'] and any(i['driver'] for i in ns['items']), json.dumps(ns)[:200])
+        try:
+            api('/api/netscan/start', {'cidr': '8.8.8.0/24'}, 'POST'); check('netscan: a public network is refused over the API', False)
+        except Exception:
+            check('netscan: a public network is refused over the API', True)
+
         # ── Советы Frank ──
         sys.path.insert(0, ROOT)
         from rackd import advisor as adv
@@ -405,6 +430,7 @@ def main():
                  'Обучение Frank — приветствие': '?tour=1#rack', 'Обучение Frank — устройства': '?tour=1&tourstep=1#rack',
                  'Обучение Frank — определить': '?tour=1&tourstep=3&add=1#devices', 'Обучение — в настройках': '?section=general#settings',
                  'Коммутатор — защита от петель': f'?device={dev["demo_switch"]}',
+                 'Устройства — сканирование сети': '?netscan=1#devices',
                  'Настройки — оформление': '?section=look#settings',
                  'Главная — стиль «Графит»': '?skin=graphite&accent=green#rack',
                  'Устройства — удалённые': '#devices', 'Доступ — вход и устройства': '?section=access#settings',
@@ -466,6 +492,8 @@ def main():
                 i = out.find('Защита от петель')
                 check('карточка «Защита от петель» у коммутатора', 'Защита от петель' in out and 'Выключена' in out and 'Включить защиту от петель' in out,
                       re.sub(r'<[^>]+>', ' ', out[i: i + 900]) if i >= 0 else 'карточки нет; длина ' + str(len(out)))
+            if name == 'Устройства — сканирование сети':
+                check('окно «Сканировать сеть»: сети, кнопка, результаты', 'Сканировать сеть' in out and 'Сканировать' in out and 'стучится' in out)
             if name == 'Настройки — оформление':
                 check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
             if name == 'Главная — стиль «Графит»':
