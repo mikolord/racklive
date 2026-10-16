@@ -6,12 +6,12 @@ const hostOf = d => String(d.host || (d.state && d.state.summary && d.state.summ
 function NetScanModal({ onClose }) {
   const { data, newDevice } = useApp(); const toast = useToast();
   const [info, setInfo] = useState(null);
-  const [cidr, setCidr] = useState('');
+  const [where, setWhere] = useState([]);                // [] = every network Rack Live knows about
   const [more, setMore] = useState(false);
-  const load = async () => { try { const r = await api('/api/netscan'); setInfo(r); setCidr(c => c || (r.cidr || (r.subnets[0] || {}).cidr || '')); return r; } catch (e) { return null; } };
+  const load = async () => { try { const r = await api('/api/netscan'); setInfo(r); return r; } catch (e) { return null; } };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (!info || !info.running) return; const t = setInterval(load, 1000); return () => clearInterval(t); }, [info && info.running]);
-  const start = async () => { try { await api('/api/netscan/start', { method: 'POST', body: { cidr } }); load(); } catch (e) { toast(e.message, true); } };
+  const start = async () => { try { await api('/api/netscan/start', { method: 'POST', body: { cidrs: where } }); load(); } catch (e) { toast(e.message, true); } };
   const stop = async () => { try { await api('/api/netscan/stop', { method: 'POST', body: {} }); } catch (e) { } };
   if (!info) return <Modal title="Сканировать сеть" wide onClose={onClose} icon={<Icon name="search" size={20} color="var(--accent)" />}><div className="dim">Загрузка…</div></Modal>;
   const mine = new Set(data.devices.map(hostOf));
@@ -40,17 +40,13 @@ function NetScanModal({ onClose }) {
     {it.self && !it.driver ? null : <Btn size="sm" kind={primary ? 'primary' : undefined} icon="plus" onClick={() => add(it)}>{primary ? 'Добавить' : 'На связи ли'}</Btn>}
   </div>;
   return <Modal title="Сканировать сеть" wide onClose={onClose} icon={<Icon name="search" size={20} color="var(--accent)" />}>
-    <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Rack Live проверит адреса выбранной сети: кто включён, какие порты открыты и что это за устройства. Он только
+    <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Rack Live сам проверит все известные сети (или те, что выберете кнопкой «Сети»): кто включён, какие порты открыты и что это за устройства. Он только
       «стучится» — никуда не входит, ничего не меняет, пароли не нужны. Занимает около минуты.</div>
-    <div className="col" style={{ gap: 8 }}>
-      <div className="row wrap" style={{ gap: 6 }}>{info.subnets.map(s => <button type="button" key={s.cidr} className={'chip' + (cidr === s.cidr ? ' on' : '')} disabled={info.running}
-        onClick={() => setCidr(s.cidr)} title={s.label}>{s.cidr}</button>)}</div>
-      <div className="row" style={{ gap: 8 }}>
-        <input className="input mono grow" value={cidr} disabled={info.running} onChange={e => setCidr(e.target.value)} placeholder="192.168.1.0/24" />
-        {info.running ? <Btn onClick={stop}>Остановить</Btn> : <Btn kind="primary" icon="search" onClick={start}>{info.finished ? 'Сканировать снова' : 'Сканировать'}</Btn>}
-      </div>
-      <div className="dim3" style={{ fontSize: 12 }}>{(info.subnets.find(s => s.cidr === cidr) || {}).label || 'Своя сеть: только домашние адреса, не больше /22'}</div>
+    <div className="row wrap" style={{ gap: 8 }}>
+      {info.running ? <Btn onClick={stop}>Остановить</Btn> : <Btn kind="primary" icon="search" onClick={start}>{info.finished ? 'Сканировать снова' : 'Сканировать'}</Btn>}
+      <WhereToSearch subnets={info.subnets} value={where} onChange={setWhere} disabled={info.running} />
     </div>
+    {info.cidr && (info.running || info.finished) ? <div className="dim3" style={{ fontSize: 12 }}>Сканировали: {info.cidr}</div> : null}
     {info.running ? <div><div className="row between" style={{ fontSize: 13, marginBottom: 6 }}><span>{PHASE_TEXT[info.phase] || 'Работаю'}…</span><span className="dim3">{info.done} из {info.total}</span></div>
       <div className="gauge-bar" style={{ maxWidth: 'none' }}><i style={{ width: pct + '%' }} /></div></div> : null}
     {info.error ? <div style={{ color: 'var(--orange)', fontSize: 13 }}>{info.error}</div> : null}

@@ -71,7 +71,7 @@ a { color: var(--accent); text-decoration: none; }
 .tab .count { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--red); color: #fff; font-weight: 600; }
 .bottombar { position: fixed; left: calc(env(safe-area-inset-left) + 12px); right: calc(env(safe-area-inset-right) + 12px); bottom: 0;
   margin-bottom: calc(env(safe-area-inset-bottom) + 8px); z-index: 50; display: none; gap: 4px; padding: 7px; border-radius: 28px; isolation: isolate; }
-.bottombar button { flex: 1; border: 0; background: transparent; border-radius: 22px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+.bottombar button { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; border: 0; background: transparent; border-radius: 22px; display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-size: 11px; font-weight: 600; color: var(--text2); padding: 9px 2px 7px; cursor: pointer; position: relative; transition: transform .15s, background .2s; }
 .bottombar button:active { transform: scale(.9); }
 .bottombar button.on { color: var(--accent); background: var(--fill); }
@@ -1301,3 +1301,52 @@ html.app-touch input, html.app-touch textarea, html.app-touch [contenteditable],
 .wg-tile.has-color .wg-tile-big { color: var(--tc); }
 [data-skin="graphite"] .wg.size-S .wg-tile.has-art .wg-tile-art { display: flex; order: 1; flex: 1; align-items: center; justify-content: center; min-height: 0; padding: 4px 0; color: var(--tc); }
 [data-skin="graphite"] .wg.size-S .wg-tile.has-art .wg-tile-big { display: none; }
+
+/* tab «Инструменты» */
+.plug-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.plug-card { display: flex; flex-direction: column; gap: 10px; }
+.plug-devs { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line, rgba(128,128,128,.2)); padding-top: 8px; }
+.plug-dev { display: flex; align-items: center; gap: 8px; border: 0; background: var(--fill); color: inherit; border-radius: 11px; padding: 8px 11px; font: inherit; font-size: 13.5px; cursor: pointer; }
+.plug-dev:hover { filter: brightness(1.08); }
+.tool-card { display: flex; align-items: center; gap: 14px; cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
+.tool-card.soon { cursor: default; opacity: .7; }
+.tool-ic { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; flex-shrink: 0; }
+.cam-row { gap: 10px; }
+.cam-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.cam-box { display: flex; flex-direction: column; gap: 2px; }
+.cam-box .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 13.5px; }
+.cam-box .kv span { color: var(--text2, #8e8e93); }
+.cam-shot { width: 100%; max-height: 360px; object-fit: contain; border-radius: 14px; background: #000; }
+.cam-warn { border-radius: 14px; padding: 10px 13px; font-size: 13.5px; line-height: 1.45; background: color-mix(in srgb, var(--orange, #ff9f0a) 16%, transparent); border: 1px solid color-mix(in srgb, var(--orange, #ff9f0a) 45%, transparent); }
+.cam-ok { border-radius: 12px; padding: 9px 12px; font-size: 13.5px; background: color-mix(in srgb, var(--green, #30d158) 16%, transparent); }
+.cam-err { border-radius: 12px; padding: 9px 12px; font-size: 13.5px; background: color-mix(in srgb, var(--red, #ff453a) 16%, transparent); color: var(--text); }
+
+@media (max-width: 480px) { .bottombar { gap: 1px; padding: 6px 5px; } .bottombar button { font-size: 9.5px; letter-spacing: -.1px; padding: 9px 0 7px; } }
+.cam-box { padding: 12px 14px; }
+.cam-main, .cam-row .grow, .plug-card .grow { min-width: 0; }
+
+/* «где искать»: a small button with a drop-down */
+.where { position: relative; display: inline-block; }
+.where-btn { gap: 6px; }
+.where-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: min(380px, calc(100vw - 32px)); padding: 10px; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+.where-row { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; color: inherit; font: inherit; padding: 8px; border-radius: 11px; cursor: pointer; }
+.where-row:hover { background: var(--fill); }
+.where-row b { display: block; font-size: 13.5px; }
+.where-row small { display: block; color: var(--text2, #8e8e93); font-size: 11.5px; line-height: 1.35; }
+.where-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--text3, #8e8e93); flex-shrink: 0; position: relative; }
+.where-dot.sq { border-radius: 6px; }
+.where-row.on .where-dot { border-color: var(--accent); background: var(--accent); }
+.where-row.on .where-dot::after { content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.where-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; border: 0; background: transparent; color: var(--text2, #8e8e93); font: inherit; font-size: 12.5px; cursor: pointer; padding: 0; }
+/* cameras: ticks and the bar for «several at once» */
+.cam-check { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; cursor: pointer; }
+.cam-row.picked { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.cam-bar { position: sticky; bottom: 14px; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding: 10px 12px 10px 16px; border-radius: 18px;
+  background: var(--card-solid, #1c1c1e); border: 1px solid var(--line, rgba(128,128,128,.25)); box-shadow: 0 12px 36px rgba(0,0,0,.35); }
+@media (max-width: 760px) { .cam-bar { bottom: calc(env(safe-area-inset-bottom) + 92px); } }
+/* plugins by device */
+.plug-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line, rgba(128,128,128,.2)); }
+.plug-row { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: var(--fill); color: inherit; font: inherit; border-radius: 13px; padding: 9px 12px; cursor: pointer; }
+.plug-row b { display: block; font-size: 14px; }
+.plug-row small { display: block; color: var(--text2, #8e8e93); font-size: 12px; line-height: 1.4; margin-top: 2px; }
+.plug-row:hover { filter: brightness(1.08); }

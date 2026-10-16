@@ -187,6 +187,7 @@
    tab.map  =  Карта
    tab.rack  =  Главная
    tab.settings  =  Настройки
+   tab.tools  =  Инструменты
    tour.access.text  =  Загляните в «Доступ» и включите двухфакторную защиту — особенно если Rack Live открыт из интернета. Нажмите «Доступ».
    tour.access.title  =  Защита входа
    tour.add.text  =  Нажмите «Добавить».
@@ -195,12 +196,12 @@
    tour.catalog.title  =  Или выберите тип вручную
    tour.detect.text  =  Впишите адрес устройства, например IP роутера (192.168.1.1), и нажмите «Определить». Rack Live сам поймёт, что это, и подскажет, что делать дальше.
    tour.detect.title  =  Проще всего — по адресу
-   tour.devices.text  =  Устройство — это роутер, коммутатор, NAS, сервер: всё, с чего Rack Live собирает данные. Нажмите «Устройства».
+   tour.devices.text  =  Устройство — это роутер, коммутатор, NAS, сервер: всё, с чего Rack Live собирает данные. Они лежат в «Инструментах» (там же плагины и поиск камер). Нажмите «Инструменты».
    tour.devices.title  =  Начнём с устройств
    tour.edit.text  =  Тут включается режим редактирования: расставлять виджеты, рисовать шкаф и план, добавлять оборудование. Обычно он выключен, чтобы ничего не сдвинуть случайно. (На телефоне — в меню «⋯».)
    tour.edit.title  =  Редактирование
    tour.end.next  =  Поехали
-   tour.end.text  =  Начните с «Устройства → Добавить». Если что-то забудете — я в шапке, а обучение можно повторить: Настройки → Основные → «Показать обучение».
+   tour.end.text  =  Начните с «Инструменты → Устройства → Добавить». Если что-то забудете — я в шапке, а обучение можно повторить: Настройки → Основные → «Показать обучение».
    tour.end.title  =  Вот и всё!
    tour.frank.text  =  Нажмите на мой глаз в любой момент — отвечу на вопрос о вашей сети: «Всё ли в порядке?», «Почему тормозит Wi-Fi?». Нужен ключ ИИ: Настройки → Frank.
    tour.frank.title  =  А это я 👁
@@ -223,7 +224,7 @@
 7. ИКОНКИ И ЦВЕТА УСТРОЙСТВ
 icons: имя → путь SVG (атрибут d), сетка 24×24, рисуется контуром (stroke) толщиной, которую задаёт интерфейс; можно несколько подпутей, начинающихся с M.
    Допустимые символы пути: M L H V C S Q T A Z, числа, пробелы, запятые, точка, минус. Пример: "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"
-   Имена иконок: router switch server nas ap camera nvr phone tablet tv laptop pc printer speaker iot internet web ups patch cross pdu shelf organizer blank modem other edit eye plus x trash search settings rack map list bell bolt swap mail key sms play refresh power link fit lock logout sun moon chevron download upload check sort clock minus grip resize plan terminal wifi globe box home pole send wall eraser cursor tag tree shield globe2 pulse cable alert copy menu more share mic sparkle gauge bulb pin toggle
+   Имена иконок: router switch server nas ap camera nvr phone tablet tv laptop pc printer speaker iot internet web ups patch cross pdu shelf organizer blank modem other edit eye plus x trash search settings rack map list bell bolt swap mail key sms play refresh power link fit lock logout sun moon chevron download upload check sort clock minus grip resize plan terminal wifi globe box wrench home pole send wall eraser cursor tag tree shield globe2 pulse cable alert copy menu more share mic sparkle gauge bulb pin toggle
 kindColors: тип устройства → цвет. Типы: router switch server nas ap camera nvr phone tablet tv laptop pc printer speaker iot internet web ups patch cross pdu modem other
 
 8. ИКОНКИ ПРИЛОЖЕНИЙ И PWA

@@ -2,7 +2,7 @@
 const TABS = [
   { id: 'rack', label: 'Главная', icon: 'home' },          // widgets (92_dashboard.jsx); the id stays for old #rack links
   { id: 'map', label: 'Карта', icon: 'map' },              // inside: «Карта сети» / «План» switch (#plan opens the plan)
-  { id: 'devices', label: 'Устройства', icon: 'list' },
+  { id: 'tools', label: 'Инструменты', icon: 'wrench', admin: true },      // «Устройства» · «Плагины» · «Инструменты» (65_tools.jsx); the old #devices address opens «Устройства» there
   { id: 'events', label: 'События', icon: 'bell' },
   { id: 'settings', label: 'Настройки', icon: 'settings', admin: true },
 ];
@@ -52,9 +52,10 @@ function useTheme() {
 function App() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
-  const [tab, setTabRaw] = useState(() => { const t = location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'plan' ? 'map' : t; });
+  const [tab, setTabRaw] = useState(() => { const t = location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'plan' ? 'map' : t === 'devices' ? 'tools' : t; });
+  const [toolsSec, setToolsSec] = useState(() => { const q = new URLSearchParams(location.search).get('tsec'); return q || 'devices'; });      // the section inside «Инструменты»: devices | plugins | catalog
   const [mapView, setMapView] = useState(() => location.hash === '#plan' ? 'plan' : 'map');     // «Карта» opens on the network map
-  const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else setTabRaw(t); };
+  const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else if (t === 'devices') { setToolsSec('devices'); setTabRaw('tools'); } else setTabRaw(t); };
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
   const [arrange, setArrange] = useState(() => new URLSearchParams(location.search).get('arrange') === '1');     // «Расстановка виджетов» on the home page (switch beside «Редактирование»)
@@ -138,7 +139,7 @@ function App() {
     if (data.settings.tourDone !== true) { try { await api('/api/tour', { method: 'POST', body: {} }); } catch (e) { } refresh(); }
   };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, arrange, setArrange, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
+  const ctx = { data, admin, edit, arrange, setArrange, toolsSec, setToolsSec, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
@@ -153,13 +154,14 @@ function App() {
   const badge = problems > 99 ? '99+' : problems;
   const tabs = TABS.filter(t => !t.admin || admin).map(t => ({ ...t, label: T('tab.' + t.id, t.label) }));      // a custom look may rename the tabs
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
-  const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur;          // what is shown: subtitle and hint follow it
+  const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur === 'tools' && toolsSec === 'devices' ? 'devices' : cur;          // what is shown: subtitle and hint follow it
   const subtitle = {
     rack: `${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
+    tools: { devices: 'Всё, что собирает данные: локальные и удалённые устройства', plugins: 'Плагины для ваших роутеров и серверов', catalog: 'Готовые помощники: поиск и настройка камер' }[toolsSec],
     settings: 'Уведомления, Frank, приложения на телефон, доступ и резервные копии',
   }[view];
 
@@ -198,8 +200,8 @@ function App() {
       {cur === 'rack' ? <Dashboard /> : null}
       {view === 'map' ? <MapView /> : null}
       {view === 'plan' ? <PlanView /> : null}
-      {cur === 'devices' ? <DevicesView /> : null}
       {cur === 'events' ? <EventsView /> : null}
+      {cur === 'tools' && admin ? <ToolsView /> : null}
       {cur === 'settings' && admin ? <SettingsView /> : null}
     </main>
     <nav className="bottombar">{tabs.map(t => <button key={t.id} data-tour={'tab-' + t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>

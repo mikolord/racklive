@@ -133,18 +133,19 @@ class NetScan:
                 'arp': s.get('arp', True)}
 
     # ── run ──
-    def start(self, cidr):
-        """→ (started, error)"""
-        net, err = check_cidr(cidr)
+    def start(self, arg):
+        """→ (started, error). `arg`: a network, several (list / text), or empty = every network Rack Live knows about"""
+        from . import cameras
+        nets, err = cameras.parse_targets(arg, self.subnets())
         if err:
             return False, err
         with self.lock:
             if self.s.get('running'):
                 return False, 'сканирование уже идёт'
             self.cancel = False
-            self.s.update(running=True, phase='ping', done=0, total=net.num_addresses - 2, cidr=str(net), started=int(time.time()), finished=None, error=None, items=[], arp=True)
+            self.s.update(running=True, phase='ping', done=0, total=sum(n.num_addresses - 2 for n in nets), cidr=', '.join(str(n) for n in nets), started=int(time.time()), finished=None, error=None, items=[], arp=True)
         self.store.bump()
-        threading.Thread(target=self.run_demo if self.demo else self.run, args=(net,), daemon=True).start()
+        threading.Thread(target=self.run_demo if self.demo else self.run, args=(nets,), daemon=True).start()
         return True, None
 
     def stop(self):
@@ -160,7 +161,7 @@ class NetScan:
         self.store._dump('netscan.json', {k: self.s.get(k) for k in ('cidr', 'started', 'finished', 'items', 'error', 'total')})
         self.store.bump()
 
-    def run_demo(self, net):
+    def run_demo(self, nets):
         try:
             steps = 24
             for i in range(steps):
@@ -174,9 +175,9 @@ class NetScan:
         except Exception as e:
             self._finish(str(e))
 
-    def run(self, net):
+    def run(self, nets):
         try:
-            hosts = [str(h) for h in net.hosts()]
+            hosts = [str(h) for n in nets for h in n.hosts()]
             # 1. who is alive
             alive = {}
             with concurrent.futures.ThreadPoolExecutor(128) as pool:
@@ -188,10 +189,11 @@ class NetScan:
                     if self.cancel:
                         return self._finish('остановлено')
             time.sleep(.6)
+            hostset = set(hosts)
             arp = arp_table()
             have_arp = bool(arp) or not alive
             for ip, mac in arp.items():
-                if ip in hosts:
+                if ip in hostset:
                     alive[ip] = mac
             self.s['arp'] = have_arp
             self._set(phase='ports', done=0, total=len(alive))

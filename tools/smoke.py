@@ -106,6 +106,8 @@ def main():
         # ── «Сканировать сеть» ──
         sys.path.insert(0, ROOT)
         from rackd import netscan as nsc
+        from rackd import cameras as cam_mod
+        check('cameras: only private addresses are touched', not cam_mod.private_ip('8.8.8.8') and cam_mod.private_ip('192.168.7.2'))
         check('netscan: a home network is accepted', nsc.check_cidr('192.168.1.0/24')[0] is not None and nsc.check_cidr('10.0.0.5/22')[0] is not None)
         check('netscan: public, huge and nonsense networks are refused', all(nsc.check_cidr(x)[0] is None for x in ('8.8.8.0/24', '10.0.0.0/8', 'abc', '127.0.0.0/24', '169.254.0.0/24')))
         mk = lambda ip, mac, ports=(), drv=None, own=False: {'ip': ip, 'mac': mac, 'ports': list(ports), 'driver': drv, 'self': own}
@@ -448,7 +450,8 @@ def main():
                                + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
-                 'События': '#events', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
+                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools',
+                 'Камера — вход': '?tsec=catalog&tool=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
                  'ИБП': f'?device={dev["ups"]}', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
                  'Кросс': f'?unit={units["cross"]}#rack', 'ONT': f'?unit={units["modem"]}#rack',
@@ -499,6 +502,18 @@ def main():
         finally:
             if os.path.exists(wrap):
                 os.remove(wrap)
+        api('/api/cameras/start', {'cidrs': []}, 'POST'); time.sleep(3)
+        api('/api/cameras/creds', {'user': 'admin', 'password': 'Sample-pw-1', 'label': 'тест'}, 'POST')
+        cam_raw = json.dumps(api('/api/cameras'))
+        check('cameras: the search needs no network (automatic) and finds cameras', len(json.loads(cam_raw)['items']) >= 5)
+        check('cameras: saved passwords never go to the browser', 'Sample-pw-1' not in cam_raw and '"mask"' in cam_raw)
+        check('cameras: more than 30 brands are known', len(json.loads(cam_raw)['brands']) >= 30)
+        note = 'Заметка про гостевой Wi-Fi. ' * 120                       # ~3000 Russian letters: the old limit (4000 bytes of escaped JSON) silently dropped such a note
+        prev_dash = (api('/api/state').get('dashboard') or {}).get('widgets') or []
+        api('/api/dashboard', {'widgets': [{'id': 'n1', 'type': 'note', 'size': 'M', 'opts': {'text': note}}]}, 'PUT')
+        back = [w for w in api('/api/state')['dashboard']['widgets'] if w['type'] == 'note']
+        check('notes: a long Russian note is saved whole', back and back[0]['opts'].get('text') == note)
+        api('/api/dashboard', {'widgets': prev_dash}, 'PUT')
         for name, q in pages.items():
             if name == 'Помощник — настроен':          # a provider nobody listens on: enough for the panel to show the chat
                 api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-test'}, 'PUT')

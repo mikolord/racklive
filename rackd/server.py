@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, plugins as plugins_mod, vps as vps_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -58,6 +58,7 @@ class App:
         self.loops = loops.LoopWatch(self.store)
         self.advisor = advisor.Advisor(self, DEMO)
         self.netscan = netscan.NetScan(self, DEMO)
+        self.cameras = cameras.Cameras(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
         for tid, name, why in self.themes.recheck():         # after an update: a look that no longer fits is switched off at once, the journal says why
             self.store.add_event(None, 'Оформление', 'warning', f'оформление «{name}» отключено — не подходит к этой версии Rack Live: {"; ".join(why)[:300]}')
@@ -706,6 +707,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(b)))
                 self.end_headers()
                 return self.wfile.write(b)
+            if path == '/api/cameras':                      # tool «Камеры»: progress and what was found
+                if not self.need_admin():
+                    return
+                return self.send(APP.cameras.public())
+            m = re.match(r'^/api/cameras/bulk/(j[0-9a-f]{8})$', path)
+            if m:
+                if not self.need_admin():
+                    return
+                return self.send(APP.cameras.jobs.get(m.group(1)) or {'finished': True, 'results': [], 'total': 0, 'done': 0})
+            if path == '/api/plugins/catalog':              # tab «Инструменты → Плагины»: every plugin Rack Live knows, by device type
+                if not self.need_admin():
+                    return
+                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG]})
             if path == '/api/netscan':                      # «Сканировать сеть»: progress and what was found (admin only)
                 if not self.need_admin():
                     return
@@ -1097,7 +1111,7 @@ class Handler(BaseHTTPRequestHandler):
                     if isinstance(w, dict) and re.match(r'^[a-z]{2,20}$', str(w.get('type') or '')):
                         clean.append({'id': str(w.get('id') or '')[:24], 'type': w['type'], 'w': max(1, min(4, int(w.get('w') or 1))),
                                       'h': max(0, min(2000, int(w.get('h') or 0))), 'compact': bool(w.get('compact')), 'size': w.get('size') if w.get('size') in ('S', 'M', 'L') else None, 'title': str(w.get('title') or '')[:60],
-                                      'opts': w.get('opts') if isinstance(w.get('opts'), dict) and len(json.dumps(w.get('opts'))) < 4000 else {}})
+                                      'opts': w.get('opts') if isinstance(w.get('opts'), dict) and len(json.dumps(w.get('opts'), ensure_ascii=False)) < 20000 else {}})
                 st.cfg['dashboard'] = {'widgets': clean}
                 st.save()
                 return self.send({'ok': True})
@@ -1303,13 +1317,48 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path == '/api/cameras/creds' and method == 'POST':        # the list of camera passwords (they never come back to the browser)
+                if not self.need_admin():
+                    return
+                try:
+                    return self.send({'ok': True, 'id': APP.cameras.add_cred(body.get('user'), body.get('password'), str(body.get('label') or '')), 'creds': APP.cameras.creds_public()})
+                except cameras.CamError as e:
+                    return self.err(str(e), 400)
+            m = re.match(r'^/api/cameras/creds/(c[0-9a-f]{8})$', path)
+            if m and method == 'DELETE':
+                if not self.need_admin():
+                    return
+                APP.cameras.del_cred(m.group(1))
+                return self.send({'ok': True, 'creds': APP.cameras.creds_public()})
+            if path == '/api/cameras/bulk' and method == 'POST':        # one action on several cameras: a background job
+                if not self.need_admin():
+                    return
+                try:
+                    return self.send({'ok': True, 'job': APP.cameras.bulk_start(body)})
+                except cameras.CamError as e:
+                    return self.err(str(e), 400)
+            if path in ('/api/cameras/start', '/api/cameras/stop', '/api/cameras/probe', '/api/cameras/op') and method == 'POST':
+                if not self.need_admin():
+                    return
+                try:
+                    if path.endswith('stop'):
+                        APP.cameras.stop()
+                        return self.send({'ok': True})
+                    if path.endswith('start'):
+                        ok, err = APP.cameras.start(body.get('cidrs') or body.get('cidr') or '')
+                        return self.send({'ok': True}) if ok else self.err(err or 'не удалось начать', 400)
+                    if path.endswith('probe'):
+                        return self.send({'ok': True, 'item': APP.cameras.probe_one(body.get('ip'))})
+                    return self.send(APP.cameras.op(body))
+                except cameras.CamError as e:
+                    return self.err(str(e), 400)
             if path in ('/api/netscan/start', '/api/netscan/stop') and method == 'POST':
                 if not self.need_admin():
                     return
                 if path.endswith('stop'):
                     APP.netscan.stop()
                     return self.send({'ok': True})
-                ok, err = APP.netscan.start(str(body.get('cidr') or ''))
+                ok, err = APP.netscan.start(body.get('cidrs') or body.get('cidr') or '')
                 return self.send({'ok': ok, 'error': err}) if ok else self.err(err or 'не удалось начать', 400)
             if path == '/api/routers/scan' and method == 'POST':
                 return self.send({'ok': True, 'started': APP.routers.run()})

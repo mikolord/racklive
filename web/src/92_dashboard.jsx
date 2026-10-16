@@ -77,9 +77,16 @@ function ShortcutsWidget() {
 
 function NoteWidget({ w, edit, onOpts }) {
   const text = (w.opts || {}).text || '';
+  const [draft, setDraft] = useState(text);
+  const latest = useRef({ draft: text, saved: text, onOpts }); latest.current.onOpts = onOpts;
+  const timer = useRef(0);
+  useEffect(() => { if (!timer.current && draft === latest.current.saved) setDraft(text); latest.current.saved = text; }, [text]);       // a change from another screen
+  const flush = () => { clearTimeout(timer.current); timer.current = 0; const l = latest.current; if (l.draft !== l.saved) { l.saved = l.draft; l.onOpts({ text: l.draft }); } };
+  const type = v => { setDraft(v); latest.current.draft = v; clearTimeout(timer.current); timer.current = setTimeout(flush, 700); };      // saved by itself 0.7 s after the last key
+  useEffect(() => () => flush(), []);                                                                                                   // leaving the edit mode / the page: nothing is lost
   return <Card title={w.title || 'Заметка'}>
-    {edit ? <textarea className="input" rows={4} defaultValue={text} placeholder="Что угодно: пароль от гостевого Wi-Fi, телефон провайдера, что купить…"
-      onBlur={e => e.target.value !== text && onOpts({ text: e.target.value })} style={{ width: '100%', resize: 'vertical' }} />
+    {edit ? <textarea className="input" rows={4} value={draft} placeholder="Что угодно: пароль от гостевого Wi-Fi, телефон провайдера, что купить…"
+      onChange={e => type(e.target.value)} onBlur={flush} style={{ width: '100%', resize: 'vertical' }} />
       : <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.5 }}>{text || <span className="dim3">Пусто — включите «Редактирование», чтобы написать.</span>}</div>}
   </Card>;
 }
