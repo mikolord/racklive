@@ -303,12 +303,38 @@ function SettingsView() {
   </div>;
 }
 
+/* «События → Системные»: the technical journal (page loads and errors of this phone / browser, the welcome tour, server starts) and one button that copies it
+   all as plain text — to be sent to whoever helps (the report starts with the version, the time and what this device is) */
+function SystemEvents() {
+  const { data, admin } = useApp(); const toast = useToast();
+  const list = (data.sysEvents || []).slice().reverse();                      // oldest first in the report
+  const report = () => {
+    const pend = (() => { try { return JSON.parse(localStorage.getItem('rl_diag') || '[]'); } catch (e) { return []; } })();
+    const t = x => new Date(x * 1000).toLocaleString('ru-RU');
+    const head = [`Rack Live ${data.version} · отчёт ${new Date().toLocaleString('ru-RU')}`,
+      `Устройство: ${/iPhone|iPad|iPod/.test(navigator.userAgent) ? 'iPhone/iPad' : 'компьютер/другое'}${navigator.standalone ? ' (приложение «Домой»)' : ''} · экран ${innerWidth}×${innerHeight}`,
+      `Адрес: ${location.origin} · оформление: ${lsGet('rl_skin', 'classic')} · User-Agent: ${navigator.userAgent}`];
+    const body = list.map(e => `${t(e.t)} [${e.name}] ${e.text}`);
+    const tail = pend.length ? ['', 'Ещё не отправлено с этого устройства:', ...pend.map(x => `${new Date(x.t).toLocaleTimeString('ru-RU')} ${x.s}`)] : [];
+    return [...head, '', `Системные события (${list.length}):`, ...(body.length ? body : ['— пока пусто']), ...tail].join('\n');
+  };
+  const copy = () => { if (copyText(report())) toast('Скопировано — вставьте в сообщение'); else toast('Не получилось скопировать — выделите текст ниже вручную', true); };
+  return <>
+    <Card title="Системные события" right={<Btn kind="primary" size="sm" icon="copy" onClick={copy}>Скопировать всё</Btn>}>
+      <div className="dim" style={{ fontSize: 13, lineHeight: 1.5 }}>Технический журнал: как ведёт себя страница на этом устройстве (перезагрузки, ошибки, потеря связи), обучение и запуски сервера.
+        Если что-то работает не так — нажмите «Скопировать всё» и отправьте текст тому, кто помогает: в нём уже есть версия, время и сведения об устройстве.</div>
+    </Card>
+    {list.length ? <Card><div className="sys-log mono">{list.slice().reverse().map((e, i) => <div key={i} className="sys-line"><span className="dim3">{fmt.time(e.t)}</span> <b>{e.name}</b> {e.text}</div>)}</div></Card>
+      : <div className="empty">Системных событий пока нет — это хорошо.</div>}
+  </>;
+}
+
 function EventsView() {
-  const { data } = useApp(); const [flt, setFlt] = useState('');
+  const { data } = useApp(); const [flt, setFlt] = useState(() => new URLSearchParams(location.search).get('sys') === '1' ? 'sys' : '');
   const ev = data.events.filter(e => !flt || e.level === flt);
-  return <><div className="row wrap" style={{ marginBottom: 14 }}>{[['', 'Все'], ['offline', 'Сбои'], ['online', 'Восстановления'], ['warning', 'Предупреждения'], ['info', 'Действия']].map(([k, l]) =>
+  return <><div className="row wrap" style={{ marginBottom: 14 }}>{[['', 'Все'], ['offline', 'Сбои'], ['online', 'Восстановления'], ['warning', 'Предупреждения'], ['info', 'Действия'], ...(data.sysEvents ? [['sys', 'Системные']] : [])].map(([k, l]) =>
     <button key={k} className={'chip' + (flt === k ? ' on' : '')} onClick={() => setFlt(k)}>{l}</button>)}</div>
-    <EventsList events={ev} /></>;
+    {flt === 'sys' ? <SystemEvents /> : <EventsList events={ev} />}</>;
 }
 
 const LOGIN_ALT = { totp: ['Приложение', 'код из приложения', '#0a84ff', 'key'], email: ['Почта', 'код на почту', '#ff9f0a', 'mail'], sms: ['SMS', 'код по SMS', '#30d158', 'sms'] };

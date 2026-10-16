@@ -1290,3 +1290,5 @@ html.app-touch input, html.app-touch textarea, html.app-touch [contenteditable],
 [data-skin="graphite"] .tour-ring { border-color: var(--accent); }
 [data-skin="graphite"] .tour-dim g rect:nth-child(2), [data-skin="graphite"] .tour-dim g rect:nth-child(3) { display: none; }
 [data-skin="graphite"] .tour-dim g rect:nth-child(1) { fill: rgba(0,0,0,.84); }
+.sys-log { font-size: 12px; line-height: 1.55; word-break: break-word; display: flex; flex-direction: column; gap: 5px; max-height: 60vh; overflow: auto; }
+.sys-line b { font-weight: 650; }

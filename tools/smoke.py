@@ -70,6 +70,13 @@ def main():
             check('a remote device cannot be put into a rack', False)
         except urllib.error.HTTPError as e:
             check('a remote device cannot be put into a rack', e.code == 400)
+        # ── «События → Системные» ──
+        api('/api/tour/log', {'text': 'страница: 03:10:15 загружена (navigate) 440×894 приложение /#events'}, 'POST')
+        api('/api/tour/log', {'text': 'элемент не найден на экране: шаг 3 «Добавим первое»'}, 'POST')
+        sysev = api('/api/state').get('sysEvents') or []
+        check('system events: the page and tour lines land in the technical journal', any(e['name'] == 'Страница' for e in sysev) and any(e['name'] == 'Обучение' for e in sysev), str(sysev)[:200])
+        check('system events: ordinary events stay out of it', all(e['name'] in ('Страница', 'Обучение', 'Rack Live') for e in sysev))
+
         # ── «Сканировать сеть» ──
         sys.path.insert(0, ROOT)
         from rackd import netscan as nsc
@@ -431,6 +438,7 @@ def main():
                  'Обучение Frank — определить': '?tour=1&tourstep=3&add=1#devices', 'Обучение — в настройках': '?section=general#settings',
                  'Коммутатор — защита от петель': f'?device={dev["demo_switch"]}',
                  'Устройства — сканирование сети': '?netscan=1#devices',
+                 'События — системные': '?sys=1#events',
                  'Настройки — оформление': '?section=look#settings',
                  'Главная — стиль «Графит»': '?skin=graphite&accent=green#rack',
                  'Устройства — удалённые': '#devices', 'Доступ — вход и устройства': '?section=access#settings',
@@ -492,6 +500,8 @@ def main():
                 i = out.find('Защита от петель')
                 check('карточка «Защита от петель» у коммутатора', 'Защита от петель' in out and 'Выключена' in out and 'Включить защиту от петель' in out,
                       re.sub(r'<[^>]+>', ' ', out[i: i + 900]) if i >= 0 else 'карточки нет; длина ' + str(len(out)))
+            if name == 'События — системные':
+                check('вкладка «Системные»: журнал и кнопка «Скопировать всё»', 'Системные события' in out and 'Скопировать всё' in out and 'загружена (navigate)' in out)
             if name == 'Устройства — сканирование сети':
                 check('окно «Сканировать сеть»: сети, кнопка, результаты', 'Сканировать сеть' in out and 'Сканировать' in out and 'стучится' in out)
             if name == 'Настройки — оформление':

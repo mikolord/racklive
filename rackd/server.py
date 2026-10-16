@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
 DEMO = os.environ.get('RL_DEMO', '').lower() in ('1', 'true', 'yes')     # demo office, no login, nothing real is touched
+SYS_EVENTS = ('Страница', 'Обучение', 'Rack Live')                       # names of the technical events shown in «События → Системные»
 
 
 def log(*a):
@@ -352,7 +353,8 @@ class App:
         except Exception:
             traceback.print_exc()
             sec = None
-        admin_extra = {'ai': self.ai.public(), 'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
+        admin_extra = {'sysEvents': [e for e in self.store.events if e.get('name') in SYS_EVENTS][-120:][::-1],        # «События → Системные»: the technical journal (page, tour, starts)
+                       'ai': self.ai.public(), 'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
