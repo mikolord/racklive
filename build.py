@@ -68,10 +68,12 @@ def defaults():
         for field in ('title', 'text', 'next'):
             if g(field):
                 strings[f'tour.{sid}.{field}'] = g(field)
-    out = {'icons': icons, 'kinds': kinds, 'strings': dict(sorted(strings.items())), 'tourSteps': steps}
+    dash = src['92_dashboard.jsx']; w0 = dash.index('const WIDGETS = {')
+    widgets = re.findall(r"^  (\w+): \{ title:", dash[w0:dash.index('\n};', w0)], re.M)
+    out = {'icons': icons, 'kinds': kinds, 'strings': dict(sorted(strings.items())), 'tourSteps': steps, 'widgets': widgets}
     with open(os.path.join(WEB, 'theme-defaults.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
-    print('theme-defaults.json:', len(icons), 'icons,', len(strings), 'texts,', len(kinds), 'kinds')
+    print('theme-defaults.json:', len(icons), 'icons,', len(strings), 'texts,', len(kinds), 'kinds,', len(widgets), 'widgets')
 
 
 if __name__ == '__main__':

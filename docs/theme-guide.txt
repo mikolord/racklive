@@ -34,6 +34,8 @@
   "kindColors": { "router": "#38bdf8" },     // цвета значков типов устройств, раздел 7
   "appIcons": { "rack": "assets/rack.svg", "frank": "assets/frank.svg", "speed": "assets/speed.svg" },  // иконки приложений в интерфейсе
   "frankAvatar": "assets/frank-eye.svg",   // СВОЯ КАРТИНКА ВМЕСТО ГЛАЗА Frank (кнопка в шапке, чат, обучение); без неё глаз рисуется сам, его цвета — переменные --frank-…
+  "tileArt": { "stats": "assets/tile-stats.svg" },   // СВОЯ КАРТИНКА ВМЕСТО нарисованной миниатюры на квадратной плитке виджета (ключи — виджеты, список в разделе 8в)
+  "tileColors": { "stats": "#33b6ff" },            // цвет плитки виджета (значок в углу и лёгкий отлив фона)
   "pwa": { "favicon": "assets/fav.svg", "appleTouch": "assets/touch-180.png", "icon192": "assets/i192.png", "icon512": "assets/i512.png" },  // значки для экрана «Домой»
   "preview": "assets/preview.png"   // необязательно: картинка для карточки темы
 }
@@ -136,6 +138,9 @@
    --frank-m3-0   — Frank «тревога» (очень долго): светлый
    --frank-m3-1   — Frank «тревога»: основной
    --frank-m3-2   — Frank «тревога»: тёмный
+   --tile-bg      — ПЛИТКА ВИДЖЕТА (квадрат на главной): фон (можно градиент)
+   --tile-ic-bg   — плитка: фон маленького значка в углу
+   --tile-ic-fg   — плитка: цвет глифа маленького значка
    --map-rack-frame — карта: рамка шкафа
    --map-rack-stroke — карта: контур шкафа
    --map-unit     — карта: юнит и устройство
@@ -236,6 +241,11 @@ SVG: без скриптов, без внешних ссылок, без foreign
    • Подсказки (жёлтые плашки вверху вкладок): --hint-bg, --hint-line, --hint-text, --hint-ico, --hint-ico-bg, --hint-close-bg, --hint-close-text, --hint-radius; иконка лампочки — icons "bulb"; класс .hint-box.
    • Frank: глаз рисуется сам — его цвета задают --frank-sclera (белок), --frank-pupil, --frank-lid (веко), --frank-iris-0/1/2 (радужка), --frank-bg (плитка за глазом), --frank-glow (сияние в обучении),
      настроения --frank-m2-* («напряжён») и --frank-m3-* («тревога»). ИЛИ замените глаз своей картинкой: "frankAvatar": "assets/файл.svg" (svg/png/webp, квадрат). Имя — strings "frank.name"; значок приложения — appIcons.frank.
+
+8в. ПЛИТКИ ВИДЖЕТОВ И ЗНАЧКИ «ДОМОЙ» У ВСЕХ ТРЁХ ПРИЛОЖЕНИЙ
+   • Квадратная плитка виджета: фон — --tile-bg (можно градиент), маленький значок в углу — --tile-ic-bg и --tile-ic-fg; классы .wg .wg-in .wg-tile .wg-tile-ic .wg-tile-name .wg-tile-art .wg-tile-v .wg-tile-s .size-S .size-M .size-L.
+     Нарисованную миниатюру (кольцо, батарейка, спидометр, столбики…) можно заменить КАРТИНКОЙ через "tileArt" либо скрыть/заменить средствами CSS; цвет плитки — "tileColors". Виджеты: rack, stats, problems, state, internet, ups, uptime, newdev, map, plan, devices, events, speed, frank, advice, shortcuts, note.
+   • Значки для экрана «Домой» задаются отдельно для каждого приложения: "pwa" — Rack Live, "pwaFrank" — Frank, "pwaSpeed" — Тест скорости; у каждого favicon, appleTouch (PNG 180×180), icon192, icon512 (PNG).
 
 8а. ПОДСКАЗКИ И ЛОВУШКИ ДЛЯ АВТОРА
    • Сначала tokens, потом css. Цвета через переменные работают везде, в том числе внутри шкафа, карты и виджетов, и переживают обновления лучше всего.

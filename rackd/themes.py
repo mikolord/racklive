@@ -52,6 +52,7 @@ TOKENS = {
     '--frank-iris-0': 'Frank: радужка, светлый край', '--frank-iris-1': 'Frank: радужка, основной цвет', '--frank-iris-2': 'Frank: радужка, тёмный край', '--frank-glow': 'Frank в обучении: цвет сияния',
     '--frank-m2-0': 'Frank «напряжён» (долгий запрос): светлый', '--frank-m2-1': 'Frank «напряжён»: основной', '--frank-m2-2': 'Frank «напряжён»: тёмный',
     '--frank-m3-0': 'Frank «тревога» (очень долго): светлый', '--frank-m3-1': 'Frank «тревога»: основной', '--frank-m3-2': 'Frank «тревога»: тёмный',
+    '--tile-bg': 'ПЛИТКА ВИДЖЕТА (квадрат на главной): фон (можно градиент)', '--tile-ic-bg': 'плитка: фон маленького значка в углу', '--tile-ic-fg': 'плитка: цвет глифа маленького значка',
     '--map-rack-frame': 'карта: рамка шкафа', '--map-rack-stroke': 'карта: контур шкафа', '--map-unit': 'карта: юнит и устройство', '--map-unit-stroke': 'карта: контур юнита',
 }
 # class names that are promised to stay (a look may style them); other classes work too but earn a warning: an update may rename them
@@ -347,21 +348,39 @@ class Themes:
                 pic(rel, f'appIcons.{k}')
         if m.get('frankAvatar') is not None:
             pic(m['frankAvatar'], 'frankAvatar')
-        pwa = m.get('pwa') or {}
-        if not isinstance(pwa, dict):
-            errors.append('pwa: объект {"favicon": …, "appleTouch": …, "icon192": …, "icon512": …}')
-            pwa = {}
-        for k in pwa:
-            if k not in ('favicon', 'appleTouch', 'icon192', 'icon512'):
-                warnings.append(f'pwa.{k}: неизвестный ключ (игнорируется)')
-        for k, rel in pwa.items():
-            if k in ('favicon', 'appleTouch', 'icon192', 'icon512'):
-                b = pic(rel, f'pwa.{k}', ('svg', 'png') if k == 'favicon' else ('png',))
+        for field in ('pwa', 'pwaFrank', 'pwaSpeed'):           # home-screen pictures of Rack Live, of Frank and of the speed test
+            pwa = m.get(field) or {}
+            if not isinstance(pwa, dict):
+                errors.append(f'{field}: объект {{"favicon": …, "appleTouch": …, "icon192": …, "icon512": …}}')
+                continue
+            for k, rel in pwa.items():
+                if k not in ('favicon', 'appleTouch', 'icon192', 'icon512'):
+                    warnings.append(f'{field}.{k}: неизвестный ключ (игнорируется)')
+                    continue
+                b = pic(rel, f'{field}.{k}', ('svg', 'png') if k == 'favicon' else ('png',))
                 if b and k != 'favicon':
                     want = {'appleTouch': 180, 'icon192': 192, 'icon512': 512}[k]
                     sz = png_size(b)
                     if sz and sz != (want, want):
-                        warnings.append(f'pwa.{k}: размер {sz[0]}×{sz[1]}, ожидается {want}×{want}')
+                        warnings.append(f'{field}.{k}: размер {sz[0]}×{sz[1]}, ожидается {want}×{want}')
+        # a picture instead of the drawn miniature of a widget tile, and a colour per tile
+        ta = m.get('tileArt') or {}
+        if not isinstance(ta, dict):
+            errors.append('tileArt: объект {"stats": "assets/tile-stats.svg", …}')
+            ta = {}
+        for k, rel in ta.items():
+            if d.get('widgets') and k not in d['widgets']:
+                warnings.append(f'tileArt.{k}: такого виджета нет (игнорируется)')
+            pic(rel, f'tileArt.{k}')
+        tc = m.get('tileColors') or {}
+        if not isinstance(tc, dict):
+            errors.append('tileColors: объект {"stats": "#33b6ff", …}')
+            tc = {}
+        for k, v in tc.items():
+            if d.get('widgets') and k not in d['widgets']:
+                warnings.append(f'tileColors.{k}: такого виджета нет (игнорируется)')
+            if not isinstance(v, str) or not COLOR_RE.match(v):
+                errors.append(f'tileColors.{k}: нужен цвет (#rrggbb)')
         if m.get('preview'):
             pic(m['preview'], 'preview', ('png', 'jpg', 'jpeg', 'webp', 'svg'))
         for p in assets:
@@ -534,12 +553,15 @@ class Themes:
         if not m:
             return None
         url = lambda rel: f'/themes/{tid}/{rel}' if isinstance(rel, str) else None
-        pwa = {k: url(v) for k, v in (m.get('pwa') or {}).items() if k in ('favicon', 'appleTouch', 'icon192', 'icon512')}
+        pw = lambda o: {k: url(v) for k, v in (o or {}).items() if k in ('favicon', 'appleTouch', 'icon192', 'icon512')}
+        pwa = pw(m.get('pwa'))
         return {'id': tid, 'name': m.get('name'), 'version': str(m.get('version')), 'base': m.get('base') or 'classic',
                 'strings': {k: v for k, v in (m.get('strings') or {}).items() if k in self.defaults()['strings']},
                 'icons': {k: v for k, v in (m.get('icons') or {}).items() if isinstance(v, str)},
                 'kindColors': {k: v for k, v in (m.get('kindColors') or {}).items() if k in self.defaults()['kinds']},
-                'appIcons': {k: url(v) for k, v in (m.get('appIcons') or {}).items() if k in APP_ICON_SLOTS}, 'frankAvatar': url(m.get('frankAvatar')), 'pwa': pwa, 'rev': self.rev,
+                'appIcons': {k: url(v) for k, v in (m.get('appIcons') or {}).items() if k in APP_ICON_SLOTS}, 'frankAvatar': url(m.get('frankAvatar')), 'pwa': pwa, 'pwaFrank': pw(m.get('pwaFrank')), 'pwaSpeed': pw(m.get('pwaSpeed')),
+                'tileArt': {k: url(v) for k, v in (m.get('tileArt') or {}).items() if k in (self.defaults().get('widgets') or [k])},
+                'tileColors': {k: v for k, v in (m.get('tileColors') or {}).items() if k in (self.defaults().get('widgets') or [k]) and isinstance(v, str)}, 'rev': self.rev,
                 'installed': (self.status.get(tid) or {}).get('installed')}
 
     def asset(self, tid, rel):
@@ -630,6 +652,8 @@ class Themes:
         w('  "kindColors": { "router": "#38bdf8" },     // цвета значков типов устройств, раздел 7')
         w('  "appIcons": { "rack": "assets/rack.svg", "frank": "assets/frank.svg", "speed": "assets/speed.svg" },  // иконки приложений в интерфейсе')
         w('  "frankAvatar": "assets/frank-eye.svg",   // СВОЯ КАРТИНКА ВМЕСТО ГЛАЗА Frank (кнопка в шапке, чат, обучение); без неё глаз рисуется сам, его цвета — переменные --frank-…')
+        w('  "tileArt": { "stats": "assets/tile-stats.svg" },   // СВОЯ КАРТИНКА ВМЕСТО нарисованной миниатюры на квадратной плитке виджета (ключи — виджеты, список в разделе 8в)')
+        w('  "tileColors": { "stats": "#33b6ff" },            // цвет плитки виджета (значок в углу и лёгкий отлив фона)')
         w('  "pwa": { "favicon": "assets/fav.svg", "appleTouch": "assets/touch-180.png", "icon192": "assets/i192.png", "icon512": "assets/i512.png" },  // значки для экрана «Домой»')
         w('  "preview": "assets/preview.png"   // необязательно: картинка для карточки темы')
         w('}')
@@ -684,6 +708,11 @@ class Themes:
         w('   • Подсказки (жёлтые плашки вверху вкладок): --hint-bg, --hint-line, --hint-text, --hint-ico, --hint-ico-bg, --hint-close-bg, --hint-close-text, --hint-radius; иконка лампочки — icons "bulb"; класс .hint-box.')
         w('   • Frank: глаз рисуется сам — его цвета задают --frank-sclera (белок), --frank-pupil, --frank-lid (веко), --frank-iris-0/1/2 (радужка), --frank-bg (плитка за глазом), --frank-glow (сияние в обучении),')
         w('     настроения --frank-m2-* («напряжён») и --frank-m3-* («тревога»). ИЛИ замените глаз своей картинкой: "frankAvatar": "assets/файл.svg" (svg/png/webp, квадрат). Имя — strings "frank.name"; значок приложения — appIcons.frank.')
+        w('')
+        w('8в. ПЛИТКИ ВИДЖЕТОВ И ЗНАЧКИ «ДОМОЙ» У ВСЕХ ТРЁХ ПРИЛОЖЕНИЙ')
+        w('   • Квадратная плитка виджета: фон — --tile-bg (можно градиент), маленький значок в углу — --tile-ic-bg и --tile-ic-fg; классы .wg .wg-in .wg-tile .wg-tile-ic .wg-tile-name .wg-tile-art .wg-tile-v .wg-tile-s .size-S .size-M .size-L.')
+        w('     Нарисованную миниатюру (кольцо, батарейка, спидометр, столбики…) можно заменить КАРТИНКОЙ через "tileArt" либо скрыть/заменить средствами CSS; цвет плитки — "tileColors". Виджеты: ' + ', '.join(d.get('widgets') or []) + '.')
+        w('   • Значки для экрана «Домой» задаются отдельно для каждого приложения: "pwa" — Rack Live, "pwaFrank" — Frank, "pwaSpeed" — Тест скорости; у каждого favicon, appleTouch (PNG 180×180), icon192, icon512 (PNG).')
         w('')
         w('8а. ПОДСКАЗКИ И ЛОВУШКИ ДЛЯ АВТОРА')
         w('   • Сначала tokens, потом css. Цвета через переменные работают везде, в том числе внутри шкафа, карты и виджетов, и переживают обновления лучше всего.')

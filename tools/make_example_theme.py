@@ -70,6 +70,10 @@ MANIFEST = {
     'kindColors': {'router': '#33b6ff', 'switch': '#3ddc97', 'server': '#7c8cff', 'nas': '#4fd1e6', 'ap': '#5ee0c8', 'camera': '#ff6b81', 'ups': '#ffb454'},
     'appIcons': {'rack': 'assets/rack.svg', 'frank': 'assets/frank.svg', 'speed': 'assets/speed.svg'},
     'pwa': {'favicon': 'assets/rack.svg', 'appleTouch': 'assets/touch-180.png', 'icon192': 'assets/icon-192.png', 'icon512': 'assets/icon-512.png'},
+    'pwaFrank': {'favicon': 'assets/frank.svg', 'appleTouch': 'assets/frank-touch-180.png', 'icon192': 'assets/frank-192.png', 'icon512': 'assets/frank-512.png'},
+    'pwaSpeed': {'favicon': 'assets/speed.svg', 'appleTouch': 'assets/speed-touch-180.png', 'icon192': 'assets/speed-192.png', 'icon512': 'assets/speed-512.png'},
+    'tileArt': {'stats': 'assets/tile-stats.svg', 'uptime': 'assets/tile-uptime.svg'},
+    'tileColors': {'stats': '#33b6ff', 'internet': '#3ddc97', 'problems': '#ffb454'},
     'preview': 'assets/preview.svg',
 }
 CSS = '''/* Океанская ночь: всё начинается с html[data-theme-id="ocean-night"] — так правила не выходят за пределы темы */
@@ -93,8 +97,13 @@ FRANK_EYE = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circl
              '<path d="M10 36c8-14 14-14 22-6s14 8 22-6" fill="none" stroke="#bfe9ff" stroke-width="3.5" stroke-linecap="round"/><circle cx="24" cy="26" r="4" fill="#fff"/><circle cx="40" cy="26" r="4" fill="#fff"/>'
              '<circle cx="24" cy="26" r="1.8" fill="#06121f"/><circle cx="40" cy="26" r="1.8" fill="#06121f"/></svg>')
 PORT_UP = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 4v10M7 9l5-5 5 5" fill="none" stroke="#bfffe6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg>'
+TILE_STATS = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><path d="M0 52c15-12 30-12 45 0s30 12 45 0 20-8 30-4v32H0z" fill="#33b6ff" opacity=".4"/>'
+              '<path d="M0 40c15-12 30-12 45 0s30 12 45 0 20-8 30-4" fill="none" stroke="#bfe9ff" stroke-width="4" stroke-linecap="round"/><circle cx="60" cy="22" r="9" fill="#3ddc97"/></svg>')
+TILE_UPTIME = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><g fill="#3ddc97">' + ''.join(f'<rect x="{8 + i * 12}" y="{20 + (i * 7) % 18}" width="7" height="{44 - (i * 7) % 18}" rx="3.5"/>' for i in range(9)) + '</g></svg>')
 files = {'theme.json': json.dumps(MANIFEST, ensure_ascii=False, indent=2), 'theme.css': CSS, 'assets/rack.svg': app_icon(RACK), 'assets/frank.svg': app_icon(FRANK), 'assets/speed.svg': app_icon(SPEED),
-         'assets/preview.svg': PREVIEW, 'assets/frank-eye.svg': FRANK_EYE, 'assets/port-up.svg': PORT_UP, 'assets/touch-180.png': png(180, (15, 58, 99), (4, 18, 31)), 'assets/icon-192.png': png(192, (15, 58, 99), (4, 18, 31)),
+         'assets/preview.svg': PREVIEW, 'assets/tile-stats.svg': TILE_STATS, 'assets/tile-uptime.svg': TILE_UPTIME,
+         'assets/frank-touch-180.png': png(180, (60, 40, 110), (10, 8, 30)), 'assets/frank-192.png': png(192, (60, 40, 110), (10, 8, 30)), 'assets/frank-512.png': png(512, (60, 40, 110), (10, 8, 30)),
+         'assets/speed-touch-180.png': png(180, (15, 90, 70), (4, 25, 20)), 'assets/speed-192.png': png(192, (15, 90, 70), (4, 25, 20)), 'assets/speed-512.png': png(512, (15, 90, 70), (4, 25, 20)), 'assets/frank-eye.svg': FRANK_EYE, 'assets/port-up.svg': PORT_UP, 'assets/touch-180.png': png(180, (15, 58, 99), (4, 18, 31)), 'assets/icon-192.png': png(192, (15, 58, 99), (4, 18, 31)),
          'assets/icon-512.png': png(512, (15, 58, 99), (4, 18, 31))}
 os.makedirs(OUT, exist_ok=True)
 for rel, v in files.items():

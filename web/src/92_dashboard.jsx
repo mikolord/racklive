@@ -347,10 +347,11 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
   let body;
   if (size === 'S') {
     const t = d.tile ? d.tile(data, w) : { v: '', s: '' };
-    const art = TILE_ART[w.type] ? TILE_ART[w.type](data, w) : null;
+    const col = THEME.tileColors[w.type] || d.color;                       // a custom look may recolour a tile ...
+    const art = THEME.tileArt[w.type] ? <img className="tile-img" src={THEME.tileArt[w.type]} alt="" draggable="false" /> : TILE_ART[w.type] ? TILE_ART[w.type](data, w) : null;      // ... and bring its own picture instead of the drawn one
     const showV = t.v !== '' && t.v != null && !(art && TILE_NO_VALUE.has(w.type));
-    body = <button type="button" className={'wg-tile t-' + w.type} onClick={arranging ? undefined : onTap}>
-      <span className="wg-tile-top"><span className="wg-tile-ic" style={{ background: d.color }}><Icon name={d.icon} size={14} color="#fff" stroke={2.2} /></span>
+    body = <button type="button" className={'wg-tile t-' + w.type + (THEME.tileArt[w.type] ? ' has-art' : '') + (THEME.tileColors[w.type] ? ' has-color' : '')} onClick={arranging ? undefined : onTap}>
+      <span className="wg-tile-top"><span className="wg-tile-ic" style={{ background: `var(--tile-ic-bg, ${col})` }}><Icon name={d.icon} size={14} color="#fff" stroke={2.2} style={{ stroke: 'var(--tile-ic-fg, #fff)' }} /></span>
         <span className="wg-tile-name ellipsis">{name}</span></span>
       <span className="wg-tile-art">{art}</span>
       <span className="wg-tile-big"><Icon name={d.icon} size={46} stroke={1.5} /></span>        {/* «Графит»: a big outline icon instead of the picture */}
@@ -366,7 +367,7 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
   const view = size === 'L' && d.h;          // map / plan: a fixed height, the content fills it
   const tone = size === 'S' && d.tile ? (d.tile(data, w) || {}).tone : null;
   return <div className={'wg size-' + size + (tone ? ' tone-' + tone : '') + (view ? ' view' : '') + (d.list ? ' wg-list' : '') + (lifted ? ' lifted' : '') + (arranging ? ' arranging' : '')}
-    data-wid={w.id} ref={elRef} style={{ gridColumn: `span ${span}`, gridRow: `span ${rows}`, '--tc': d.color }}>
+    data-wid={w.id} ref={elRef} style={{ gridColumn: `span ${span}`, gridRow: `span ${rows}`, '--tc': THEME.tileColors[w.type] || d.color }}>
     <div className="wg-in" ref={inner} style={view ? { height: d.h } : null}>
       <div className="wg-body">{body}</div>
       {arranging ? <div className="wg-cover" onPointerDown={onMove} onTouchStart={onTouch} onDoubleClick={onRename} onContextMenu={e => e.preventDefault()} /> : null}

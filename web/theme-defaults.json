@@ -172,5 +172,24 @@
   "access",
   "frank",
   "end"
+ ],
+ "widgets": [
+  "rack",
+  "stats",
+  "problems",
+  "state",
+  "internet",
+  "ups",
+  "uptime",
+  "newdev",
+  "map",
+  "plan",
+  "devices",
+  "events",
+  "speed",
+  "frank",
+  "advice",
+  "shortcuts",
+  "note"
  ]
 }

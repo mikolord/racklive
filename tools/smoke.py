@@ -93,6 +93,7 @@ def main():
         svg_b, svg_h = raw('/themes/my-look/assets/rack.svg')
         check('looks: a picture is served with a sandbox policy (no script can run from it)', svg_b.startswith(b'<svg') and 'sandbox' in svg_h['Content-Security-Policy'] and svg_h['X-Content-Type-Options'] == 'nosniff')
         check('looks: all.css and the themed manifest answer', b'my-look' in raw('/themes/all.css')[0] and json.loads(raw('/manifest.json?skin=my-look')[0])['name'] == 'Rack Live')
+        check('looks: Frank and the speed test have their own themed manifests', json.loads(raw('/frank-manifest.json?skin=my-look')[0])['name'] and json.loads(raw('/speed-manifest.json?skin=my-look')[0])['name'])
         check('looks: the guide for neural networks downloads', b'html[data-theme-id=' in raw('/api/themes/guide.txt')[0] and b'tour.hi.title' in raw('/api/themes/guide.txt')[0])
         badup = json.loads(raw('/api/themes/upload', b'not a zip at all', headers={'Content-Type': 'application/zip'})[0])
         check('looks: garbage is refused with a reason, not an error page', badup.get('ok') is False and badup.get('errors'), json.dumps(badup)[:160])

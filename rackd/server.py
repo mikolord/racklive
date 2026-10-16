@@ -624,13 +624,14 @@ class Handler(BaseHTTPRequestHandler):
         """/themes/all.css · /themes/<id>/theme.css · /themes/<id>/data.json · /themes/<id>/<file> · /manifest.json?skin=<id>"""
         T = APP.themes
         hdr = {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"}
-        if path == '/manifest.json':                         # the installable app's manifest with this look's icons
+        if path in ('/manifest.json', '/frank-manifest.json', '/speed-manifest.json'):      # an installable app's manifest with this look's icons (each of the three apps has its own)
             tid = self.query().get('skin') or ''
-            with open(os.path.join(WEB, 'manifest.json'), encoding='utf-8') as f:
+            with open(os.path.join(WEB, path.lstrip('/')), encoding='utf-8') as f:
                 man = json.load(f)
-            d = T.data(tid)
-            if d and (d.get('pwa') or {}).get('icon192') and (d['pwa'] or {}).get('icon512'):
-                man['icons'] = [{'src': d['pwa']['icon192'], 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'}, {'src': d['pwa']['icon512'], 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'}]
+            d = T.data(tid) or {}
+            pw = d.get({'/manifest.json': 'pwa', '/frank-manifest.json': 'pwaFrank', '/speed-manifest.json': 'pwaSpeed'}[path]) or {}
+            if pw.get('icon192') and pw.get('icon512'):
+                man['icons'] = [{'src': pw['icon192'], 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'}, {'src': pw['icon512'], 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'}]
             return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
         if path == '/themes/all.css':
             return self.send_raw(T.all_css().encode(), 'text/css; charset=utf-8', hdr)
@@ -688,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
                 q = self.query()
                 key = m.group(1) + (f":p{int(q['port'])}" if q.get('port', '').isdigit() else '')
                 return self.send(APP.store.history.get(key, []))
-            if path.startswith('/themes/') or (path == '/manifest.json' and self.query().get('skin')):      # custom looks: files are public (the sign-in screen needs them), nothing secret inside
+            if path.startswith('/themes/') or (path in ('/manifest.json', '/frank-manifest.json', '/speed-manifest.json') and self.query().get('skin')):      # custom looks: files are public (the sign-in screen needs them), nothing secret inside
                 return self.theme_file(path)
             if path == '/api/themes':                       # the list with the verdict «fits / does not fit» (admin only)
                 if not self.need_admin():

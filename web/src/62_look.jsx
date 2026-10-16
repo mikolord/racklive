@@ -29,7 +29,7 @@ async function loadTheme() {
   try {
     const r = await fetch(`/themes/${id}/data.json`, { cache: 'no-cache' }); const d = await r.json();
     if (d.off) throw new Error('off');
-    Object.assign(THEME, { id, strings: d.strings || {}, icons: d.icons || {}, kindColors: d.kindColors || {}, appIcons: d.appIcons || {}, frankAvatar: d.frankAvatar || null });
+    Object.assign(THEME, { id, strings: d.strings || {}, icons: d.icons || {}, kindColors: d.kindColors || {}, appIcons: d.appIcons || {}, frankAvatar: d.frankAvatar || null, tileArt: d.tileArt || {}, tileColors: d.tileColors || {} });
   } catch (e) {
     const m = themeMeta(); lsSet('rl_skin', 'classic'); lsSet('rl_theme_meta', ''); THEME.offNote = (m && m.name) || id;
     const h = document.documentElement; h.removeAttribute('data-theme-id'); h.removeAttribute('data-skin');      // back to the original look
@@ -73,7 +73,8 @@ function LookCard() {
     try {
       const d = await (await fetch(`/themes/${t.id}/data.json`, { cache: 'no-cache' })).json();
       if (d.off) { toast('Это оформление отключено: ' + ((t.problems || [])[0] || 'не подходит'), true); return reload(); }
-      lsSet('rl_skin', t.id); lsSet('rl_theme_meta', JSON.stringify({ id: t.id, name: t.name, base: d.base, fav: (d.pwa || {}).favicon || '', touch: (d.pwa || {}).appleTouch || '', pwa: !!((d.pwa || {}).icon192 && (d.pwa || {}).icon512), rev: d.installed || d.rev }));
+      const pw = o => ({ fav: (o || {}).favicon || '', touch: (o || {}).appleTouch || '', pwa: !!((o || {}).icon192 && (o || {}).icon512) });       // home-screen pictures of each of the three apps
+      lsSet('rl_skin', t.id); lsSet('rl_theme_meta', JSON.stringify({ id: t.id, name: t.name, base: d.base, ...pw(d.pwa), frank: pw(d.pwaFrank), speed: pw(d.pwaSpeed), rev: d.installed || d.rev }));
       location.reload();
     } catch (e) { toast('Не удалось применить: ' + e.message, true); }
   };
