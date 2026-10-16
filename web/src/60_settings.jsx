@@ -369,8 +369,8 @@ function AuthScreen({ setup, title, onDone, note, tgLogin: tgReal, codeLogin: co
     <MfaStep ticket={mfa.ticket} methods={mfa.methods} onDone={onDone} onBack={() => setMfa(null)} already={!!mfa.primary} hint0={mfa.hint} /></div></div>;
   return <div className="auth"><div className="app-bg" /><form className="card" onSubmit={submit}>
     <AppIcon size={64} radius={16} style={{ margin: '0 auto', boxShadow: '0 8px 24px rgba(0,60,200,.3)' }} />
-    <h1>{setup ? 'Добро пожаловать' : (title || 'Rack Live')}</h1>
-    <div className="dim">{setup ? 'Задайте название и пароль администратора — с ним можно будет добавлять устройства и управлять ими.' : 'Войдите, чтобы продолжить'}</div>
+    <h1>{setup ? T('auth.welcome', 'Добро пожаловать') : (title || T('app.name', 'Rack Live'))}</h1>
+    <div className="dim">{setup ? T('auth.setup', 'Задайте название и пароль администратора — с ним можно будет добавлять устройства и управлять ими.') : T('auth.login', 'Войдите, чтобы продолжить')}</div>
     {note ? <div className="badge offline" style={{ whiteSpace: 'normal', lineHeight: 1.4, padding: '8px 12px', borderRadius: 12 }}>{note}</div> : null}
     <div className="col">
       {setup ? <Field label="Название"><input className="input" value={t} onChange={e => setT(e.target.value)} /></Field> : null}
@@ -379,7 +379,7 @@ function AuthScreen({ setup, title, onDone, note, tgLogin: tgReal, codeLogin: co
       {err ? <div style={{ color: 'var(--red)', fontSize: 14 }}>{err}</div> : null}
       {!setup ? <label className="mfa-remember"><Switch on={remember} onChange={setRemember} />
         <span style={{ fontSize: 13.5, minWidth: 0 }}>Запомнить это устройство<span className="dim3" style={{ display: 'block', fontSize: 12, lineHeight: 1.35 }}>Выключите на чужом компьютере — вход закончится сам.</span></span></label> : null}
-      <button className={'btn primary' + (busy ? ' busy' : '')} type="submit" style={{ padding: 13, marginTop: 4 }}>{setup ? 'Начать' : 'Войти'}</button>
+      <button className={'btn primary' + (busy ? ' busy' : '')} type="submit" style={{ padding: 13, marginTop: 4 }}>{setup ? T('auth.start', 'Начать') : T('auth.signin', 'Войти')}</button>
       {!setup && (tgLogin || (codeLogin || []).length) ? (tgMode ? <TgFlow kind="login" onOk={() => onDone()} onClose={() => setTgMode(false)} />
         : <><div className="or-line"><span>или войти без пароля</span></div>
           <div className="login-alts">

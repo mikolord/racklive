@@ -77,6 +77,31 @@ def main():
         check('system events: the page and tour lines land in the technical journal', any(e['name'] == 'Страница' for e in sysev) and any(e['name'] == 'Обучение' for e in sysev), str(sysev)[:200])
         check('system events: ordinary events stay out of it', all(e['name'] in ('Страница', 'Обучение', 'Rack Live') for e in sysev))
 
+        # ── свои оформления: загрузка, выдача файлов, список, удаление ──
+        def raw(path, data=None, method=None, headers=None):
+            r = urllib.request.urlopen(urllib.request.Request(base + path, data=data, method=method or ('POST' if data is not None else 'GET'), headers=headers or {}), timeout=30)
+            return r.read(), r.headers
+        tpl = raw('/api/themes/template.zip')[0]
+        up = json.loads(raw('/api/themes/upload', tpl, headers={'Content-Type': 'application/zip'})[0])
+        check('looks: the starter template uploads over HTTP and is accepted', up.get('ok') and up.get('id') == 'my-look', json.dumps(up)[:200])
+        lst = api('/api/themes')
+        check('looks: the list tells which fit', any(t['id'] == 'my-look' and t['ok'] for t in lst['themes']) and lst['api'] == 1, json.dumps(lst)[:200])
+        css_b, css_h = raw('/themes/my-look/theme.css')
+        check('looks: the css is public, scoped and typed as css', b'html[data-theme-id="my-look"]' in css_b and 'text/css' in css_h['Content-Type'], css_b[:120])
+        dj = json.loads(raw('/themes/my-look/data.json')[0])
+        check('looks: data.json carries texts, icons and picture addresses', dj['strings'].get('tab.rack') == 'Дом' and 'home' in dj['icons'] and dj['appIcons']['rack'].startswith('/themes/my-look/'), json.dumps(dj)[:200])
+        svg_b, svg_h = raw('/themes/my-look/assets/rack.svg')
+        check('looks: a picture is served with a sandbox policy (no script can run from it)', svg_b.startswith(b'<svg') and 'sandbox' in svg_h['Content-Security-Policy'] and svg_h['X-Content-Type-Options'] == 'nosniff')
+        check('looks: all.css and the themed manifest answer', b'my-look' in raw('/themes/all.css')[0] and json.loads(raw('/manifest.json?skin=my-look')[0])['name'] == 'Rack Live')
+        check('looks: the guide for neural networks downloads', b'html[data-theme-id=' in raw('/api/themes/guide.txt')[0] and b'tour.hi.title' in raw('/api/themes/guide.txt')[0])
+        badup = json.loads(raw('/api/themes/upload', b'not a zip at all', headers={'Content-Type': 'application/zip'})[0])
+        check('looks: garbage is refused with a reason, not an error page', badup.get('ok') is False and badup.get('errors'), json.dumps(badup)[:160])
+        try:
+            raw('/themes/my-look/../../config.json'); leaked = True
+        except Exception:
+            leaked = False
+        check('looks: nothing outside the look\'s folder can be read', not leaked)
+
         # ── «Сканировать сеть» ──
         sys.path.insert(0, ROOT)
         from rackd import netscan as nsc
@@ -457,6 +482,22 @@ def main():
                  'ИБП — форма': f'?editdev={dev["ups"]}',
                  'Proxmox · виртуалки': f'?device={dev["demo_proxmox"]}&tab=vms', 'ИБП · кривая': f'?device={dev["ups"]}',
                  'ONT — настройка': f'?mode=edit&editunit={units["modem"]}#rack', 'Кросс — живые порты': f'?unit={units["cross"]}#rack'}
+        # a custom look is really applied: texts renamed, the look's own attributes on <html>; deleted look → the page falls back to the original by itself
+        wrap = os.path.join(ROOT, 'web', '_smoke_look.html')
+        try:
+            open(wrap, 'w', encoding='utf-8').write('<!doctype html><script>localStorage.setItem("rl_skin","my-look");localStorage.setItem("rl_theme_meta",JSON.stringify({id:"my-look",name:"x",base:"graphite",rev:1}));location.replace("/#rack")</script>')
+            dom = lambda ms=8000: subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', f'--virtual-time-budget={ms}', '--dump-dom', base + '/_smoke_look.html'],
+                                         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+            out = dom()
+            check('looks: a chosen custom look is applied (own attribute, base look, its css, renamed tab)',
+                  re.search(r'<html[^>]*data-theme-id="my-look"', out) and re.search(r'<html[^>]*data-skin="graphite"', out) and 'id="rl-theme-css"' in out and '<span class="tab-label">Дом</span>' in out, out[:200])
+            raw('/api/themes/my-look', method='DELETE')
+            out = dom(3000)                                 # the notice lives a few seconds
+            check('looks: after the look is gone the page falls back to the original by itself (and says so)',
+                  not re.search(r'<html[^>]*data-theme-id', out) and '<span class="tab-label">Главная</span>' in out and 'отключено' in out, 'tab-label' in out)
+        finally:
+            if os.path.exists(wrap):
+                os.remove(wrap)
         for name, q in pages.items():
             if name == 'Помощник — настроен':          # a provider nobody listens on: enough for the panel to show the chat
                 api('/api/ai', {'enabled': True, 'preset': 'custom', 'base': 'http://127.0.0.1:9/v1', 'model': 'm', 'key': 'sk-test'}, 'PUT')

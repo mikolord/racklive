@@ -202,19 +202,19 @@ function Tour({ onDone }) {
     </svg>
     {['bT', 'bB', 'bL', 'bR'].map(k => <div key={k} ref={put(k)} className="tour-block" />)}
     <div ref={put('ring')} className="tour-ring" />
-    <button type="button" className="tour-skip" onClick={() => quit('пропущено кнопкой «Пропустить обучение»')}>Пропустить обучение<Icon name="x" size={14} stroke={2.4} /></button>
+    <button type="button" className="tour-skip" onClick={() => quit('пропущено кнопкой «Пропустить обучение»')}>{T('tour.skipAll', 'Пропустить обучение')}<Icon name="x" size={14} stroke={2.4} /></button>
     <div ref={put('card')} className={'tour-card' + (step.t ? '' : ' center') + (step.big ? ' big' : '')}>
       <div className="tour-frank-wrap" style={{ width: fsz, height: fsz }}><FrankHero size={fsz} mode={step.hand || 'point'} refs={fr.current} /></div>
       <div className="tour-bubble" key={i}>
-        {step.title ? <b className="tour-title">{step.title}</b> : null}
-        <div className="tour-text">{step.text}</div>
-        {step.click && !lost ? <div className="tour-hint"><i />Нажмите на подсвеченное</div> : null}
-        {step.click && lost ? <div className="tour-hint" style={{ color: 'var(--orange)' }}>Не вижу эту кнопку на экране — можно перейти дальше.</div> : null}
+        {step.title ? <b className="tour-title">{T(`tour.${step.id}.title`, step.title)}</b> : null}
+        <div className="tour-text">{T(`tour.${step.id}.text`, step.text)}</div>
+        {step.click && !lost ? <div className="tour-hint"><i />{T('tour.press', 'Нажмите на подсвеченное')}</div> : null}
+        {step.click && lost ? <div className="tour-hint" style={{ color: 'var(--orange)' }}>{T('tour.lost', 'Не вижу эту кнопку на экране — можно перейти дальше.')}</div> : null}
         <div className="tour-actions">
           <div className="tour-dots">{TOUR_STEPS.map((_, k) => <i key={k} className={k === i ? 'on' : k < i ? 'done' : ''} />)}</div>
           <div className="grow" />
-          {!last && (!step.click || lost) ? <button type="button" className="tour-link" onClick={() => quit('пропущено кнопкой «Пропустить»')}>Пропустить</button> : null}
-          {!step.click || lost ? <button type="button" className="tour-next" onClick={() => go(1)}>{step.next || 'Дальше'}</button> : null}
+          {!last && (!step.click || lost) ? <button type="button" className="tour-link" onClick={() => quit('пропущено кнопкой «Пропустить»')}>{T('tour.skip', 'Пропустить')}</button> : null}
+          {!step.click || lost ? <button type="button" className="tour-next" onClick={() => go(1)}>{step.next ? T(`tour.${step.id}.next`, step.next) : T('tour.next', 'Дальше')}</button> : null}
         </div>
       </div>
     </div>

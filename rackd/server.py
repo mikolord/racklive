@@ -3,7 +3,7 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threa
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
@@ -58,6 +58,9 @@ class App:
         self.loops = loops.LoopWatch(self.store)
         self.advisor = advisor.Advisor(self, DEMO)
         self.netscan = netscan.NetScan(self, DEMO)
+        self.themes = themes.Themes(DATA, WEB, VERSION)
+        for tid, name, why in self.themes.recheck():         # after an update: a look that no longer fits is switched off at once, the journal says why
+            self.store.add_event(None, 'Оформление', 'warning', f'оформление «{name}» отключено — не подходит к этой версии Rack Live: {"; ".join(why)[:300]}')
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
@@ -617,6 +620,45 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def theme_file(self, path):
+        """/themes/all.css · /themes/<id>/theme.css · /themes/<id>/data.json · /themes/<id>/<file> · /manifest.json?skin=<id>"""
+        T = APP.themes
+        hdr = {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"}
+        if path == '/manifest.json':                         # the installable app's manifest with this look's icons
+            tid = self.query().get('skin') or ''
+            with open(os.path.join(WEB, 'manifest.json'), encoding='utf-8') as f:
+                man = json.load(f)
+            d = T.data(tid)
+            if d and (d.get('pwa') or {}).get('icon192') and (d['pwa'] or {}).get('icon512'):
+                man['icons'] = [{'src': d['pwa']['icon192'], 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'}, {'src': d['pwa']['icon512'], 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'}]
+            return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
+        if path == '/themes/all.css':
+            return self.send_raw(T.all_css().encode(), 'text/css; charset=utf-8', hdr)
+        m = re.match(r'^/themes/([a-z][a-z0-9-]{2,31})/(.+)$', path)
+        if not m:
+            return self.err('не найдено', 404)
+        tid, rel = m.group(1), urllib.parse.unquote(m.group(2))
+        if rel == 'theme.css':
+            return self.send_raw(T.css(tid).encode(), 'text/css; charset=utf-8', hdr)
+        if rel == 'data.json':
+            d = T.data(tid)
+            return self.send_raw(json.dumps(d or {'off': True}, ensure_ascii=False).encode(), 'application/json; charset=utf-8', hdr)
+        a = T.asset(tid, rel)
+        if not a:
+            return self.err('не найдено', 404)
+        return self.send_raw(a[0], a[1], hdr)
+
+    def send_raw(self, b, ctype, headers=None):
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        if ctype.startswith(('text', 'application/json', 'application/manifest', 'image/svg')):
+            b = self.gz(b)
+        self.send_header('Content-Length', str(len(b)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(b)
+
     # ── routes ──
     def do_GET(self):
         path = self.path.split('?')[0]
@@ -646,6 +688,23 @@ class Handler(BaseHTTPRequestHandler):
                 q = self.query()
                 key = m.group(1) + (f":p{int(q['port'])}" if q.get('port', '').isdigit() else '')
                 return self.send(APP.store.history.get(key, []))
+            if path.startswith('/themes/') or (path == '/manifest.json' and self.query().get('skin')):      # custom looks: files are public (the sign-in screen needs them), nothing secret inside
+                return self.theme_file(path)
+            if path == '/api/themes':                       # the list with the verdict «fits / does not fit» (admin only)
+                if not self.need_admin():
+                    return
+                return self.send({'themes': APP.themes.list(), 'api': themes.THEME_API, 'version': VERSION})
+            if path in ('/api/themes/template.zip', '/api/themes/guide.txt'):      # for authors: a starter look and the instruction (a text to hand to a neural network)
+                if not self.need_admin():
+                    return
+                zip_ = path.endswith('.zip')
+                b = APP.themes.template_zip() if zip_ else APP.themes.guide_text().encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip' if zip_ else 'text/plain; charset=utf-8')
+                self.send_header('Content-Disposition', 'attachment; filename="' + ('racklive-look-template.zip' if zip_ else 'racklive-look-guide.txt') + '"')
+                self.send_header('Content-Length', str(len(b)))
+                self.end_headers()
+                return self.wfile.write(b)
             if path == '/api/netscan':                      # «Сканировать сеть»: progress and what was found (admin only)
                 if not self.need_admin():
                     return
@@ -710,6 +769,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.can_view():
                     return self.err('нужен вход', 401)
                 return self.speed_up()
+            if path == '/api/themes/upload' and method == 'POST':    # a .zip with a custom look: raw bytes (admin), checked and installed only if it fits
+                if not self.need_admin():
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > themes.MAX_ZIP:
+                    return self.err(f'архив должен быть не больше {themes.MAX_ZIP // 1024 // 1024} МБ', 413)
+                rep = APP.themes.install(self.rfile.read(n))
+                if rep['ok']:
+                    st.add_event(None, 'Оформление', 'info', f"добавлено оформление «{rep.get('name')}»" + (f" ({len(rep['warnings'])} замечаний)" if rep['warnings'] else ''))
+                return self.send(rep)
+            m = re.match(r'^/api/themes/([a-z][a-z0-9-]{2,31})$', path)
+            if m and method == 'DELETE':
+                if not self.need_admin():
+                    return
+                APP.themes.remove(m.group(1))
+                st.add_event(None, 'Оформление', 'info', f'оформление «{m.group(1)}» удалено')
+                return self.send({'ok': True})
             body = self.body()
             # ── auth ──
             if path == '/api/setup' and method == 'POST':

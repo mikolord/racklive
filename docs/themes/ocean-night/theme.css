@@ -1,0 +1,11 @@
+/* Океанская ночь: всё начинается с html[data-theme-id="ocean-night"] — так правила не выходят за пределы темы */
+html[data-theme-id="ocean-night"] .app-bg { background: radial-gradient(1100px 600px at 10% -10%, rgba(51,182,255,.22), transparent 60%), radial-gradient(900px 500px at 100% 10%, rgba(61,220,151,.10), transparent 60%), var(--bg); }
+html[data-theme-id="ocean-night"] .card { border-radius: 24px; box-shadow: 0 10px 30px rgba(0,20,60,.35), inset 0 1px 0 rgba(255,255,255,.05); }
+html[data-theme-id="ocean-night"] .btn.primary, html[data-theme-id="ocean-night"] .tour-next { background: linear-gradient(135deg, #33b6ff, #0a7fd6); color: #fff; box-shadow: 0 6px 18px rgba(10,127,214,.45); }
+html[data-theme-id="ocean-night"] .tab.on { box-shadow: 0 0 0 1px rgba(51,182,255,.5), 0 4px 14px rgba(51,182,255,.25); }
+html[data-theme-id="ocean-night"] .wg-in { border-radius: 30px; }
+html[data-theme-id="ocean-night"] .wg-body > .card { box-shadow: none; border: 0; background: none; }     /* вложенные карточки виджетов остаются плоскими */
+html[data-theme-id="ocean-night"] .tour-bubble { border-radius: 24px; background: #0b1d33; border: 1px solid #28507d; }
+html[data-theme-id="ocean-night"] .page-title { letter-spacing: -.6px; background: linear-gradient(90deg, #e8f4ff, #7fd1ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+html[data-theme-id="ocean-night"][data-theme="light"] .page-title { background: linear-gradient(90deg, #0b2740, #0a7fd6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+@media (max-width: 760px) { html[data-theme-id="ocean-night"] .bottombar { border-radius: 30px; } }

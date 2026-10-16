@@ -67,6 +67,7 @@ function App() {
   const [tour, setTour] = useState(() => new URLSearchParams(location.search).get('tour') === '1' || tourResume());      // Frank's welcome tour (95_tour.jsx); ?tour=1 starts it; a tour that was in progress when the page blinked continues
   const [theme, setTheme] = useTheme();
   const toast = useToast();
+  useEffect(() => { if (THEME.offNote) { toast(`Оформление «${THEME.offNote}» отключено: оно не подходит к этой версии Rack Live. Включено стандартное.`, true); THEME.offNote = null; } }, []);
   // opened from the Telegram bot: log in with the signed launch data, no password
   const [tg, setTg] = useState(TG ? 'pending' : null);       // 'pending' | 'ok' | error text
   useEffect(() => {
@@ -150,7 +151,7 @@ function App() {
   const stale = data.devices.length && (data.now - newest > Math.max(180, (data.settings.poll || 60) * 3));
   const problems = (data.events || []).filter(e => e.t > evSeen && ['offline', 'warning'].includes(e.level)).length;
   const badge = problems > 99 ? '99+' : problems;
-  const tabs = TABS.filter(t => !t.admin || admin);
+  const tabs = TABS.filter(t => !t.admin || admin).map(t => ({ ...t, label: T('tab.' + t.id, t.label) }));      // a custom look may rename the tabs
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
   const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur;          // what is shown: subtitle and hint follow it
   const subtitle = {
@@ -257,4 +258,5 @@ class Crash extends React.Component {
       <button className="btn primary" onClick={() => location.reload()}>Обновить страницу</button></div></div>;
   }
 }
-ReactDOM.createRoot(document.getElementById('root')).render(<Crash><ToastHost><ConfirmHost><App /></ConfirmHost></ToastHost></Crash>);
+// a custom look's texts / icons are read first (they live in a global), then the page is drawn; a failure here never blocks the start
+loadTheme().catch(() => { }).finally(() => ReactDOM.createRoot(document.getElementById('root')).render(<Crash><ToastHost><ConfirmHost><App /></ConfirmHost></ToastHost></Crash>));

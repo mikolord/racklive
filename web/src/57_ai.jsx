@@ -218,7 +218,7 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   const key = e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(q); } };
   const today = ai.today || {};
-  const title = view === 'list' ? 'Разговоры' : 'Frank';
+  const title = view === 'list' ? 'Разговоры' : T('frank.name', 'Frank');
   // voice input: the browser's own speech recognition (Safari/Chrome; needs https — on a plain http address the button is hidden)
   const [quick, setQuick] = useState(false);
   const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1');

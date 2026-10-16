@@ -1,0 +1,211 @@
+ИНСТРУКЦИЯ: КАК СДЕЛАТЬ СВОЁ ОФОРМЛЕНИЕ ДЛЯ RACK LIVE
+Версия контракта оформления (api): 1. Rack Live 2.5.0.
+
+Это файл для человека и для нейросети. Если вы читаете его как нейросеть: ваша задача — по описанию пользователя создать ZIP-архив оформления,
+строго соблюдая правила ниже. Ничего вне этих правил не придумывайте — архив с нарушениями Rack Live не примет и объяснит, что не так.
+
+1. ЧТО ТАКОЕ ОФОРМЛЕНИЕ
+Это набор ФАЙЛОВ-ДАННЫХ (JSON, CSS, картинки). Никакого JavaScript, HTML-страниц и программ — они не запускаются и не принимаются.
+Оформление может поменять: цвета и скругления, шрифт, любую иконку интерфейса, иконки приложений (Rack Live, Frank, Тест скорости),
+иконку для экрана «Домой» (PWA) и значок вкладки, цвета типов устройств, тексты (вкладки, окно входа, имя Frank, ВСЕ шаги приветственного обучения),
+а через theme.css — внешний вид любого блока (карточки, кнопки, плитки, шапка, док, окна, Frank, обучение), включая фоновые картинки и шрифты woff2.
+
+2. СТРУКТУРА АРХИВА (.zip)
+   theme.json        — обязательный, описание и настройки (см. раздел 3)
+   theme.css         — необязательный, свои правила CSS (см. раздел 5)
+   assets/…          — картинки (svg, png, jpg, webp) и шрифты (woff2), на которые ссылаются файлы выше
+Файл theme.json должен лежать в корне архива (допускается одна общая папка внутри). Разрешённые типы файлов: .css, .jpeg, .jpg, .json, .md, .png, .svg, .txt, .webp, .woff2.
+Лимиты: архив до 8 МБ, не больше 200 файлов, файл до 3 МБ, theme.css до 400 КБ, картинка до 1 МБ, SVG до 300 КБ.
+
+3. theme.json — ПОЛЯ
+{
+  "id": "ocean-night",              // обязательно: латиница в нижнем регистре, цифры, дефис; 3–32 символа; начинается с буквы. Нельзя: auto, classic, custom, dark, default, graphite, light, none, system
+  "name": "Океанская ночь",         // обязательно, до 40 символов
+  "author": "Имя автора",           // до 60 символов
+  "version": "1.0.0",               // обязательно: версия самой темы
+  "description": "Коротко о теме",  // до 300 символов
+  "api": 1,                       // обязательно: версия контракта (сейчас 1); с другим числом тема отклоняется
+  "minVersion": "2.5.0",          // необязательно: с какой версии Rack Live тема работает
+  "base": "graphite",               // "classic" (стекло, синий) или "graphite" (плоский чёрный, зелёный): тема накладывается поверх выбранного
+  "tokens": { "dark": {...}, "light": {...}, "all": {...} },   // цвета и размеры, раздел 4 («all» — для обеих тем, «dark»/«light» перекрывают)
+  "css": "theme.css",               // необязательно
+  "strings": { "tab.rack": "Дом" }, // тексты, раздел 6
+  "icons": { "home": "M3 11l9-8 9 8..." },   // свои иконки, раздел 7
+  "kindColors": { "router": "#38bdf8" },     // цвета значков типов устройств, раздел 7
+  "appIcons": { "rack": "assets/rack.svg", "frank": "assets/frank.svg", "speed": "assets/speed.svg" },  // иконки приложений в интерфейсе
+  "pwa": { "favicon": "assets/fav.svg", "appleTouch": "assets/touch-180.png", "icon192": "assets/i192.png", "icon512": "assets/i512.png" },  // значки для экрана «Домой»
+  "preview": "assets/preview.png"   // необязательно: картинка для карточки темы
+}
+Комментарии // в настоящем JSON ЗАПРЕЩЕНЫ — здесь они только для пояснения.
+
+4. ПЕРЕМЕННЫЕ (tokens) — значение подставляется как значение CSS (цвет, размер, список шрифтов). Нельзя url(), ;, {, }.
+   --bg           — фон страницы
+   --bg2          — фон полей ввода и вложенных блоков
+   --card         — фон карточки
+   --card-solid   — сплошной фон карточки (плитки, виджеты)
+   --elev         — фон окон и шторок
+   --text         — основной текст
+   --text2        — второстепенный текст
+   --text3        — приглушённый текст
+   --line         — тонкая линия
+   --line2        — линия поярче (рамки полей)
+   --fill         — заливка кнопок, чипов, вложенных плиток
+   --fill2        — заливка поярче
+   --accent       — акцентный цвет (кнопки, выбранное, переключатели)
+   --green        — цвет «в сети»
+   --yellow       — цвет предупреждения (жёлтый)
+   --orange       — оранжевый
+   --red          — цвет ошибки и «нет связи»
+   --purple       — фиолетовый
+   --teal         — бирюзовый
+   --indigo       — индиго
+   --shadow       — тень карточек
+   --shadow-lg    — тень окон
+   --r            — скругление кнопок и полей (например 14px)
+   --r-lg         — скругление карточек (например 20px)
+   --font         — шрифт интерфейса (список, как в CSS)
+   --mono         — моноширинный шрифт
+   --dock         — фон верхней панели и нижнего дока
+   --glass        — стекло Frank и меню
+   --glass-line   — линия стекла
+   --dock-glass   — фон дока ввода Frank и меню «⋯»
+   --fr-btn       — круглые кнопки Frank
+   --rack         — шкаф: корпус
+   --unit         — юнит в шкафу: фон (запасной)
+   --unit-text    — юнит: текст
+   --rack-bg      — шкаф: фон корпуса (можно градиент)
+   --rack-body    — шкаф: внутренняя область
+   --rack-text    — шкаф: заголовок
+   --rack-meta    — шкаф: подпись
+   --rack-rail    — шкаф: цифры на направляющих
+   --rack-hole    — шкаф: отверстия направляющих
+   --rack-slot    — шкаф: линии между юнитами
+   --rack-icon    — шкаф: цвет значков
+   --rack-seg-bg  — шкаф: переключатель «Фронт / Тыл» — фон
+   --rack-seg-text — переключатель — текст
+   --rack-seg-on  — переключатель — выбранное
+   --rack-seg-on-text — переключатель — текст выбранного
+   --unit-bg      — юнит: фон (можно градиент)
+   --unit-meta    — юнит: подпись
+   --unit-icon-bg — юнит: подложка значка
+   --unit-shadow  — юнит: тень и блик
+   --unit-passive — пассивный юнит (патч-панель): узор
+   --unit-blank   — заглушка
+   --led-off      — светодиод порта: нет линка
+   --led-dead     — светодиод: порт с проблемой
+   --map-rack-frame — карта: рамка шкафа
+   --map-rack-stroke — карта: контур шкафа
+   --map-unit     — карта: юнит и устройство
+   --map-unit-stroke — карта: контур юнита
+Цвета: #rrggbb, rgb(), rgba(), hsl(), color-mix(). Размеры: 14px. Неизвестные переменные игнорируются (с предупреждением).
+
+5. theme.css — СВОИ ПРАВИЛА
+ГЛАВНОЕ ПРАВИЛО: каждый селектор начинается с  html[data-theme-id="ВАШ-ID"]  (id из theme.json). Пример:
+   html[data-theme-id="ocean-night"] .card { border-radius: 28px; }
+   html[data-theme-id="ocean-night"] .btn.primary, html[data-theme-id="ocean-night"] .tour-next { background: #0ea5e9; }
+Так тема не может повлиять на что-то вне себя. Разрешено: обычные правила, @media, @supports, @keyframes (имя начинайте с id темы: ocean-night-имя), @font-face (только .woff2 из assets/).
+ЗАПРЕЩЕНО: @import, внешние ссылки (https://…), url() кроме assets/имя и data:image, обратный слэш вне кавычек, expression(), javascript:, behavior, <script>, @charset, @page, @container.
+Фон-картинка:  background-image: url(assets/bg.jpg)   (файл лежит в assets/).
+СТАБИЛЬНЫЕ КЛАССЫ (их названия не меняются без повышения api; стильте их свободно):
+   .advice .advice-ic .advice-t .ai-bubble .ai-foot .ai-head .ai-list .ai-msg .ai-panel .app-bg 
+   .app-ic-c .app-ic-g .assistant .auth .badge .between .bottombar .brand .brand-text .brand-title 
+   .btn .card .card-title .cards .center .chip .col .count .danger .dash .dev-card .dim .dim3 .dot 
+   .ellipsis .empty .err .ev .found-type .fr-circle .fr-dbtn .fr-dock .fr-model .fr-send .fr-title 
+   .fr-top .frank .frank-btn .gauge .gauge-bar .gauge-val .ghost .grid .grow .hdr-menu .hdr-more 
+   .hdr-row .hdr-tiles .hdr-tools .hint-box .hint-close .icon .input .ios-cell .ios-group .ios-label 
+   .ios-list .ios-val .li .link-btn .list .live .look-prev .look-skin .mini-svg .modal .modal-body 
+   .modal-head .mono .netscan-row .offline .on .online .overlay .page .page-sub .page-title .primary 
+   .row .seg .select .set-ic .set-item .set-layout .set-nav .sheet .size-L .size-M .size-S .sm .stat 
+   .state-tile .stats .switch .sys-log .tab .tab-label .tabs .textarea .tile .toast .topbar 
+   .tour-block .tour-bubble .tour-card .tour-dim .tour-dots .tour-hint .tour-layer .tour-link 
+   .tour-next .tour-ring .tour-skip .tour-text .tour-title .user .warning .wg .wg-body .wg-in 
+   .wg-tile .wg-tile-art .wg-tile-big .wg-tile-ic .wg-tile-name .wg-tile-s .wg-tile-v .wrap 
+Другие классы тоже можно использовать, но Rack Live покажет предупреждение: при обновлении они могут быть переименованы, и этот кусок темы перестанет действовать.
+Совет: сначала меняйте цвета через tokens — это самое устойчивое; theme.css используйте для формы, теней, картинок, анимаций.
+
+6. ТЕКСТЫ (strings) — ключ → ваш текст (до 400 символов, обычный текст без HTML). Что не указано — остаётся по умолчанию.
+   app.name  =  Rack Live
+   auth.login  =  Войдите, чтобы продолжить
+   auth.setup  =  Задайте название и пароль администратора — с ним можно будет добавлять устройства и управлять ими.
+   auth.signin  =  Войти
+   auth.start  =  Начать
+   auth.welcome  =  Добро пожаловать
+   frank.name  =  Frank
+   tab.devices  =  Устройства
+   tab.events  =  События
+   tab.map  =  Карта
+   tab.rack  =  Главная
+   tab.settings  =  Настройки
+   tour.access.text  =  Загляните в «Доступ» и включите двухфакторную защиту — особенно если Rack Live открыт из интернета. Нажмите «Доступ».
+   tour.access.title  =  Защита входа
+   tour.add.text  =  Нажмите «Добавить».
+   tour.add.title  =  Добавим первое
+   tour.catalog.text  =  У каждого типа написано, что он умеет и что нужно подготовить на самом устройстве — включить SNMP, создать пароль приложения и так далее.
+   tour.catalog.title  =  Или выберите тип вручную
+   tour.detect.text  =  Впишите адрес устройства, например IP роутера (192.168.1.1), и нажмите «Определить». Rack Live сам поймёт, что это, и подскажет, что делать дальше.
+   tour.detect.title  =  Проще всего — по адресу
+   tour.devices.text  =  Устройство — это роутер, коммутатор, NAS, сервер: всё, с чего Rack Live собирает данные. Нажмите «Устройства».
+   tour.devices.title  =  Начнём с устройств
+   tour.edit.text  =  Тут включается режим редактирования: расставлять виджеты, рисовать шкаф и план, добавлять оборудование. Обычно он выключен, чтобы ничего не сдвинуть случайно. (На телефоне — в меню «⋯».)
+   tour.edit.title  =  Редактирование
+   tour.end.next  =  Поехали
+   tour.end.text  =  Начните с «Устройства → Добавить». Если что-то забудете — я в шапке, а обучение можно повторить: Настройки → Основные → «Показать обучение».
+   tour.end.title  =  Вот и всё!
+   tour.frank.text  =  Нажмите на мой глаз в любой момент — отвечу на вопрос о вашей сети: «Всё ли в порядке?», «Почему тормозит Wi-Fi?». Нужен ключ ИИ: Настройки → Frank.
+   tour.frank.title  =  А это я 👁
+   tour.hi.next  =  Начать
+   tour.hi.text  =  Покажу главное за минуту: как добавить устройства, где карта и настройки. Пока идёт обучение, нажимать можно только подсвеченное — так не потеряетесь. Передумаете — «Пропустить» всегда рядом.
+   tour.hi.title  =  Привет! Я Frank
+   tour.home.text  =  А это ваша главная: виджеты — шкаф, состояние сети, интернет, ИБП. Вернёмся сюда.
+   tour.home.title  =  Главная
+   tour.lost  =  Не вижу эту кнопку на экране — можно перейти дальше.
+   tour.map.text  =  Здесь вся сеть одной схемой: что к чему подключено, какой кабель, какая скорость. Карту можно двигать и приближать. Нажмите «Карта».
+   tour.map.title  =  Карта сети
+   tour.next  =  Дальше
+   tour.press  =  Нажмите на подсвеченное
+   tour.settings.text  =  Уведомления в Telegram, приложения на телефон, защита входа. Нажмите «Настройки».
+   tour.settings.title  =  Настройки
+   tour.skip  =  Пропустить
+   tour.skipAll  =  Пропустить обучение
+Тексты обучения: tour.<шаг>.title / .text / .next. Шаги по порядку: hi, devices, add, detect, catalog, map, home, edit, settings, access, frank, end.
+
+7. ИКОНКИ И ЦВЕТА УСТРОЙСТВ
+icons: имя → путь SVG (атрибут d), сетка 24×24, рисуется контуром (stroke) толщиной, которую задаёт интерфейс; можно несколько подпутей, начинающихся с M.
+   Допустимые символы пути: M L H V C S Q T A Z, числа, пробелы, запятые, точка, минус. Пример: "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"
+   Имена иконок: router switch server nas ap camera nvr phone tablet tv laptop pc printer speaker iot internet web ups patch cross pdu shelf organizer blank modem other edit eye plus x trash search settings rack map list bell bolt swap mail key sms play refresh power link fit lock logout sun moon chevron download upload check sort clock minus grip resize plan terminal wifi globe box home pole send wall eraser cursor tag tree shield globe2 pulse cable alert copy menu more share mic sparkle gauge bulb pin toggle
+kindColors: тип устройства → цвет. Типы: router switch server nas ap camera nvr phone tablet tv laptop pc printer speaker iot internet web ups patch cross pdu modem other
+
+8. ИКОНКИ ПРИЛОЖЕНИЙ И PWA
+appIcons.rack / frank / speed — картинки (svg, png, jpg, webp), показываются в шапке, на экране входа, в настройках и в приложениях Frank и «Тест скорости».
+pwa.favicon — значок вкладки (svg или png). pwa.appleTouch — PNG 180×180, pwa.icon192 — PNG 192×192, pwa.icon512 — PNG 512×512: ими пользуется iPhone/Android
+при добавлении на экран «Домой». ВАЖНО: уже установленный значок на телефоне сам не меняется — нужно удалить его и добавить заново после выбора темы.
+SVG: без скриптов, без внешних ссылок, без foreignObject, без атрибутов on…=.
+
+8а. ПОДСКАЗКИ И ЛОВУШКИ ДЛЯ АВТОРА
+   • Сначала tokens, потом css. Цвета через переменные работают везде, в том числе внутри шкафа, карты и виджетов, и переживают обновления лучше всего.
+   • Всегда задавайте и dark, и light (или «all»): человек может переключить тему. Проверьте контраст текста и фона в обеих.
+   • Виджеты на главной содержат вложенные .card без рамки и фона. Если вы стилите .card (тень, рамка, фон) — добавьте исключение:
+       html[data-theme-id="ID"] .wg-body > .card { box-shadow: none; border: 0; background: none; }
+   • Не прячьте элементы через display:none: можно скрыть кнопку, без которой нельзя пользоваться приложением. Тема не должна ломать управление.
+   • Проверьте узкий экран (телефон, ширина 390 px): правила для него пишутся через @media (max-width: 760px) { html[data-theme-id="ID"] … }.
+   • Имена Frank и текст приветствия заменяются только там, где есть ключ в списке строк (раздел 6); остальные подписи остаются по умолчанию.
+   • Иконку на экране «Домой» меняют только при новой установке значка; в самом интерфейсе иконки приложений (appIcons) меняются сразу.
+   • Меняйте контракт осторожно: если при обновлении Rack Live число api станет другим, тема будет отключена и вернётся стандартный вид — тогда обновите тему по новой инструкции.
+
+9. КАК ЗАГРУЗИТЬ И ПРОВЕРИТЬ
+Настройки → Оформление → «Добавить своё» → выберите .zip. Rack Live проверит архив и покажет ОШИБКИ (тема не установится) и ПРЕДУПРЕЖДЕНИЯ (установится).
+Если после выбора темы интерфейс стал нечитаемым — откройте адрес панели с добавкой ?skin=classic (например http://адрес:порт/?skin=classic): вернётся стандартное оформление.
+После каждого обновления Rack Live все темы проверяются заново; несовместимая тема отключается сама, интерфейс возвращается к стандартному, причина показывается в разделе «Оформление».
+
+10. ПОРЯДОК РАБОТЫ ДЛЯ НЕЙРОСЕТИ
+   а) уточните у пользователя идею (цвета, настроение, что менять: только цвета / ещё иконки / тексты / обучение / иконки приложений);
+   б) придумайте id, name, version "1.0.0", api 1, выберите base;
+   в) составьте theme.json: начните с tokens (dark и light), затем strings/icons/kindColors при необходимости;
+   г) только если нужно — theme.css с селекторами html[data-theme-id="id"] …; картинки — в assets/;
+   д) выдайте файлы и структуру архива; проверьте себя по чек-листу ниже.
+ЧЕК-ЛИСТ: ☐ theme.json — валидный JSON без комментариев  ☐ id из допустимых символов и не зарезервирован  ☐ "api": 1  ☐ все пути (css, assets/…) существуют в архиве
+   ☐ каждый селектор в theme.css начинается с html[data-theme-id="id"]  ☐ нет @import, http(s)://, обратных слэшей, url() вне assets/  ☐ в SVG нет скриптов и внешних ссылок
+   ☐ для светлой и тёмной темы заданы читаемые цвета текста и фона (контраст)  ☐ ключи strings, icons, kindColors взяты из списков выше.
+
+ПРИМЕР МИНИМАЛЬНОГО theme.json:
+{"id":"ocean-night","name":"Океанская ночь","author":"Ваше имя","version":"1.0.0","api":1,"base":"graphite","tokens":{"dark":{"--bg":"#0b1220","--accent":"#38bdf8"},"light":{"--accent":"#0284c7"}}}

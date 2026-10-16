@@ -141,17 +141,22 @@ const ICON_PATHS = {
   pulse: 'M2 12h4l3-8 4 16 3-8h6', cable: 'M4 4h5v5H4zM6.5 9v4a4 4 0 0 0 4 4h3a4 4 0 0 1 4 4M5.5 4V2M7.5 4V2', alert: 'M12 3L2 20h20zM12 10v4M12 17h.01',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1', menu: 'M4 7h16M4 12h16M4 17h9', more: 'M6 12h.01M12 12h.01M18 12h.01', share: 'M12 15V3M8 7l4-4 4 4M7 10H5v11h14V10h-2', chevronLeft: 'M15 6l-6 6 6 6', arrowUp: 'M12 19V5M6 11l6-6 6 6', mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21', sparkle: 'M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9zM18.5 14.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z', gauge: 'M3.5 17a9 9 0 1 1 17 0M12 14l4.5-5M12 14h.01', bulb: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3', pin: 'M12 22s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12M12 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6', toggle: 'M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7M7 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
 };
+/* a custom look (Настройки → Оформление → «Добавить своё», rackd/themes.py) is plain data: texts, icons, colours of kinds — read once at start (90_app.jsx), nothing else is run */
+const THEME = { id: null, strings: {}, icons: {}, kindColors: {}, appIcons: {} };
+/* every text a look may replace goes through T(ключ, текст по умолчанию): the default stays in the code, the build (build.py) lists these calls in theme-defaults.json */
+const T = (key, def) => { const v = THEME.strings[key]; return typeof v === 'string' && v !== '' ? v : def; };
 /* the app icons (Rack Live / Frank / speed test) — same files as on the home screen; ?v= busts the old cached ones */
 const APP_ICONS = { rack: '/icon.svg?v=27', frank: '/frank-icon.svg?v=27', speed: '/speed-icon.svg?v=27' };
 const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1' };
 function AppIcon({ app = 'rack', size = 30, radius, style }) {
   const st = { borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, ...style };
+  if (THEME.appIcons[app]) return <img src={THEME.appIcons[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;      // the custom look brings its own
   // every app icon has a flat outline twin for the «Графит» look (css shows one of the two, so the original look is untouched)
   return <><img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false" className="app-ic-c" style={{ display: 'block', ...st }} />
     <img src={APP_ICONS_G[app]} width={size} height={size} alt="" draggable="false" className="app-ic-g" style={st} /></>;
 }
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {
-  const d = ICON_PATHS[name] || ICON_PATHS.other;
+  const d = THEME.icons[name] || ICON_PATHS[name] || ICON_PATHS.other;
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={style}>
     {d.split('M').filter(Boolean).map((p, i) => <path key={i} d={'M' + p} />)}
   </svg>;
@@ -160,7 +165,7 @@ const KIND_COLOR = { router: '#0a84ff', switch: '#30d158', server: '#5e5ce6', na
   tablet: '#8e8e93', tv: '#bf5af2', laptop: '#8e8e93', pc: '#ac8e68', printer: '#8e8e93', speaker: '#ff9f0a', iot: '#ffd60a', internet: '#bf5af2', web: '#5e5ce6',
   ups: '#ff9f0a', patch: '#8e8e93', cross: '#64d2ff', pdu: '#ff9f0a', modem: '#bf5af2', other: '#8e8e93' };
 function KindIcon({ kind, size = 36, round = 10 }) {
-  const c = KIND_COLOR[kind] || KIND_COLOR.other;
+  const c = THEME.kindColors[kind] || KIND_COLOR[kind] || KIND_COLOR.other;
   return <div style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
     background: `color-mix(in srgb, ${c} 16%, transparent)` }}><Icon name={kind} size={size * .54} color={c} /></div>;
 }
