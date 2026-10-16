@@ -48,6 +48,8 @@ try:
     check('css: variables per theme and the rule, url rewritten to the look\'s own folder', 'html[data-theme-id="test-look"][data-theme="dark"]{' in css and '--accent:#38bdf8' in css
           and '--r-lg:22px' in css and 'url("/themes/test-look/assets/a.svg")' in css and '@media' in css, css[:300])
     d = T.data('test-look')
+    ok_av = T.validate(pack(good(frankAvatar='assets/f.svg'), extra={'assets/f.svg': SVG}))
+    check('a Frank avatar picture is accepted', ok_av['ok'], ok_av)
     check('data for the app: texts, icons, colours of kinds, picture addresses', d and d['strings'] == {'tab.rack': 'Дом'} and 'home' in d['icons'] and d['kindColors']['router'] == '#38bdf8'
           and d['appIcons']['rack'] == '/themes/test-look/assets/a.svg', d)
     check('a picture of the look is served', T.asset('test-look', 'assets/a.svg') and T.asset('test-look', 'assets/a.svg')[1] == 'image/svg+xml')
@@ -74,6 +76,8 @@ try:
     bad('an outside url() in css', pack(css='html[data-theme-id="test-look"] .card { background: url(https://evil.example/x.png); }'), 'url(')
     bad('a backslash escape in css', pack(css='html[data-theme-id="test-look"] .card { color: \\72 ed; }'), 'экранирование')
     bad('expression() in css', pack(css='html[data-theme-id="test-look"] .card { width: expression(alert(1)); }'), 'запрещённое')
+    bad('a Frank avatar that is not in the archive', pack(good(frankAvatar='assets/none.svg')), 'frankAvatar')
+    bad('a script inside the Frank avatar', pack(good(frankAvatar='assets/f.svg'), extra={'assets/f.svg': '<svg onload="x()"/>'}), 'скрипт')
     bad('a missing picture', pack(good(appIcons={'rack': 'assets/none.svg'})), 'не найден')
     bad('a bad token value (url)', pack(good(tokens={'dark': {'--bg': 'url(x)'}})), 'недопустимое')
     bad('a bad icon path', pack(good(icons={'home': '<script>'})), 'путь SVG')
@@ -108,6 +112,7 @@ try:
     # ── the instruction for authors is complete: every text, icon, token and step is in it ──
     g = T.guide_text(); dfl = T.defaults()
     missing = [k for k in list(dfl['strings']) + dfl['icons'] + list(th.TOKENS) + dfl['tourSteps'] if k not in g]
+    check('the guide mentions ports, hints, Frank and frankAvatar', all(w in g for w in ('--faceplate-bg', '--port-g', '--hint-bg', '--frank-iris-1', 'frankAvatar', '.faceplate')))
     check('the guide lists every text key, icon, variable and tour step', not missing and len(dfl['icons']) > 50 and len(dfl['strings']) > 30, missing[:8])
     check('the guide has the rules a neural network needs (scope, forbidden, limits, checklist)', all(w in g for w in ('html[data-theme-id=', 'ЗАПРЕЩЕНО', 'ЧЕК-ЛИСТ', 'api', 'zip')))
     check('removing a look deletes its files', T.remove('test-look') and not os.path.exists(os.path.join(tmp, 'themes', 'test-look')) and not T.list())

@@ -26,8 +26,8 @@ function FrankHero({ size = 84, still, mode = 'point', refs }) {
   return <div className={'tour-frank' + (still ? ' still' : '')} style={{ width: size, height: size }}>
     <svg viewBox="0 0 100 100" width={size} height={size} style={{ overflow: 'visible' }}>
       <defs>
-        <radialGradient id={'tfi' + id} cx=".38" cy=".32" r=".75"><stop offset="0" stopColor="#8fd0ff" /><stop offset=".5" stopColor="#0a84ff" /><stop offset="1" stopColor="#0a3a96" /></radialGradient>
-        <radialGradient id={'tfg' + id} cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="#0a84ff" stopOpacity=".45" /><stop offset="1" stopColor="#0a84ff" stopOpacity="0" /></radialGradient>
+        <radialGradient id={'tfi' + id} cx=".38" cy=".32" r=".75"><stop offset="0" style={{ stopColor: 'var(--frank-iris-0, #8fd0ff)' }} /><stop offset=".5" style={{ stopColor: 'var(--frank-iris-1, #0a84ff)' }} /><stop offset="1" style={{ stopColor: 'var(--frank-iris-2, #0a3a96)' }} /></radialGradient>
+        <radialGradient id={'tfg' + id} cx=".5" cy=".5" r=".5"><stop offset="0" style={{ stopColor: 'var(--frank-glow, #0a84ff)' }} stopOpacity=".45" /><stop offset="1" style={{ stopColor: 'var(--frank-glow, #0a84ff)' }} stopOpacity="0" /></radialGradient>
         <clipPath id={'tfc' + id}><path d={TOUR_EYE} /></clipPath>
       </defs>
       <g className="tf-bob">
@@ -38,13 +38,13 @@ function FrankHero({ size = 84, still, mode = 'point', refs }) {
           <g className={mode === 'wave' ? 'tf-wave' : ''}>
             <path ref={e => { r.armPath = e; }} d="M0 0Q26 -7 46 0" stroke="#d5dbea" strokeWidth="3.6" fill="none" strokeLinecap="round" />
             <g ref={e => { r.hand = e; }} transform="translate(50 0)"><g transform="scale(1.15)"><TourHand kind={mode} /></g></g></g></g>
-        <g transform="translate(50 52) scale(2.3) translate(-20 -20)">
-          <path d={TOUR_EYE} fill="#f7f9ff" />
+        {THEME.frankAvatar ? <image href={THEME.frankAvatar} x="8" y="10" width="84" height="84" preserveAspectRatio="xMidYMid meet" /> : <g transform="translate(50 52) scale(2.3) translate(-20 -20)">
+          <path d={TOUR_EYE} style={{ fill: 'var(--frank-sclera, #f7f9ff)' }} />
           <g clipPath={`url(#tfc${id})`}>
-            <g ref={e => { r.look = e; }}><circle cx="20" cy="20" r="8.6" fill={`url(#tfi${id})`} /><circle cx="20" cy="20" r="3.8" fill="#081020" /><circle cx="22.6" cy="17.4" r="1.6" fill="#fff" /></g>
-            <path className="tf-lid" d="M-2 5H42V34H-2Z" fill="#2c2e3c" /></g>
+            <g ref={e => { r.look = e; }}><circle cx="20" cy="20" r="8.6" fill={`url(#tfi${id})`} /><circle cx="20" cy="20" r="3.8" style={{ fill: 'var(--frank-pupil, #081020)' }} /><circle cx="22.6" cy="17.4" r="1.6" fill="#fff" /></g>
+            <path className="tf-lid" d="M-2 5H42V34H-2Z" style={{ fill: 'var(--frank-lid, #2c2e3c)' }} /></g>
           <path d={TOUR_EYE} fill="none" stroke="#081020" strokeOpacity=".45" strokeWidth=".7" />
-          <path d="M8.5 5.6Q20 3.6 31.5 8" stroke="#e4e9ff" strokeWidth="2.4" fill="none" strokeLinecap="round" /></g>
+          <path d="M8.5 5.6Q20 3.6 31.5 8" stroke="#e4e9ff" strokeWidth="2.4" fill="none" strokeLinecap="round" /></g>}
       </g>
     </svg></div>;
 }

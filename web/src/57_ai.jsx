@@ -8,6 +8,7 @@ const EYE = 'M3 20C8 11 14 7.5 20 7.5S32 11 37 20C32 29 26 32.5 20 32.5S8 29 3 2
 function FrankEye({ size = 34, busy, mood, round }) {
   const id = React.useId().replace(/:/g, '');
   const m = mood != null ? mood : busy ? 1 : 0;
+  if (THEME.frankAvatar) return <div className={'frank m' + m + (m ? ' busy' : '')} style={{ width: size, height: size, borderRadius: round != null ? round : size * .32 }}><img className="frank-img" src={THEME.frankAvatar} alt="" draggable="false" /></div>;      // the look brings its own picture
   return <div className={'frank m' + m + (m ? ' busy' : '')} style={{ width: size, height: size, borderRadius: round != null ? round : size * .32 }}>
     <svg viewBox="0 0 40 40" width={size * .8} height={size * .8}>
       <defs>
@@ -16,13 +17,13 @@ function FrankEye({ size = 34, busy, mood, round }) {
       </defs>
       <g className="frank-body">
         <g className="frank-eye">
-          <path d={EYE} fill="#f4f6ff" />
+          <path d={EYE} style={{ fill: 'var(--frank-sclera, #f4f6ff)' }} />
           <g clipPath={`url(#fe${id})`}>
             <g className="frank-iris">
               <circle cx="20" cy="20" r="8.6" fill={`url(#fi${id})`} />
-              <g className="frank-pupil"><circle cx="20" cy="20" r="3.8" fill="#081020" /><circle cx="22.6" cy="17.4" r="1.6" fill="#fff" /></g>
+              <g className="frank-pupil"><circle cx="20" cy="20" r="3.8" style={{ fill: 'var(--frank-pupil, #081020)' }} /><circle cx="22.6" cy="17.4" r="1.6" fill="#fff" /></g>
             </g>
-            <g className="frank-lid"><path d="M-2 -8H42V17L-2 10Z" fill="#2c2e3c" /><path d="M-2 10L42 17" stroke="#081020" strokeWidth="1.6" /></g>
+            <g className="frank-lid"><path d="M-2 -8H42V17L-2 10Z" style={{ fill: 'var(--frank-lid, #2c2e3c)' }} /><path d="M-2 10L42 17" stroke="#081020" strokeWidth="1.6" /></g>
           </g>
           <path d={EYE} fill="none" stroke="#081020" strokeOpacity=".35" strokeWidth="1.2" />
         </g>

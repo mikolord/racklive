@@ -29,7 +29,7 @@ async function loadTheme() {
   try {
     const r = await fetch(`/themes/${id}/data.json`, { cache: 'no-cache' }); const d = await r.json();
     if (d.off) throw new Error('off');
-    Object.assign(THEME, { id, strings: d.strings || {}, icons: d.icons || {}, kindColors: d.kindColors || {}, appIcons: d.appIcons || {} });
+    Object.assign(THEME, { id, strings: d.strings || {}, icons: d.icons || {}, kindColors: d.kindColors || {}, appIcons: d.appIcons || {}, frankAvatar: d.frankAvatar || null });
   } catch (e) {
     const m = themeMeta(); lsSet('rl_skin', 'classic'); lsSet('rl_theme_meta', ''); THEME.offNote = (m && m.name) || id;
     const h = document.documentElement; h.removeAttribute('data-theme-id'); h.removeAttribute('data-skin');      // back to the original look

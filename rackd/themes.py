@@ -40,6 +40,18 @@ TOKENS = {
     '--unit-bg': 'юнит: фон (можно градиент)', '--unit-meta': 'юнит: подпись', '--unit-icon-bg': 'юнит: подложка значка', '--unit-shadow': 'юнит: тень и блик',
     '--unit-passive': 'пассивный юнит (патч-панель): узор', '--unit-blank': 'заглушка',
     '--led-off': 'светодиод порта: нет линка', '--led-dead': 'светодиод: порт с проблемой',
+    '--faceplate-bg': 'ПАНЕЛЬ ПОРТОВ: подложка (по умолчанию тёмная; можно градиент)', '--faceplate-radius': 'панель портов: скругление подложки',
+    '--port-bg': 'порт без линка: фон', '--port-border': 'порт без линка: рамка', '--port-text': 'порт: цвет номера', '--port-radius': 'порт: скругление (например 6px или 50%)',
+    '--port-w': 'порт: ширина (38px)', '--port-h': 'порт: высота (34px)', '--port-sfp-w': 'порт SFP: ширина (44px)', '--port-sfp-radius': 'порт SFP: скругление',
+    '--port-base': 'порт с линком: тёмная основа, с которой смешивается цвет скорости', '--port-g': 'порт 1 Гбит и выше: цвет', '--port-y': 'порт 100 Мбит: цвет', '--port-o': 'порт 10 Мбит: цвет',
+    '--port-link-text': 'порт с линком: цвет номера', '--port-dis': 'порт отключён/ошибка: рамка', '--port-dis-bg': 'порт отключён: фон', '--port-wan': 'порт WAN: рамка',
+    '--port-sel': 'выбранный порт: обводка', '--poe-badge': 'значок PoE на порту: цвет',
+    '--hint-bg': 'ПОДСКАЗКА: фон', '--hint-line': 'подсказка: рамка', '--hint-text': 'подсказка: текст', '--hint-ico': 'подсказка: цвет лампочки', '--hint-ico-bg': 'подсказка: подложка лампочки',
+    '--hint-close-bg': 'подсказка: кнопка «Понятно» — фон', '--hint-close-text': 'подсказка: кнопка «Понятно» — текст', '--hint-radius': 'подсказка: скругление',
+    '--frank-bg': 'FRANK: плитка за глазом', '--frank-sclera': 'Frank: белок глаза', '--frank-pupil': 'Frank: зрачок', '--frank-lid': 'Frank: веко',
+    '--frank-iris-0': 'Frank: радужка, светлый край', '--frank-iris-1': 'Frank: радужка, основной цвет', '--frank-iris-2': 'Frank: радужка, тёмный край', '--frank-glow': 'Frank в обучении: цвет сияния',
+    '--frank-m2-0': 'Frank «напряжён» (долгий запрос): светлый', '--frank-m2-1': 'Frank «напряжён»: основной', '--frank-m2-2': 'Frank «напряжён»: тёмный',
+    '--frank-m3-0': 'Frank «тревога» (очень долго): светлый', '--frank-m3-1': 'Frank «тревога»: основной', '--frank-m3-2': 'Frank «тревога»: тёмный',
     '--map-rack-frame': 'карта: рамка шкафа', '--map-rack-stroke': 'карта: контур шкафа', '--map-unit': 'карта: юнит и устройство', '--map-unit-stroke': 'карта: контур юнита',
 }
 # class names that are promised to stay (a look may style them); other classes work too but earn a warning: an update may rename them
@@ -48,6 +60,7 @@ chip on badge online offline warning seg switch input select textarea modal moda
 wg wg-in wg-body wg-tile wg-tile-ic wg-tile-name wg-tile-art wg-tile-big wg-tile-v wg-tile-s size-S size-M size-L dash mini-svg gauge gauge-val gauge-bar dev-card cards grid
 set-layout set-nav set-item set-ic ios-group ios-cell ios-label ios-val ios-list auth look-skin look-prev ai-panel ai-head ai-bubble ai-msg ai-list ai-foot user assistant err frank frank-btn
 fr-top fr-title fr-circle fr-dock fr-send fr-dbtn fr-model tour-layer tour-dim tour-ring tour-bubble tour-title tour-text tour-next tour-link tour-skip tour-dots tour-hint tour-card tour-block
+faceplate ports port sel g y o dis sfp wan poe vl legend hint-ico frank-img frank-eye frank-iris frank-pupil frank-lid frank-brow frank-body s0 s1 s2 m0 m1 m2 m3 busy tour-frank tf-bob
 hdr-menu hdr-tiles hdr-row advice advice-t advice-ic sys-log link-btn found-type netscan-row mono dim dim3 row col grow wrap center between ellipsis app-ic-c app-ic-g'''.split())
 
 _KIND_FALLBACK = ['router', 'switch', 'server', 'nas', 'ap', 'camera', 'nvr', 'phone', 'tablet', 'tv', 'laptop', 'pc', 'printer', 'speaker', 'iot', 'internet', 'web', 'ups', 'patch', 'cross', 'pdu', 'modem', 'other']
@@ -332,6 +345,8 @@ class Themes:
                 warnings.append(f'appIcons.{k}: есть только {", ".join(APP_ICON_SLOTS)} (игнорируется)')
             else:
                 pic(rel, f'appIcons.{k}')
+        if m.get('frankAvatar') is not None:
+            pic(m['frankAvatar'], 'frankAvatar')
         pwa = m.get('pwa') or {}
         if not isinstance(pwa, dict):
             errors.append('pwa: объект {"favicon": …, "appleTouch": …, "icon192": …, "icon512": …}')
@@ -524,7 +539,7 @@ class Themes:
                 'strings': {k: v for k, v in (m.get('strings') or {}).items() if k in self.defaults()['strings']},
                 'icons': {k: v for k, v in (m.get('icons') or {}).items() if isinstance(v, str)},
                 'kindColors': {k: v for k, v in (m.get('kindColors') or {}).items() if k in self.defaults()['kinds']},
-                'appIcons': {k: url(v) for k, v in (m.get('appIcons') or {}).items() if k in APP_ICON_SLOTS}, 'pwa': pwa, 'rev': self.rev,
+                'appIcons': {k: url(v) for k, v in (m.get('appIcons') or {}).items() if k in APP_ICON_SLOTS}, 'frankAvatar': url(m.get('frankAvatar')), 'pwa': pwa, 'rev': self.rev,
                 'installed': (self.status.get(tid) or {}).get('installed')}
 
     def asset(self, tid, rel):
@@ -614,6 +629,7 @@ class Themes:
         w('  "icons": { "home": "M3 11l9-8 9 8..." },   // свои иконки, раздел 7')
         w('  "kindColors": { "router": "#38bdf8" },     // цвета значков типов устройств, раздел 7')
         w('  "appIcons": { "rack": "assets/rack.svg", "frank": "assets/frank.svg", "speed": "assets/speed.svg" },  // иконки приложений в интерфейсе')
+        w('  "frankAvatar": "assets/frank-eye.svg",   // СВОЯ КАРТИНКА ВМЕСТО ГЛАЗА Frank (кнопка в шапке, чат, обучение); без неё глаз рисуется сам, его цвета — переменные --frank-…')
         w('  "pwa": { "favicon": "assets/fav.svg", "appleTouch": "assets/touch-180.png", "icon192": "assets/i192.png", "icon512": "assets/i512.png" },  // значки для экрана «Домой»')
         w('  "preview": "assets/preview.png"   // необязательно: картинка для карточки темы')
         w('}')
@@ -658,6 +674,16 @@ class Themes:
         w('pwa.favicon — значок вкладки (svg или png). pwa.appleTouch — PNG 180×180, pwa.icon192 — PNG 192×192, pwa.icon512 — PNG 512×512: ими пользуется iPhone/Android')
         w('при добавлении на экран «Домой». ВАЖНО: уже установленный значок на телефоне сам не меняется — нужно удалить его и добавить заново после выбора темы.')
         w('SVG: без скриптов, без внешних ссылок, без foreignObject, без атрибутов on…=.')
+        w('')
+        w('8б. ПАНЕЛЬ ПОРТОВ, ПОДСКАЗКИ И FRANK — ЧТО ЕЩЁ МОЖНО ОФОРМИТЬ')
+        w('   • Панель портов коммутатора/роутера (в карточке устройства): подложка — --faceplate-bg (по умолчанию тёмная; сделайте светлой или цветной), цвета состояний портов — --port-g (1 Гбит), --port-y (100 Мбит),')
+        w('     --port-o (10 Мбит), --port-dis, --port-wan, форма и размер — --port-radius, --port-w, --port-h; значок PoE — --poe-badge и иконка "bolt" в icons. Классы для CSS: .faceplate .ports .port .port.g .port.y .port.o')
+        w('     .port.dis .port.sfp .port.wan .port.sel .poe .vl. Пример своей формы и картинки в порту:')
+        w('       html[data-theme-id="ID"] .port { border-radius: 50%; }')
+        w('       html[data-theme-id="ID"] .port.g { background-image: url(assets/port-up.svg); background-size: 62%; background-repeat: no-repeat; background-position: center; }')
+        w('   • Подсказки (жёлтые плашки вверху вкладок): --hint-bg, --hint-line, --hint-text, --hint-ico, --hint-ico-bg, --hint-close-bg, --hint-close-text, --hint-radius; иконка лампочки — icons "bulb"; класс .hint-box.')
+        w('   • Frank: глаз рисуется сам — его цвета задают --frank-sclera (белок), --frank-pupil, --frank-lid (веко), --frank-iris-0/1/2 (радужка), --frank-bg (плитка за глазом), --frank-glow (сияние в обучении),')
+        w('     настроения --frank-m2-* («напряжён») и --frank-m3-* («тревога»). ИЛИ замените глаз своей картинкой: "frankAvatar": "assets/файл.svg" (svg/png/webp, квадрат). Имя — strings "frank.name"; значок приложения — appIcons.frank.')
         w('')
         w('8а. ПОДСКАЗКИ И ЛОВУШКИ ДЛЯ АВТОРА')
         w('   • Сначала tokens, потом css. Цвета через переменные работают везде, в том числе внутри шкафа, карты и виджетов, и переживают обновления лучше всего.')

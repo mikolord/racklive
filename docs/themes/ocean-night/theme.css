@@ -8,4 +8,5 @@ html[data-theme-id="ocean-night"] .wg-body > .card { box-shadow: none; border: 0
 html[data-theme-id="ocean-night"] .tour-bubble { border-radius: 24px; background: #0b1d33; border: 1px solid #28507d; }
 html[data-theme-id="ocean-night"] .page-title { letter-spacing: -.6px; background: linear-gradient(90deg, #e8f4ff, #7fd1ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
 html[data-theme-id="ocean-night"][data-theme="light"] .page-title { background: linear-gradient(90deg, #0b2740, #0a7fd6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+html[data-theme-id="ocean-night"] .port.g { background-image: url(assets/port-up.svg); background-size: 58%; background-repeat: no-repeat; background-position: center 70%; }     /* свой значок на порту с линком */
 @media (max-width: 760px) { html[data-theme-id="ocean-night"] .bottombar { border-radius: 30px; } }

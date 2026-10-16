@@ -40,7 +40,25 @@
       "--led-off": "#1c3556",
       "--map-rack-frame": "#0a1b2d",
       "--map-rack-stroke": "#28507d",
-      "--map-unit": "#12304f"
+      "--map-unit": "#12304f",
+      "--faceplate-bg": "linear-gradient(180deg, #0f3157, #0a2340)",
+      "--port-bg": "#16385c",
+      "--port-border": "#2b5d94",
+      "--port-radius": "9px",
+      "--port-base": "#0a2340",
+      "--port-g": "#3ddc97",
+      "--port-y": "#ffd479",
+      "--port-o": "#ffa45c",
+      "--poe-badge": "#7fd1ff",
+      "--hint-bg": "rgba(51,182,255,.10)",
+      "--hint-line": "rgba(51,182,255,.45)",
+      "--hint-ico": "#7fd1ff",
+      "--hint-ico-bg": "rgba(51,182,255,.18)",
+      "--frank-iris-0": "#b9f3ff",
+      "--frank-iris-1": "#33b6ff",
+      "--frank-iris-2": "#0a4f8a",
+      "--frank-glow": "#33b6ff",
+      "--frank-bg": "#0f2742"
     },
     "light": {
       "--bg": "#eaf4fb",
@@ -62,7 +80,17 @@
       "--rack-bg": "linear-gradient(180deg, #f4faff, #d9ebf8)",
       "--rack-body": "#cfe3f3",
       "--unit-bg": "linear-gradient(180deg, #ffffff, #eaf4fb)",
-      "--led-off": "#b9d0e4"
+      "--led-off": "#b9d0e4",
+      "--faceplate-bg": "linear-gradient(180deg, #e3f1fb, #cfe3f3)",
+      "--port-bg": "#ffffff",
+      "--port-border": "#9cc0dc",
+      "--port-text": "#4b6a85",
+      "--port-base": "#ffffff",
+      "--port-link-text": "#0b2740",
+      "--hint-bg": "rgba(10,127,214,.08)",
+      "--hint-line": "rgba(10,127,214,.40)",
+      "--hint-ico": "#0a7fd6",
+      "--hint-ico-bg": "rgba(10,127,214,.14)"
     },
     "all": {
       "--r": "14px",
@@ -89,9 +117,11 @@
     "tour.devices.title": "Начнём с кораблей",
     "tour.end.title": "Попутного ветра!"
   },
+  "frankAvatar": "assets/frank-eye.svg",
   "icons": {
     "home": "M12 3a2 2 0 100 4 2 2 0 000-4M12 7v14M5 12H3a9 9 0 0018 0h-2",
-    "bell": "M6 8a6 6 0 0112 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 004 0"
+    "bell": "M6 8a6 6 0 0112 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 004 0",
+    "bulb": "M12 2a6 6 0 00-3 11v3h6v-3a6 6 0 00-3-11M10 20h4M11 22h2"
   },
   "kindColors": {
     "router": "#33b6ff",

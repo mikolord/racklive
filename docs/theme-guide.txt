@@ -33,6 +33,7 @@
   "icons": { "home": "M3 11l9-8 9 8..." },   // свои иконки, раздел 7
   "kindColors": { "router": "#38bdf8" },     // цвета значков типов устройств, раздел 7
   "appIcons": { "rack": "assets/rack.svg", "frank": "assets/frank.svg", "speed": "assets/speed.svg" },  // иконки приложений в интерфейсе
+  "frankAvatar": "assets/frank-eye.svg",   // СВОЯ КАРТИНКА ВМЕСТО ГЛАЗА Frank (кнопка в шапке, чат, обучение); без неё глаз рисуется сам, его цвета — переменные --frank-…
   "pwa": { "favicon": "assets/fav.svg", "appleTouch": "assets/touch-180.png", "icon192": "assets/i192.png", "icon512": "assets/i512.png" },  // значки для экрана «Домой»
   "preview": "assets/preview.png"   // необязательно: картинка для карточки темы
 }
@@ -93,6 +94,48 @@
    --unit-blank   — заглушка
    --led-off      — светодиод порта: нет линка
    --led-dead     — светодиод: порт с проблемой
+   --faceplate-bg — ПАНЕЛЬ ПОРТОВ: подложка (по умолчанию тёмная; можно градиент)
+   --faceplate-radius — панель портов: скругление подложки
+   --port-bg      — порт без линка: фон
+   --port-border  — порт без линка: рамка
+   --port-text    — порт: цвет номера
+   --port-radius  — порт: скругление (например 6px или 50%)
+   --port-w       — порт: ширина (38px)
+   --port-h       — порт: высота (34px)
+   --port-sfp-w   — порт SFP: ширина (44px)
+   --port-sfp-radius — порт SFP: скругление
+   --port-base    — порт с линком: тёмная основа, с которой смешивается цвет скорости
+   --port-g       — порт 1 Гбит и выше: цвет
+   --port-y       — порт 100 Мбит: цвет
+   --port-o       — порт 10 Мбит: цвет
+   --port-link-text — порт с линком: цвет номера
+   --port-dis     — порт отключён/ошибка: рамка
+   --port-dis-bg  — порт отключён: фон
+   --port-wan     — порт WAN: рамка
+   --port-sel     — выбранный порт: обводка
+   --poe-badge    — значок PoE на порту: цвет
+   --hint-bg      — ПОДСКАЗКА: фон
+   --hint-line    — подсказка: рамка
+   --hint-text    — подсказка: текст
+   --hint-ico     — подсказка: цвет лампочки
+   --hint-ico-bg  — подсказка: подложка лампочки
+   --hint-close-bg — подсказка: кнопка «Понятно» — фон
+   --hint-close-text — подсказка: кнопка «Понятно» — текст
+   --hint-radius  — подсказка: скругление
+   --frank-bg     — FRANK: плитка за глазом
+   --frank-sclera — Frank: белок глаза
+   --frank-pupil  — Frank: зрачок
+   --frank-lid    — Frank: веко
+   --frank-iris-0 — Frank: радужка, светлый край
+   --frank-iris-1 — Frank: радужка, основной цвет
+   --frank-iris-2 — Frank: радужка, тёмный край
+   --frank-glow   — Frank в обучении: цвет сияния
+   --frank-m2-0   — Frank «напряжён» (долгий запрос): светлый
+   --frank-m2-1   — Frank «напряжён»: основной
+   --frank-m2-2   — Frank «напряжён»: тёмный
+   --frank-m3-0   — Frank «тревога» (очень долго): светлый
+   --frank-m3-1   — Frank «тревога»: основной
+   --frank-m3-2   — Frank «тревога»: тёмный
    --map-rack-frame — карта: рамка шкафа
    --map-rack-stroke — карта: контур шкафа
    --map-unit     — карта: юнит и устройство
@@ -109,17 +152,20 @@
 СТАБИЛЬНЫЕ КЛАССЫ (их названия не меняются без повышения api; стильте их свободно):
    .advice .advice-ic .advice-t .ai-bubble .ai-foot .ai-head .ai-list .ai-msg .ai-panel .app-bg 
    .app-ic-c .app-ic-g .assistant .auth .badge .between .bottombar .brand .brand-text .brand-title 
-   .btn .card .card-title .cards .center .chip .col .count .danger .dash .dev-card .dim .dim3 .dot 
-   .ellipsis .empty .err .ev .found-type .fr-circle .fr-dbtn .fr-dock .fr-model .fr-send .fr-title 
-   .fr-top .frank .frank-btn .gauge .gauge-bar .gauge-val .ghost .grid .grow .hdr-menu .hdr-more 
-   .hdr-row .hdr-tiles .hdr-tools .hint-box .hint-close .icon .input .ios-cell .ios-group .ios-label 
-   .ios-list .ios-val .li .link-btn .list .live .look-prev .look-skin .mini-svg .modal .modal-body 
-   .modal-head .mono .netscan-row .offline .on .online .overlay .page .page-sub .page-title .primary 
-   .row .seg .select .set-ic .set-item .set-layout .set-nav .sheet .size-L .size-M .size-S .sm .stat 
-   .state-tile .stats .switch .sys-log .tab .tab-label .tabs .textarea .tile .toast .topbar 
-   .tour-block .tour-bubble .tour-card .tour-dim .tour-dots .tour-hint .tour-layer .tour-link 
-   .tour-next .tour-ring .tour-skip .tour-text .tour-title .user .warning .wg .wg-body .wg-in 
-   .wg-tile .wg-tile-art .wg-tile-big .wg-tile-ic .wg-tile-name .wg-tile-s .wg-tile-v .wrap 
+   .btn .busy .card .card-title .cards .center .chip .col .count .danger .dash .dev-card .dim .dim3 
+   .dis .dot .ellipsis .empty .err .ev .faceplate .found-type .fr-circle .fr-dbtn .fr-dock .fr-model 
+   .fr-send .fr-title .fr-top .frank .frank-body .frank-brow .frank-btn .frank-eye .frank-img 
+   .frank-iris .frank-lid .frank-pupil .g .gauge .gauge-bar .gauge-val .ghost .grid .grow .hdr-menu 
+   .hdr-more .hdr-row .hdr-tiles .hdr-tools .hint-box .hint-close .hint-ico .icon .input .ios-cell 
+   .ios-group .ios-label .ios-list .ios-val .legend .li .link-btn .list .live .look-prev .look-skin 
+   .m0 .m1 .m2 .m3 .mini-svg .modal .modal-body .modal-head .mono .netscan-row .o .offline .on 
+   .online .overlay .page .page-sub .page-title .poe .port .ports .primary .row .s0 .s1 .s2 .seg .sel 
+   .select .set-ic .set-item .set-layout .set-nav .sfp .sheet .size-L .size-M .size-S .sm .stat 
+   .state-tile .stats .switch .sys-log .tab .tab-label .tabs .textarea .tf-bob .tile .toast .topbar 
+   .tour-block .tour-bubble .tour-card .tour-dim .tour-dots .tour-frank .tour-hint .tour-layer 
+   .tour-link .tour-next .tour-ring .tour-skip .tour-text .tour-title .user .vl .wan .warning .wg 
+   .wg-body .wg-in .wg-tile .wg-tile-art .wg-tile-big .wg-tile-ic .wg-tile-name .wg-tile-s .wg-tile-v 
+   .wrap .y 
 Другие классы тоже можно использовать, но Rack Live покажет предупреждение: при обновлении они могут быть переименованы, и этот кусок темы перестанет действовать.
 Совет: сначала меняйте цвета через tokens — это самое устойчивое; theme.css используйте для формы, теней, картинок, анимаций.
 
@@ -180,6 +226,16 @@ appIcons.rack / frank / speed — картинки (svg, png, jpg, webp), пок
 pwa.favicon — значок вкладки (svg или png). pwa.appleTouch — PNG 180×180, pwa.icon192 — PNG 192×192, pwa.icon512 — PNG 512×512: ими пользуется iPhone/Android
 при добавлении на экран «Домой». ВАЖНО: уже установленный значок на телефоне сам не меняется — нужно удалить его и добавить заново после выбора темы.
 SVG: без скриптов, без внешних ссылок, без foreignObject, без атрибутов on…=.
+
+8б. ПАНЕЛЬ ПОРТОВ, ПОДСКАЗКИ И FRANK — ЧТО ЕЩЁ МОЖНО ОФОРМИТЬ
+   • Панель портов коммутатора/роутера (в карточке устройства): подложка — --faceplate-bg (по умолчанию тёмная; сделайте светлой или цветной), цвета состояний портов — --port-g (1 Гбит), --port-y (100 Мбит),
+     --port-o (10 Мбит), --port-dis, --port-wan, форма и размер — --port-radius, --port-w, --port-h; значок PoE — --poe-badge и иконка "bolt" в icons. Классы для CSS: .faceplate .ports .port .port.g .port.y .port.o
+     .port.dis .port.sfp .port.wan .port.sel .poe .vl. Пример своей формы и картинки в порту:
+       html[data-theme-id="ID"] .port { border-radius: 50%; }
+       html[data-theme-id="ID"] .port.g { background-image: url(assets/port-up.svg); background-size: 62%; background-repeat: no-repeat; background-position: center; }
+   • Подсказки (жёлтые плашки вверху вкладок): --hint-bg, --hint-line, --hint-text, --hint-ico, --hint-ico-bg, --hint-close-bg, --hint-close-text, --hint-radius; иконка лампочки — icons "bulb"; класс .hint-box.
+   • Frank: глаз рисуется сам — его цвета задают --frank-sclera (белок), --frank-pupil, --frank-lid (веко), --frank-iris-0/1/2 (радужка), --frank-bg (плитка за глазом), --frank-glow (сияние в обучении),
+     настроения --frank-m2-* («напряжён») и --frank-m3-* («тревога»). ИЛИ замените глаз своей картинкой: "frankAvatar": "assets/файл.svg" (svg/png/webp, квадрат). Имя — strings "frank.name"; значок приложения — appIcons.frank.
 
 8а. ПОДСКАЗКИ И ЛОВУШКИ ДЛЯ АВТОРА
    • Сначала tokens, потом css. Цвета через переменные работают везде, в том числе внутри шкафа, карты и виджетов, и переживают обновления лучше всего.
