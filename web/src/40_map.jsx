@@ -120,9 +120,87 @@ function layoutMap(data, collapsed) {
   return { nodes, pos, edges, groups, hasRack, rackNode, racks: Object.values(rackMeta), rooms };
 }
 
+/* other ways to see the same network (the choice is kept in this browser): a classic top-down tree, rings around the internet / main router, and columns by network.
+   They use the same nodes and wires as the default scheme; only the places differ (no rack frames, and dragging cards is for the default scheme). */
+const MAP_STYLES = [['columns', 'Схема со шкафом'], ['tree', 'Дерево сверху вниз'], ['radial', 'Кольца вокруг роутера'], ['groups', 'Столбцы по сетям']];
+
+function layoutAlt(data, style, collapsed) {
+  const base = layoutMap(data, collapsed);
+  const nodes = base.nodes;
+  const CWA = M.CW + 44;                                              // cards of these views are wider than in the default scheme: long names fit
+  const sizeOf = id => { const n = nodes[id]; return n.kind === 'group' || n.client ? [CWA, M.CH] : [M.NW + 40, M.NH]; };
+  const tree = base.edges.filter(e => !e.extra && !e.manual && nodes[e.source] && nodes[e.target]);
+  const kids = {}, hasParent = new Set();
+  tree.forEach(e => { if (hasParent.has(e.target)) return; hasParent.add(e.target); (kids[e.source] = kids[e.source] || []).push(e.target); });
+  const byLabel = (a, b) => String(nodes[a].label).localeCompare(String(nodes[b].label), 'ru');
+  Object.values(kids).forEach(l => l.sort((a, b) => (nodes[a].client ? 1 : 0) - (nodes[b].client ? 1 : 0) || byLabel(a, b)));
+  const roots = Object.keys(nodes).filter(id => !hasParent.has(id)).sort((a, b) => (a === 'inet' ? -1 : b === 'inet' ? 1 : 0) || (kids[b] || []).length - (kids[a] || []).length);
+  const pos = {}; let headers = [];
+  if (style === 'tree') {
+    const GX = 26, DOWN = 74;
+    const cols = n => Math.min(5, Math.max(1, Math.ceil(Math.sqrt(n))));
+    const split = id => { const ks = kids[id] || []; return [ks.filter(k => (kids[k] || []).length), ks.filter(k => !(kids[k] || []).length)]; };
+    const W = {}, KW = {};
+    const measure = id => {
+      const [br, lv] = split(id); const bw = br.reduce((s, k) => s + measure(k) + GX, -GX);
+      const lw = lv.length ? cols(lv.length) * (CWA + GX) - GX : 0;
+      KW[id] = (br.length ? bw : 0) + (br.length && lv.length ? GX * 2 : 0) + lw;
+      return W[id] = Math.max(sizeOf(id)[0], KW[id]);
+    };
+    const place = (id, x0, y) => {
+      const [w, h] = sizeOf(id); pos[id] = { x: x0 + (W[id] - w) / 2, y, w, h };
+      const [br, lv] = split(id); let x = x0 + (W[id] - KW[id]) / 2; const y2 = y + h + DOWN;
+      br.forEach(k => { place(k, x, y2); x += W[k] + GX; });
+      if (lv.length) { if (br.length) x += GX; const c = cols(lv.length); lv.forEach((k, i) => { pos[k] = { x: x + (i % c) * (CWA + GX), y: y2 + Math.floor(i / c) * (M.CH + 14), w: CWA, h: M.CH }; }); }
+    };
+    roots.slice(1).forEach(r => { (kids[roots[0]] = kids[roots[0]] || []).push(r); });          // everything not tied to the top (remote devices …) hangs under it, as a tidy block
+    measure(roots[0]); place(roots[0], 0, 0);
+  } else if (style === 'radial') {
+    const top = roots[0]; roots.slice(1).forEach(r => { (kids[top] = kids[top] || []).push(r); });
+    const lc = {}, depth = { [top]: 0 };
+    const count = id => lc[id] = (kids[id] || []).length ? (kids[id] || []).reduce((s, k) => { depth[k] = depth[id] + 1; return s + count(k); }, 0) : 1;
+    count(top);
+    const perDepth = {}; Object.entries(depth).forEach(([id, d]) => { perDepth[d] = (perDepth[d] || 0) + 1; });
+    const R = { 0: 0 }; Object.keys(perDepth).map(Number).sort((a, b) => a - b).forEach(d => { if (d) R[d] = Math.max(R[d - 1] + 270, perDepth[d] * (CWA + 26) / (2 * Math.PI)); });
+    const put = (id, a0, a1) => {
+      const [w, h] = sizeOf(id); const a = (a0 + a1) / 2, r = R[depth[id]] || 0;
+      pos[id] = { x: r * Math.cos(a) - w / 2, y: r * Math.sin(a) - h / 2, w, h };
+      let s = a0; (kids[id] || []).forEach(k => { const span = (a1 - a0) * lc[k] / lc[id]; put(k, s, s + span); s += span; });
+    };
+    put(top, -Math.PI / 2, 3 * Math.PI / 2);
+  } else {                                                          // groups: the equipment in the first column, then one column per network
+    const isInfra = id => !nodes[id].client && nodes[id].kind !== 'group';
+    const infra = Object.keys(nodes).filter(isInfra).sort((a, b) => (a === 'inet' ? -1 : b === 'inet' ? 1 : 0) || byLabel(a, b));
+    infra.forEach((id, i) => { const [w, h] = sizeOf(id); pos[id] = { x: 0, y: i * (h + M.GAP), w, h }; });
+    headers.push({ x: 0, y: -44, w: M.NW, label: 'Оборудование', count: infra.length });
+    const segs = {};
+    Object.keys(nodes).filter(id => !isInfra(id)).forEach(id => { const s = (nodes[id].segment || (nodes[id].kind === 'group' ? 'Wi-Fi' : 'Без сети')); (segs[s] = segs[s] || []).push(id); });
+    let x = M.NW + 90;
+    Object.entries(segs).sort((a, b) => b[1].length - a[1].length).forEach(([name, ids]) => {
+      ids.sort(byLabel); const per = 14, nc = Math.ceil(ids.length / per);
+      ids.forEach((id, i) => { pos[id] = { x: x + Math.floor(i / per) * (CWA + 20), y: (i % per) * (M.CH + 12), w: CWA, h: M.CH }; });
+      headers.push({ x, y: -44, w: nc * (CWA + 20) - 20, label: name, count: ids.length }); x += nc * (CWA + 20) + 50;
+    });
+  }
+  Object.keys(nodes).forEach(id => { if (!pos[id]) { const [w, h] = sizeOf(id); pos[id] = { x: 0, y: 2000, w, h }; } });
+  const edges = base.edges.filter(e => pos[e.source] && pos[e.target] && (style !== 'groups' || (!nodes[e.source].client && !nodes[e.target].client && nodes[e.target].kind !== 'group')));
+  return { nodes, pos, edges, groups: base.groups, hasRack: false, rackNode: {}, racks: [], rooms: base.rooms, style, headers };
+}
+
 function edgePath(e, L) {
   const a = L.pos[e.source], b = L.pos[e.target];
   if (!a || !b) return null;
+  if (L.style === 'tree') {                                           // from the bottom of the parent to the top of the child
+    const ax = a.x + a.w / 2, ay = a.y + a.h, bx = b.x + b.w / 2, by = b.y, my = (ay + by) / 2;
+    if (by > ay + 4) return { d: `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`, lx: bx, ly: by - 18, mx: bx, my };
+    const ay2 = a.y + a.h / 2, by2 = b.y + b.h / 2;                    // side by side / the other way round: connect the sides
+    const sx = b.x > a.x ? a.x + a.w : a.x, tx = b.x > a.x ? b.x : b.x + b.w;
+    return { d: `M${sx},${ay2} C${(sx + tx) / 2},${ay2} ${(sx + tx) / 2},${by2} ${tx},${by2}`, lx: tx, ly: by2, mx: (sx + tx) / 2, my: (ay2 + by2) / 2 };
+  }
+  if (L.style === 'radial') {                                          // straight spokes between centres, the cards sit on top
+    const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+    return { d: `M${ax},${ay} L${bx},${by}`, lx: ax + (bx - ax) * .66, ly: ay + (by - ay) * .66, mx: (ax + bx) / 2, my: (ay + by) / 2 };
+  }
   if (a.rack && b.rack) {            // both in a rack: patch cable (same rack) or backbone (between racks)
     const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, cross = a.rackId !== b.rackId;
     const d = cross ? 80 + Math.min(130, Math.abs(y2 - y1) * .12) : 26 + Math.min(70, Math.abs(y2 - y1) * .18);
@@ -166,17 +244,19 @@ function MapNode({ n, p, sel, dim, mark, onDown, onClick, onDoubleClick }) {
   const iconKind = n.kind === 'group' ? 'wifi' : n.kind;
   const c = KIND_COLOR[iconKind] || KIND_COLOR.other;
   const is = small ? 28 : 34;
+  const room = p.w - (is + 18) - 24, capL = Math.max(8, Math.floor(room / 7.4)), capS = Math.max(10, Math.floor(room / 6.2));      // characters that fit the card (the other map views have wider cards)
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}
     transform={`translate(${p.x},${p.y})`} onPointerDown={onDown} onClick={onClick} onDoubleClick={onDoubleClick}>
     {mark ? <rect className="spof-mark" x={-5} y={-5} width={p.w + 10} height={p.h + 10} rx={small ? 16 : 19} /> : null}
+    <title>{[n.label, n.sub].filter(Boolean).join(' · ')}</title>
     <rect className="box" width={p.w} height={p.h} rx={small ? 12 : 15} />
     {n.room ? <g transform="translate(10,-9)"><rect width={Math.min(p.w - 20, 14 + n.room.length * 6.4)} height={15} rx={7.5} className="room-tag" />
       <text x={7} y={11} className="room-tag-t">{trunc(n.room, Math.floor((p.w - 34) / 6.4))}</text></g> : null}
     <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
     <g transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2})`}><Icon name={iconKind} size={is * .6} color={c} /></g>
-    <text className="lbl" x={is + 18} y={n.sub || n.kind === 'group' ? p.h / 2 - 3 : p.h / 2 + 4}>{trunc(n.label, small ? 19 : 22)}</text>
+    <text className="lbl" x={is + 18} y={n.sub || n.kind === 'group' ? p.h / 2 - 3 : p.h / 2 + 4}>{trunc(n.label, capL)}</text>
     {n.kind === 'group' ? <text className="sub" x={is + 18} y={p.h / 2 + 12}>нажмите, чтобы раскрыть</text>
-      : n.sub ? <text className="sub" x={is + 18} y={p.h / 2 + 13}>{trunc(n.sub, 24)}</text> : null}
+      : n.sub ? <text className="sub" x={is + 18} y={p.h / 2 + 13}>{trunc(n.sub, capS)}</text> : null}
     {n.status && n.kind !== 'group' ? <circle cx={p.w - 13} cy={13} r={4.5} fill={n.status === 'online' ? 'var(--green)' : n.status === 'warning' ? 'var(--orange)' : n.status === 'offline' ? 'var(--red)' : 'var(--text3)'} /> : null}
   </g>;
 }
@@ -198,16 +278,18 @@ function MapView() {
   const spofSet = healthOpen && data.health ? new Set(data.health.spof.filter(s => s.affected >= 3).map(s => s.id)) : null;
   const openCheck = useCheckOpener();
   const wrap = useRef(null);
+  const [style, setStyle] = useState(() => { const v = new URLSearchParams(location.search).get('mapstyle') || lsGet('rl_map_style', 'columns'); return MAP_STYLES.some(x => x[0] === v) ? v : 'columns'; });
   const L = useMemo(() => {
+    if (style !== 'columns') return layoutAlt(data, style, collapsed);
     const l = layoutMap(data, collapsed);
     Object.entries(dragPos).forEach(([id, [x, y]]) => { if (l.pos[id]) Object.assign(l.pos[id], { x, y }); });
     return l;
-  }, [data, collapsed, dragPos]);
+  }, [data, collapsed, dragPos, style]);
 
   const bbox = () => {
     const ps = Object.values(L.pos); if (!ps.length) return { x: 0, y: 0, w: 100, h: 100 };
     const rackBottom = Math.max(0, ...(L.racks || []).map(r => r.y + (r.h || 0)));   // include empty racks
-    const x1 = Math.min(-110, ...ps.map(p => p.x)) - 20, y1 = Math.min(-60, ...ps.map(p => p.y)) - 20;
+    const x1 = Math.min(L.style ? Infinity : -110, ...ps.map(p => p.x)) - 20, y1 = Math.min(L.style ? (L.headers && L.headers.length ? -44 : Infinity) : -60, ...ps.map(p => p.y)) - 20;
     const x2 = Math.max(...ps.map(p => p.x + p.w)) + 20, y2 = Math.max(rackBottom, ...ps.map(p => p.y + p.h)) + 30;
     return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
   };
@@ -291,7 +373,7 @@ function MapView() {
   const dragEnd = useRef(0), ptr = useRef('');            // when the last drag ended / which pointer was used (mouse | touch | pen)
   const nodeDown = (id, e) => {
     ptr.current = e.pointerType || '';
-    if (!edit || L.pos[id].rack || linking) return;
+    if (!edit || L.pos[id].rack || linking || L.style) return;            // cards are dragged in the default scheme only
     e.stopPropagation(); const p0 = { ...L.pos[id] }; const sx = e.clientX, sy = e.clientY; let moved = false;
     // magnet: a card sticks to the grid and to the edges / centres of its neighbours (same idea as the tiles in «Размещение»)
     const others = Object.entries(L.pos).filter(([oid, o]) => oid !== id && !o.rack && L.nodes[oid]).map(([, o]) => o);
@@ -369,6 +451,7 @@ function MapView() {
       <div className="grow" />
       <div className="map-panel">
         {data.health ? <Btn size="sm" icon="pulse" kind={healthOpen ? 'primary' : ''} onClick={() => setHealthOpen(!healthOpen)} title="Анализ сети">Анализ</Btn> : null}
+        <PickMenu right value={style} options={MAP_STYLES} icon="map" showLabel={false} title="Вид карты" head="Вид карты" defaultValue="columns" onChange={v => { setStyle(v); lsSet('rl_map_style', v); setView(null); setSel(null); }} />
         <Btn size="sm" icon="fit" onClick={fit} title="Показать всё" />
         <Btn size="sm" icon="wifi" onClick={() => { const nc = {}; if (!anyCollapsedOpen) Object.keys(L.groups).forEach(g => nc[g.slice(2)] = false); setCollapsed(nc); setView(null); }}
           title={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'} />
@@ -389,6 +472,8 @@ function MapView() {
     <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>
       <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
         {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={setSel} /> : null}
+        {(L.headers || []).map(h => <g key={h.label} pointerEvents="none"><text x={h.x + 4} y={h.y + 16} fontSize="15" fontWeight="700" fill="var(--text)">{trunc(h.label, 28)}</text>
+          <text x={h.x + 4} y={h.y + 34} fontSize="11.5" fill="var(--text3)">{h.count} {ruPlural(h.count, 'устройство', 'устройства', 'устройств')}</text><rect x={h.x} y={h.y + 40} width={h.w} height={2} rx={1} fill="var(--accent)" opacity=".5" /></g>)}
         {edit ? <><defs><pattern id="mapgrid" width={MAP_GRID} height={MAP_GRID} patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--text3)" opacity=".35" /></pattern></defs>
           <rect x={-4000} y={-4000} width={9000} height={9000} fill="url(#mapgrid)" pointerEvents="none" /></> : null}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);

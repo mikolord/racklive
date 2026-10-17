@@ -154,3 +154,84 @@ def run(conn, args, env, cols, rows, log, on_start=None):
         except OSError:
             pass
     return why, int(time.time() - started)
+
+class Pty:
+    """A shell session on a pseudo-terminal that is not tied to a WebSocket: output goes to `on_data(bytes)`, the end to `on_exit(why)`.
+    Used by a site collector (rackd/collector.py) to give the main installation a terminal on a device of its network."""
+    def __init__(self, args, env, cols, rows, on_data, on_exit):
+        import pty
+        self.master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+        self.proc = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True, close_fds=True,
+                                     preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+        os.close(slave)
+        self.on_data, self.on_exit = on_data, on_exit
+        self.sid = os.urandom(4).hex()
+        KEYS[self.sid] = self.proc
+        self.started = self.last = time.time()
+        self.closed = False
+        threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _read(self):
+        why = 'завершён'
+        while not self.closed:
+            try:
+                r, _, _ = select.select([self.master], [], [], 1.0)
+                if self.master in r:
+                    data = os.read(self.master, 8192)
+                    if not data:
+                        break
+                    self.on_data(data)
+                elif self.proc.poll() is not None:
+                    break
+            except OSError:
+                break
+        self.close(why)
+
+    def _watch(self):
+        while not self.closed:
+            time.sleep(5)
+            if time.time() - self.last > IDLE:
+                self.close('закрыт: 20 минут без нажатий')
+            elif time.time() - self.started > MAX:
+                self.close('закрыт: прошло 8 часов')
+
+    def write(self, data):
+        self.last = time.time()
+        try:
+            os.write(self.master, data)
+        except OSError:
+            self.close('соединение с устройством потеряно')
+
+    def resize(self, cols, rows):
+        if 1 <= cols <= 500 and 1 <= rows <= 200:
+            try:
+                fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+            except OSError:
+                pass
+
+    def close(self, why='закрыт'):
+        if self.closed:
+            return
+        self.closed = True
+        KEYS.pop(self.sid, None)
+        try:
+            os.killpg(self.proc.pid, signal.SIGHUP)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            self.proc.wait(timeout=2)
+        except Exception:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+        try:
+            os.close(self.master)
+        except OSError:
+            pass
+        try:
+            self.on_exit(why)
+        except Exception:
+            pass

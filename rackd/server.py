@@ -1,14 +1,14 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, socket, threading, time, traceback, urllib.parse, urllib.request
+import concurrent.futures, gzip, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, updater, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.6.1'
+VERSION = '2.7.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -64,6 +64,8 @@ class App:
         self.themes = themes.Themes(DATA, WEB, VERSION)
         self.community = community.Community(DATA)
         self.updater = updater.Updater(self, VERSION, DEMO)
+        self.sites = sites_mod.Sites(self)
+        self.collector = collector_mod.Collector(self, VERSION)
         for tid, name, why in self.themes.recheck():         # after an update: a look that no longer fits is switched off at once, the journal says why
             self.store.add_event(None, 'Оформление', 'warning', f'оформление «{name}» отключено — не подходит к этой версии Rack Live: {"; ".join(why)[:300]}')
         self.lock = threading.RLock()
@@ -660,6 +662,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.err('запрос с чужого сайта', 403)
         if 'websocket' not in (self.headers.get('Upgrade') or '').lower() or not self.headers.get('Sec-WebSocket-Key'):
             return self.err('это адрес для WebSocket', 400)
+        if q.get('site'):                                  # a terminal on a device of a remote site: through that site's collector
+            return self.site_terminal(q)
         if DEMO or not terminal.supported():
             return self.err('терминал здесь недоступен', 400)
         if q.get('device'):                               # a server added as a device (plugin «ИИ-агенты»: sign-in, look at a chat)
@@ -704,6 +708,99 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
         APP.store.add_event(None, 'Терминал', 'info', f"терминал на «{d.get('name')}» {why} (длился {secs // 60} мин {secs % 60} с)")
+
+    def _upgrade(self):
+        self.send_response(101)
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', terminal.accept_key(self.headers['Sec-WebSocket-Key']))
+        self.end_headers()
+        self.close_connection = True
+
+    def site_link(self):
+        """WebSocket from a site collector: it stays open, the centre sends requests through it (rackd/sitelink.py)"""
+        tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
+        site = next((s for s in APP.sites.items if tok and secrets.compare_digest(s['token'], tok)), None)
+        if not site:
+            return self.err('неверный ключ площадки', 401)
+        if 'websocket' not in (self.headers.get('Upgrade') or '').lower() or not self.headers.get('Sec-WebSocket-Key'):
+            return self.err('это адрес для WebSocket', 400)
+        self._upgrade()
+        link = sitelink.Link(self.connection, site)
+        old = APP.sites.links.get(site['id'])
+        if old:
+            old.dead = True
+        APP.sites.links[site['id']] = link
+        APP.store.add_event(None, 'Площадки', 'info', f"канал управления с площадкой «{site['name']}» открыт")
+        try:
+            link.run()
+        finally:
+            link.dead = True
+            if APP.sites.links.get(site['id']) is link:
+                APP.sites.links.pop(site['id'], None)
+                APP.store.add_event(None, 'Площадки', 'info', f"канал управления с площадкой «{site['name']}» закрыт")
+
+    def site_terminal(self, q):
+        """browser ⇄ this server ⇄ the site's collector ⇄ ssh on a device there (the administrator is already checked by terminal())"""
+        link = APP.sites.link(q.get('site'))
+        if not link:
+            return self.err('канал с площадкой не подключён', 400)
+        if link.caps.get('level') != 'terminal':
+            return self.err('владелец площадки не разрешил терминал', 403)
+        key = re.sub(r'[^A-Za-z0-9_.\-]', '', q.get('device') or '')
+        cols, rows = int(q.get('cols') or 100), int(q.get('rows') or 30)
+        sid, qs = link.open_stream(key, max(20, min(cols, 400)), max(5, min(rows, 150)))
+        self._upgrade()
+        conn, rd = self.connection, terminal.Reader()
+        APP.store.add_event(None, 'Терминал', 'warning', f"открыт терминал на устройстве площадки «{link.site['name']}» с адреса {self.client_ip()}")
+        last = started = time.time()
+        why = 'закрыт'
+        try:
+            while True:
+                try:
+                    while True:
+                        m = qs.get_nowait()
+                        if m.get('t') == 'termx':
+                            conn.sendall(terminal.frame(('\r\n\x1b[33m[' + (m.get('why') or 'сеанс завершён') + ']\x1b[0m\r\n').encode(), 2))
+                            why = m.get('why') or 'завершён'
+                            return
+                        conn.sendall(terminal.frame(__import__('base64').b64decode(m.get('d') or ''), 2))
+                except queue.Empty:
+                    pass
+                if link.dead:
+                    why = 'канал закрыт'
+                    return
+                if time.time() - last > terminal.IDLE or time.time() - started > terminal.MAX:
+                    conn.sendall(terminal.frame('\r\n\x1b[33m[Сеанс закрыт по времени]\x1b[0m\r\n'.encode(), 2))
+                    why = 'закрыт по времени'
+                    return
+                r, _, _ = select.select([conn], [], [], 0.2)
+                if not r:
+                    continue
+                data = conn.recv(65536)
+                if not data:
+                    return
+                for op, payload in rd.feed(data):
+                    if op == 8:
+                        return
+                    if op == 9:
+                        conn.sendall(terminal.frame(payload, 10))
+                    elif op in (1, 2):
+                        if op == 1 and payload[:1] == b'{':
+                            try:
+                                msg = json.loads(payload)
+                                if 'resize' in msg:
+                                    link.send({'t': 'term_resize', 's': sid, 'cols': int(msg['resize'][0]), 'rows': int(msg['resize'][1])})
+                                continue
+                            except (ValueError, KeyError, TypeError):
+                                pass
+                        last = time.time()
+                        link.send({'t': 'term', 's': sid, 'd': __import__('base64').b64encode(payload).decode()})
+        except (OSError, ValueError):
+            pass
+        finally:
+            link.close_stream(sid)
+            APP.store.add_event(None, 'Терминал', 'info', f"терминал на устройстве площадки «{link.site['name']}» {why}")
 
     def need_admin(self):
         if not self.authed():
@@ -784,6 +881,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/api/term/ws':
                 return self.terminal()
+            if path == '/api/site/link':                   # the control channel of a site collector (key auth; the collector dials out)
+                return self.site_link()
             if path == '/api/term/info':                   # Settings → «Терминал»: which machine, and whether it can be opened
                 if not self.need_admin():
                     return
@@ -863,6 +962,12 @@ class Handler(BaseHTTPRequestHandler):
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
                          'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list()]
                 return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG] + comm})
+            if path == '/api/sites':                        # Инструменты → Удалённые площадки: the sites that report here, agents, and this installation's own collector mode
+                if not self.need_admin():
+                    return
+                ag = [{'id': d['id'], 'name': d.get('name'), 'status': (APP.states.get(d['id']) or {}).get('status'), 'updated': (APP.states.get(d['id']) or {}).get('updated'),
+                       'ip': ((APP.states.get(d['id']) or {}).get('summary') or {}).get('ip')} for d in APP.store.cfg['devices'] if d.get('driver') == 'agent']
+                return self.send({'sites': APP.sites.public(), 'agents': ag, 'collector': APP.collector.public(), 'demo': DEMO})
             if path == '/api/update':                       # Settings → «О программе»: current / newest version, how it can be updated (admin only)
                 if not self.need_admin():
                     return
@@ -1119,6 +1224,14 @@ class Handler(BaseHTTPRequestHandler):
                 APP.sessions.drop(self.token())
                 return self.send({'ok': True}, headers={'Set-Cookie': self.cookie('', 0)})
             # ── agent push (token auth, no session) ──
+            if path == '/api/site' and method == 'POST':               # a collector of a remote site delivers its devices (key auth, no session)
+                tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
+                try:
+                    return self.send(APP.sites.ingest(tok, body, self.client_ip()))
+                except PermissionError as e:
+                    return self.err(str(e), 401)
+                except ValueError as e:
+                    return self.err(str(e), 400)
             if path == '/api/agent' and method == 'POST':
                 tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
                 d = next((x for x in st.cfg['devices'] if tok and x.get('agentToken') == tok), None)
@@ -1293,6 +1406,46 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})
+            if path.startswith(('/api/sites', '/api/collector')) and method in ('POST', 'PUT', 'DELETE'):         # Инструменты → Удалённые площадки (admin only)
+                if not self.need_admin():
+                    return
+                try:
+                    m = re.match(r'^/api/sites/(\w+)(/token|/rpc)?$', path)
+                    if path == '/api/sites' and method == 'POST':
+                        s = APP.sites.create(body.get('name'))
+                        st.add_event(None, 'Площадки', 'info', f"добавлена площадка «{s['name']}»")
+                        return self.send({'ok': True, 'id': s['id'], 'name': s['name'], 'token': s['token']})
+                    if m and m.group(2) == '/rpc' and method == 'POST':             # ask the site's collector to do something with its own devices
+                        site, op = APP.sites.get(m.group(1)), str(body.get('op') or '')
+                        if not site or op not in ('state', 'action'):
+                            return self.err('неверный запрос', 400)
+                        args = {k: body.get(k) for k in ('key', 'action', 'params') if k in body}
+                        try:
+                            res = APP.sites.rpc(site['id'], op, args)
+                        except (RuntimeError, TimeoutError) as e:
+                            return self.err(str(e), 502)
+                        if op == 'action':
+                            st.add_event(None, 'Площадки', 'warning', f"на площадке «{site['name']}» выполнено действие «{args.get('action')}»: {(res or {}).get('message') or ''}"[:300])
+                        return self.send({'ok': True, 'result': res})
+                    if m and m.group(2) == '/token' and method == 'POST':
+                        s = APP.sites.get(m.group(1))
+                        return self.send({'ok': True, 'name': s['name'], 'token': s['token']}) if s else self.err('нет такой площадки', 404)
+                    if m and not m.group(2) and method == 'DELETE':
+                        APP.sites.remove(m.group(1))
+                        return self.send({'ok': True})
+                    if path == '/api/collector' and method == 'PUT':
+                        APP.collector.configure(body.get('key') or None, body.get('enabled'), body.get('insecure'), body.get('level'))
+                        return self.send(dict(APP.collector.public(), ok=True))
+                    if path == '/api/collector/push' and method == 'POST':
+                        try:
+                            APP.collector.push()
+                        except (RuntimeError, ValueError) as e:
+                            APP.collector.status['error'] = str(e)
+                            return self.err(str(e), 502)
+                        return self.send(dict(APP.collector.public(), ok=True))
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                return self.err('не найдено', 404)
             if path.startswith('/api/update/') and method in ('POST', 'PUT'):
                 if not self.need_admin():
                     return
@@ -1760,9 +1913,12 @@ def main():
         if not APP.uptime.data:
             APP.uptime.seed_demo(APP.store.cfg['devices'])
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
+        APP.sites.demo_seed()
         log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()
-    if not DEMO:
+    if not DEMO or os.environ.get('RL_E2E'):
+        threading.Thread(target=APP.collector.loop, daemon=True).start()
+        threading.Thread(target=APP.collector.link_loop, daemon=True).start()        # «collector» mode: reports this installation to a main one (Инструменты → Удалённые площадки)
         threading.Thread(target=APP.updater.loop, daemon=True).start()          # looks for a new release now and then (Settings → О программе)
     port = int(os.environ.get('RL_PORT', '8080'))
     log(f'Rack Live {VERSION}: http://0.0.0.0:{port}  data={DATA}  drivers={", ".join(REGISTRY)}')

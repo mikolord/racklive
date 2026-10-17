@@ -193,7 +193,7 @@ function Tour({ onDone }) {
   return ReactDOM.createPortal(<div className={'tour-layer' + (FAST ? ' tour-fast' : '')}>
     <svg className="tour-dim" width="100%" height="100%">
       <defs>
-        <linearGradient id="tourG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#070b22" stopOpacity=".88" /><stop offset=".55" stopColor="#0e0a28" stopOpacity=".86" /><stop offset="1" stopColor="#05121c" stopOpacity=".9" /></linearGradient>
+        <linearGradient id="tourG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#070b22" style={{ stopOpacity: 'var(--tour-a1)' }} /><stop offset=".55" stopColor="#0e0a28" style={{ stopOpacity: 'var(--tour-a2)' }} /><stop offset="1" stopColor="#05121c" style={{ stopOpacity: 'var(--tour-a3)' }} /></linearGradient>
         <radialGradient id="tourB" cx=".12" cy=".08" r=".75"><stop offset="0" stopColor="#0a84ff" stopOpacity=".42" /><stop offset="1" stopColor="#0a84ff" stopOpacity="0" /></radialGradient>
         <radialGradient id="tourP" cx=".92" cy=".95" r=".7"><stop offset="0" stopColor="#bf5af2" stopOpacity=".34" /><stop offset="1" stopColor="#bf5af2" stopOpacity="0" /></radialGradient>
         <mask id="tourM"><rect width="100%" height="100%" fill="#fff" /><rect ref={put('mask')} fill="#000" /></mask>

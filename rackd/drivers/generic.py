@@ -151,6 +151,20 @@ class RemoteWeb(Driver):
         return {'status': 'online' if code < 500 else 'warning', 'summary': summary, 'metrics': metrics, 'sections': sections}
 
 
+class SiteNode(Driver):
+    """a device of a remote site: its data is pushed by the site's collector (rackd/sites.py, rackd/collector.py)"""
+    id = 'site_node'
+    title = 'Устройство удалённой площадки'
+    kind = 'other'
+    description = 'Появляется само, когда сборщик удалённой площадки присылает данные (Инструменты → Удалённые площадки).'
+    fields = []
+    hidden = True
+    push = True
+
+    def poll(self, cfg):
+        raise DriverError('данные присылает сборщик площадки')
+
+
 class Agent(Driver):
     id = 'agent'
     title = 'Агент (удалённый сервер)'
@@ -158,6 +172,7 @@ class Agent(Driver):
     description = 'Для серверов в другом месте или за NAT: на сервере запускается agent.py, он сам присылает данные. Открывать порты не нужно.'
     fields = [{'name': 'staleMinutes', 'label': 'Считать офлайн, если нет данных (минут)', 'type': 'text', 'default': '5'}]
     push = True
+    hidden = True               # added in «Инструменты → Удалённые площадки и агенты», not in the list of device types
 
     def poll(self, cfg):
         raise DriverError('ожидание данных от агента')

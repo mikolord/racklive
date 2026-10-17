@@ -95,6 +95,17 @@ def main():
         check('looks: all.css and the themed manifest answer', b'my-look' in raw('/themes/all.css')[0] and json.loads(raw('/manifest.json?skin=my-look')[0])['name'] == 'Rack Live')
         check('looks: Frank and the speed test have their own themed manifests', json.loads(raw('/frank-manifest.json?skin=my-look')[0])['name'] and json.loads(raw('/speed-manifest.json?skin=my-look')[0])['name'])
         check('looks: the guide for neural networks downloads', b'html[data-theme-id=' in raw('/api/themes/guide.txt')[0] and b'tour.hi.title' in raw('/api/themes/guide.txt')[0])
+        sj = api('/api/sites')
+        check('sites: the demo has one remote site with its devices', len(sj['sites']) == 1 and sj['sites'][0]['devices'] == 3 and 'token' not in json.dumps(sj), json.dumps(sj)[:200])
+        tk = api('/api/sites/demo1/token', {}, 'POST')['token']
+        req = urllib.request.Request(base + '/api/site', data=json.dumps({'devices': [{'key': 'rt', 'name': 'Роутер склада', 'kind': 'router', 'state': {'status': 'online', 'summary': {'ip': '192.168.1.1'}}}]}).encode(), headers={'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json'})
+        check('sites: a collector delivers over HTTP with the key, the vanished devices go', json.loads(urllib.request.urlopen(req, timeout=10).read()).get('devices') == 1 and api('/api/sites')['sites'][0]['devices'] == 1)
+        try:
+            urllib.request.urlopen(urllib.request.Request(base + '/api/site', data=b'{"devices": []}', headers={'Authorization': 'Bearer nope', 'Content-Type': 'application/json'}), timeout=10); bad = False
+        except urllib.error.HTTPError as e:
+            bad = e.code == 401
+        check('sites: a wrong key is refused with 401', bad)
+        check('agents: the agent is no longer a type in the «add device» list', 'agent' in [d['id'] for d in api('/api/state')['drivers'] if d.get('hidden')])
         ctpl = raw('/api/community/template.zip')[0]
         cup = json.loads(raw('/api/community/upload', ctpl, headers={'Content-Type': 'application/zip'})[0])
         check('community: the starter plugin uploads over HTTP and is accepted', cup.get('ok') and cup['plugin']['id'] == 'hello-uptime' and cup['plugin']['risk'] == 'low', json.dumps(cup)[:200])
@@ -462,7 +473,7 @@ def main():
                                + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
-                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools',
+                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools', 'Инструменты — площадки': '?tsec=catalog&tool=sites#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
                  'Камера — вход': '?tsec=catalog&tool=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
                  'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · О программе': '?section=about#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
@@ -492,7 +503,7 @@ def main():
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
                  'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings',
-                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map', 'Карта — камера в дереве': '?mapnode=камера · вход#map',
+                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map', 'Карта — дерево': '?mapstyle=tree#map', 'Карта — кольца': '?mapstyle=radial#map', 'Карта — по сетям': '?mapstyle=groups#map', 'Карта — меню вида': '?mapstyle=tree&mapnode=камера · вход#map', 'Карта — камера в дереве': '?mapnode=камера · вход#map',
                  'Новый юнит — что ставим': '?mode=edit&editunit=new#rack', 'Переезд места': '?mode=edit&move=1#rack',
                  'Карта — правка (магнит)': '?mode=edit#map',
                  'Блок розеток — нагрузка': '?unit=upduA#rack', 'Блок розеток — розетки': '?mode=edit&editunit=upduA&pw=1#rack',
@@ -602,10 +613,16 @@ def main():
                 check('окно «Переезд»', 'Переезд' in out and out.count('place-opt') == 2)
             if name == 'Доступность':
                 check('доступность за 30 дней', 'up-bars' in out and 'сбо' in out)
+            if name in ('Карта — дерево', 'Карта — кольца', 'Карта — по сетям'):
+                check('карта: вид «' + name.split('— ')[1] + '» рисует узлы и связи', out.count('class="node') >= 5 and 'class="edge' in out and 'data-js-error="' not in out, out.count('class="node'))
             if name == 'Карта — камера в дереве':
                 check('карта: у камеры в дереве есть действия, а не только порт коммутатора', 'node-info' in out and 'Камеры: вход, пароль, адрес, кадр' in out, re.sub(r'<[^>]+>', ' ', out[out.find('node-info'): out.find('node-info') + 1500]) if 'node-info' in out else 'карточки узла нет')
             if name == 'Настройки · О программе':
                 check('о программе: карточка обновлений (версия, проверка, режим)', 'Обновления' in out and 'Проверить' in out and 'Обновлять ночью' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+            if name == 'Устройство площадки':
+                check('устройство площадки: вкладка «На площадке» честно говорит, что канал не открыт', 'На площадке' in out and 'Нет связи с площадкой' in out and 'Повторить' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
+            if name == 'Инструменты — площадки':
+                check('площадки: список, агенты, режим сборщика', 'Удалённые площадки' in out or 'Площадки' in out, '') ; check('площадки: видна демо-площадка и «Эта установка — сборщик»', 'Склад (филиал)' in out and 'Эта установка' in out and 'Добавить площадку' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Карта — ONT':
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':

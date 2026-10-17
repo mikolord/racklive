@@ -536,6 +536,9 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .steps { margin: 8px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; font-size: 13.5px; line-height: 1.45; }
 /* Приветственное обучение (95_tour.jsx) */
 .tour-layer { position: fixed; inset: 0; z-index: 100000; pointer-events: none; animation: tourIn .55s ease both; }
+.tour-layer { --tour-a1: .88; --tour-a2: .86; --tour-a3: .9; }
+/* a computer: the same glassy look as on a phone — the page stays visible through a lighter tint and is softly blurred (the lit-up part stays sharp: the four blocks leave it out) */
+@media (min-width: 900px) { .tour-layer { --tour-a1: .5; --tour-a2: .46; --tour-a3: .52; } .tour-block { backdrop-filter: blur(8px) saturate(1.2); -webkit-backdrop-filter: blur(8px) saturate(1.2); } }
 @keyframes tourIn { from { opacity: 0; } to { opacity: 1; } }
 .tour-dim { position: absolute; inset: 0; }
 .tour-block { position: absolute; pointer-events: auto; background: transparent; backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px); }
@@ -1169,6 +1172,8 @@ html.app-touch input, html.app-touch textarea, html.app-touch [contenteditable],
 .dev-find .search { flex: 1; }
 .sort-menu { position: absolute; left: 0; top: 48px; z-index: 30; min-width: 230px; padding: 6px; border-radius: 16px; background: var(--elev);
   border: .5px solid var(--line); box-shadow: 0 14px 40px rgba(0,0,0,.4); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: wgMenu .16s ease-out; transform-origin: top left; }
+.sort-menu.right { left: auto; right: 0; max-width: calc(100vw - 32px); }
+.sort-menu.right .sort-opt { white-space: normal; text-align: left; }
 .sort-head { font-size: 11.5px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .3px; padding: 8px 10px 4px; }
 .sort-opt { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; background: none; color: var(--text);
   font: inherit; font-size: 14.5px; cursor: pointer; text-align: left; }

@@ -37,6 +37,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
   const drv = data.drivers.find(d => d.id === device.driver);
   const st = device.state || {};
   const tabs = [{ id: 'overview', label: 'Обзор' }];
+  if (admin && device.driver === 'site_node' && device.siteId) tabs.push({ id: 'remote', label: 'На площадке' });       // live data and control through the site's collector
   if ((st.ports || []).length) tabs.push({ id: 'ports', label: `Порты · ${(st.ports || []).filter(p => p.link).length}/${st.ports.length}` });
   if ((st.children || []).length) tabs.push({ id: 'children', label: `Точки · ${st.children.length}` });
   if ((st.clients || []).length) tabs.push({ id: 'clients', label: `Клиенты · ${st.clients.length}` });
@@ -52,9 +53,10 @@ if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигу
     head={<div className="col" style={{ gap: 10 }}>
       <DeviceHead device={device} drv={drv} />
       {admin ? <div className="row"><Btn size="sm" icon="edit" onClick={() => { onClose(); openEditor(device); }}>Настроить</Btn>
-        <PollNow device={device} /></div> : null}
+        {device.driver === 'site_node' ? null : <PollNow device={device} />}</div> : null}
     </div>}>
     {tab === 'overview' ? <Overview device={device} drv={drv} /> : null}
+    {tab === 'remote' ? <RemoteTab device={device} /> : null}
     {tab === 'ports' ? <PortsTab device={device} drv={drv} initialPort={initialPort} /> : null}
     {tab === 'children' ? <ChildrenTab device={device} drv={drv} /> : null}
     {tab === 'clients' ? <ClientsTab clients={st.clients} children={st.children} device={device} drv={drv} /> : null}

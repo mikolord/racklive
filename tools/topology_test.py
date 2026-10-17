@@ -1,0 +1,45 @@
+"""The map shows what a secondary router (OpenWrt with a captive portal) knows: its DHCP clients hang under it. Run: python tools/topology_test.py"""
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from rackd import topology
+
+fails = []
+
+
+def ok(name, cond, extra=''):
+    print(('  ok   ' if cond else '  FAIL ') + name + (' — ' + str(extra)[:300] if extra and not cond else ''))
+    if not cond:
+        fails.append(name)
+
+
+devices = [{'id': 'kn', 'name': 'Keenetic', 'driver': 'keenetic', 'host': '192.168.1.1'}, {'id': 'ow', 'name': 'OpenWrt Captive', 'driver': 'openwrt', 'host': '192.168.8.10'}]
+mk = lambda i: {'mac': f'aa:bb:cc:00:00:{i:02x}', 'ip': f'10.255.0.{i}', 'name': f'guest-{i:02d}', 'segment': 'Captive', 'online': True, 'kind': 'phone'}
+
+
+def states(n_guests, extra_main=()):
+    return {'kn': {'status': 'online', 'summary': {'ip': '192.168.1.1', 'macs': ['00:11:22:33:44:55']}, 'ports': [{'n': 1, 'link': True, 'peers': []}, {'n': 3, 'link': True, 'peers': []}], 'clients': list(extra_main)},
+            'ow': {'status': 'online', 'summary': {'ip': '192.168.8.10', 'macs': ['00:11:22:33:44:66']}, 'ports': [{'n': 1, 'link': True, 'peers': []}], 'clients': [mk(i) for i in range(1, n_guests + 1)]}}
+
+
+for n, label in ((3, 'три гостя'), (30, '30 гостей')):
+    t = topology.build(devices, states(n), [], [], True, {}, {})
+    nodes = {x['id']: x for x in t['nodes']}
+    guests = [x for x in t['nodes'] if x.get('client') and str(x.get('label', '')).startswith('guest-')]
+    edges = {(e['source'], e['target']) for e in t['edges']}
+    ok(f'{label}: клиенты OpenWrt на карте под своим роутером', len(guests) == min(n, 20) and all(('d:ow', g['id']) in edges for g in guests), len(guests))
+    if n > 20:
+        more = nodes.get('x:ow:leases')
+        ok('остальные — одна карточка «ещё N»', more and '10' in more['label'], more)
+
+# a client the main router lists too (without a place to draw it) still appears under the OpenWrt
+both = states(2, [dict(mk(1), src='kn')])
+t = topology.build(devices, both, [], [], True, {}, {})
+ok('клиент, известный обоим роутерам, не теряется', any(x['id'] == 'h:aa:bb:cc:00:00:01' for x in t['nodes']))
+# not twice
+ok('каждый клиент один раз', len([x for x in t['nodes'] if x['id'] == 'h:aa:bb:cc:00:00:01']) == 1)
+# nobody shown when clients are switched off
+t = topology.build(devices, states(3), [], [], False, {}, {})
+ok('при выключенных клиентах их нет', not [x for x in t['nodes'] if str(x.get('label', '')).startswith('guest-')])
+
+print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
+sys.exit(1 if fails else 0)

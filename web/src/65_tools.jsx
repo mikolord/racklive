@@ -11,6 +11,8 @@ const realDriver = g => g.drivers[0];          // the driver names plugins are d
 const TOOLS = [
   { id: 'cameras', title: 'Камеры и видеорегистраторы', icon: 'camera', color: '#ff375f',
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
+  { id: 'sites', title: 'Удалённые площадки и агенты', icon: 'globe2', color: '#5e5ce6',
+    text: 'Следить за другой сетью без белого IP и проброса портов: офис, дача, квартира родителей. Там ставится свой Rack Live (сборщик) или маленький агент — данные приходят сюда сами.' },
 ];
 
 /* open an instrument from anywhere: the Tools tab → «Инструменты» → the tool (and a camera's address to pick in it) */
@@ -27,7 +29,7 @@ function ToolsView() {
   return <>
     <div className="view-switch"><Seg value={sec} onChange={s => { setSec(s); setTool(null); }}
       options={[{ value: 'devices', label: T('tab.devices', 'Устройства'), icon: 'list' }, { value: 'plugins', label: 'Плагины', icon: 'box' }, { value: 'catalog', label: 'Инструменты', icon: 'wrench' }]} /></div>
-    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
+    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
   </>;
 }
 

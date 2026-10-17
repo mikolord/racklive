@@ -152,7 +152,7 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         nid = add({'id': 'd:' + d['id'], 'label': d.get('name') or d.get('host'), 'sub': s.get('ip') or d.get('host', ''),
                    'kind': d.get('kind') or drv_kind, 'status': st.get('status', 'unknown'), 'deviceId': d['id'],
                    'rackUnit': (unit_by_dev.get(d['id']) or {}).get('id'), 'rackId': (unit_by_dev.get(d['id']) or {}).get('rackId'),
-                   'remote': d.get('location') == 'remote',
+                   'remote': d.get('location') == 'remote', 'room': d.get('siteName'),
                    'model': s.get('model')})
         for mac in [s.get('mac'), d.get('mac')] + list(s.get('macs') or []):
             if mac:
@@ -322,6 +322,29 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         nid = node_for_mac(mac)
         if parent and nid:
             edge(parent, nid, kind='wifi', speed=c.get('rate'), rssi=c.get('rssi'), band=c.get('band'))
+
+    # clients that ONLY a secondary router knows — an OpenWrt with a captive portal (its DHCP leases): no Wi-Fi point, no switch port is reported for them.
+    # They hang under that router (up to 20; the rest is one «ещё N» card), so the guest network is on the map too
+    if show_clients:
+        for d in active:
+            rid = 'd:' + d['id']
+            if d.get('driver') not in ROUTER_DRIVERS or (main and d['id'] == main['id']) or rid not in nodes:
+                continue
+            own = {}
+            for c in (states.get(d['id']) or {}).get('clients') or []:      # this router's own list, not the merged one: the main router may list the same MAC without a place to draw it
+                if c.get('mac'):
+                    own.setdefault(c['mac'].lower(), dict(c, src=d['id']))
+            lst = [(m, c) for m, c in own.items() if m not in mac_idx and 'h:' + m not in nodes and c.get('online', True) is not False]
+            for m, c in lst:
+                clients.setdefault(m, c)                                      # node_for_mac reads the merged index
+            lst.sort(key=lambda x: (str(x[1].get('segment') or ''), str(x[1].get('name') or x[1].get('ip') or '')))
+            for m, c in lst[:20]:
+                nid = node_for_mac(m)
+                if nid:
+                    edge(rid, nid, kind='lan', label=c.get('segment') or '')
+            if len(lst) > 20:
+                gid = add({'id': f'x:{d["id"]}:leases', 'label': f'ещё {len(lst) - 20} устройств', 'sub': 'сеть этого роутера', 'kind': 'other', 'status': 'online', 'client': True})
+                edge(rid, gid, kind='lan')
 
     for nid, n in list(nodes.items()):
         if nid in attached or nid == inet:
