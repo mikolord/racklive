@@ -58,7 +58,7 @@ def vtuple(v):
 
 def digest(m):
     """a fingerprint of everything that will run: the page shows it, and the run must carry the same one"""
-    h = hashlib.sha256(json.dumps({k: m.get(k) for k in ('id', 'version', 'kind', 'targets', 'fields', 'status', 'install', 'remove', 'run')}, sort_keys=True, ensure_ascii=False).encode())
+    h = hashlib.sha256(json.dumps({k: m.get(k) for k in ('id', 'version', 'kind', 'targets', 'fields', 'status', 'install', 'remove', 'run', 'scene')}, sort_keys=True, ensure_ascii=False).encode())
     return h.hexdigest()[:16]
 
 
@@ -72,6 +72,37 @@ def _scripts(m):
     return out
 
 
+def check_scene(raw):
+    """a SCENE (kind: "scene"): a made-up network as data (rackd/scenes.py). No scripts, nothing to run on a device: only the strict schema of the scene itself"""
+    from . import scenes
+    errors, warnings = [], []
+    if raw.get('plugin_api') != PLUGIN_API:
+        errors.append(f'plugin_api должен быть {PLUGIN_API}')
+    pid = str(raw.get('id') or '')
+    if not ID_RE.match(pid):
+        errors.append('id: 3–31 символ, латиница в нижнем регистре, цифры и дефис, начинается с буквы')
+    title, desc = str(raw.get('title') or '').strip(), str(raw.get('description') or '').strip()
+    if not title or len(title) > 60:
+        errors.append('title: нужно название до 60 символов')
+    if not desc or len(desc) > 400:
+        errors.append('description: нужно описание до 400 символов')
+    if not re.match(r'^\d+(\.\d+){0,2}$', str(raw.get('version') or '')):
+        errors.append('version: например 1.0.0')
+    home = str(raw.get('home') or '')
+    if home and not re.match(r'^https://[^\s]+$', home):
+        errors.append('home: только https-ссылка')
+    errs, warns, clean = scenes.validate(raw)
+    errors += errs
+    warnings += warns
+    m = {'plugin_api': PLUGIN_API, 'kind': 'scene', 'id': pid, 'title': title, 'description': desc, 'version': str(raw.get('version') or ''), 'author': str(raw.get('author') or '')[:60],
+         'home': home, 'icon': 'home', 'targets': [], 'permissions': [], 'network': [], 'fields': [], 'status': None, 'install': [], 'remove': [], 'run': [], 'risk': 'low'}
+    if clean:
+        m['scene'] = clean
+        m['stats'] = scenes.stats(clean)
+    m['digest'] = digest(m)
+    return errors, warnings, m
+
+
 def check(files):
     """→ (errors, warnings, manifest | None). `files` = {path: bytes}. The manifest comes back resolved (scripts from files inlined) and with risk / perms / digest."""
     errors, warnings = [], []
@@ -83,6 +114,8 @@ def check(files):
         return [f'plugin.json: не читается ({e})'], [], None
     if not isinstance(raw, dict):
         return ['plugin.json должен быть объектом'], [], None
+    if raw.get('kind') == 'scene':
+        return check_scene(raw)
     if raw.get('plugin_api') != PLUGIN_API:
         errors.append(f'plugin_api должен быть {PLUGIN_API} (у этой версии Rack Live именно такой формат)')
     pid = str(raw.get('id') or '')
@@ -366,7 +399,7 @@ class Community:
         return [m for m in (self.get(n) for n in sorted(os.listdir(self.dir))) if m]
 
     def public(self, m):
-        return {k: m.get(k) for k in ('id', 'title', 'description', 'version', 'author', 'home', 'icon', 'targets', 'permissions', 'network', 'risk', 'digest', 'source', 'installedAt')} \
+        return {k: m.get(k) for k in ('id', 'title', 'description', 'version', 'author', 'home', 'icon', 'targets', 'permissions', 'network', 'risk', 'digest', 'source', 'installedAt', 'stats')} \
             | {'kind': m.get('kind') or 'plugin', 'fields': m.get('fields', []),
                'steps': {'install': [s['title'] for s in m.get('install', [])], 'remove': [s['title'] for s in m.get('remove', [])], 'run': [s['title'] for s in m.get('run', [])]}}
 
@@ -451,6 +484,9 @@ class Community:
     def tools(self):
         """community TOOLS: they live in Инструменты (a form, one button, a result), not on a device's plugin tab"""
         return [m for m in self.list() if m.get('kind') == 'tool']
+
+    def scenes(self):
+        return [m for m in self.list() if m.get('kind') == 'scene']
 
     def devices_for(self, m, devices):
         names = {n for t in m['targets'] for n in TARGETS[t]}
@@ -539,7 +575,14 @@ echo "@@ok Показаны разделы, занятые не меньше $RL
 
 
 def template_zip(kind='plugin'):
-    """a starter plugin or tool for authors (what the «Скачать шаблон» buttons give)"""
+    """a starter plugin, tool or scene for authors (what the «Скачать шаблон» buttons give)"""
+    if kind == 'scene':
+        from . import scenes
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+            z.writestr('plugin.json', json.dumps(scenes.starter(), ensure_ascii=False, indent=1))
+            z.writestr('README.md', '# Мой дом\n\nУчебная демо-сцена для Rack Live: двухэтажный дом, роутер, коммутатор, точки, камеры. Замените на свою.\n')
+        return buf.getvalue()
     if kind == 'tool':
         manifest = {'plugin_api': PLUGIN_API, 'kind': 'tool', 'id': 'disk-usage', 'title': 'Свободное место', 'version': '1.0.0', 'author': 'Ваше имя', 'icon': 'wrench',
                     'description': 'Учебный инструмент: показывает разделы выбранного устройства, занятые больше заданного процента. Замените на свою задачу.',
@@ -649,6 +692,10 @@ plugin.json:
     обычные строки без @@             — просто текст (журнал, вывод команды)
     "@@ok Итог одной строкой"         — зелёный итог наверху;   "@@fail причина" — ошибка, шаги останавливаются.
   Инструмент ничего не устанавливает: делайте его только читающим, а если он что-то меняет — пишите это в description и объявляйте permissions.
+
+СЦЕНА (kind: "scene") — совсем другое: не рецепт для устройства, а ОПИСАНИЕ ВЫДУМАННОЙ (или спроектированной) СЕТИ: устройства, кабели, Wi-Fi, шкафы, дома с этажами и комнатами. Скриптов в ней НЕТ.
+  Нужна, когда просят «большое демо с домами и этажами», «сделай план моего дома», «нарисуй схему сети офиса». Для неё есть отдельная инструкция: «Инструменты → Демо-сцены и планы → Как написать сцену» (файл scene-guide.txt).
+  Если человек просит именно это — НЕ делайте плагин: скажите, что нужна сцена, и пользуйтесь той инструкцией.
 
 КАК ПРОВЕРИТЬ: Инструменты → Плагины → «Свои плагины» → «Загрузить .zip». Если отчёт покажет ошибки — исправьте их и соберите архив заново. Готовым плагином или инструментом можно поделиться: приложите .zip к задаче (Issues) в репозитории https://github.com/mikolord/racklive — автор проекта посмотрит и при желании добавит в каталог сообщества.
 

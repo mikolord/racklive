@@ -101,7 +101,7 @@ function CommunityManager({ onClose }) {
   const Row = ({ p, right }) => <div className="row" style={{ gap: 10, padding: '8px 0', borderTop: '1px solid var(--line)', alignItems: 'flex-start' }}>
     <div className="grow" style={{ minWidth: 0 }}><b>{p.title}</b> <span className="dim3" style={{ fontSize: 12.5 }}>{p.version}{p.author ? ' · ' + p.author : ''}</span>
       <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4 }}>{p.description}</div>
-      <div className="row wrap" style={{ gap: 4, marginTop: 4 }}><span className={'badge ' + (p.kind === 'tool' ? 'warning' : '')}>{p.kind === 'tool' ? 'инструмент' : 'плагин'}</span>{p.risk ? <RiskBadge risk={p.risk} /> : null}{(p.targets || []).map(t => <span key={t} className="badge">{TARGET_RU[t] || t}</span>)}</div></div>{right}</div>;
+      <div className="row wrap" style={{ gap: 4, marginTop: 4 }}><span className={'badge ' + (p.kind === 'tool' ? 'warning' : p.kind === 'scene' ? 'online' : '')}>{p.kind === 'tool' ? 'инструмент' : p.kind === 'scene' ? 'сцена' : 'плагин'}</span>{p.risk ? <RiskBadge risk={p.risk} /> : null}{(p.targets || []).map(t => <span key={t} className="badge">{TARGET_RU[t] || t}</span>)}</div></div>{right}</div>;
   return <Modal title="Плагины и инструменты сообщества" wide onClose={onClose} icon={<Icon name="box" size={20} color="var(--accent)" />}>
     <Seg value={sec} onChange={s => { setSec(s); setRep(null); }} options={[{ value: 'catalog', label: 'Каталог' }, { value: 'upload', label: 'Загрузить' }, { value: 'mine', label: 'Мои' + (list ? ` · ${list.length}` : '') }, { value: 'how', label: 'Как написать' }]} />
     <div style={{ marginTop: 10 }}>
@@ -123,11 +123,12 @@ function CommunityManager({ onClose }) {
         <div className="row wrap" style={{ gap: 8, marginTop: 10 }}>
           <a className="btn" href="/api/community/guide.txt" download>Инструкция для нейросети (.txt)</a>
           <a className="btn" href="/api/community/template.zip" download>Пример плагина (.zip)</a>
-          <a className="btn" href="/api/community/template.zip?kind=tool" download>Пример инструмента (.zip)</a></div>
+          <a className="btn" href="/api/community/template.zip?kind=tool" download>Пример инструмента (.zip)</a>
+          <a className="btn" href="/api/community/template.zip?kind=scene" download>Пример сцены (.zip)</a><a className="btn" href="/api/community/guide.txt?kind=scene" download>Инструкция для сцен (.txt)</a></div>
         <div className="dim3" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.5 }}>Отклоняется сразу: форматирование дисков, пользователи и пароли, SSH-ключи, выключение, сброс файрвола, обратные оболочки, отправка секретов наружу, скрытые команды.
           Всё остальное нужно объявить (permissions, network) — иначе плагин не пройдёт. Риск считается автоматически и показывается перед установкой.</div></> : null}
       {rep ? <div style={{ marginTop: 12 }}>
-        {rep.ok ? <div className="plugin-result"><Icon name="check" size={16} /> <b>Проверка пройдена.</b> {rep.plugin.kind === 'tool' ? 'Инструмент' : 'Плагин'} «{rep.plugin.title}» {rep.plugin.version} добавлен — {rep.plugin.kind === 'tool' ? 'он появился в «Инструменты»' : 'он появился в «Плагинах» подходящих устройств'} · <RiskBadge risk={rep.plugin.risk} /></div>
+        {rep.ok ? <div className="plugin-result"><Icon name="check" size={16} /> <b>Проверка пройдена.</b> {rep.plugin.kind === 'tool' ? 'Инструмент' : rep.plugin.kind === 'scene' ? 'Сцена' : 'Плагин'} «{rep.plugin.title}» {rep.plugin.version} добавлен{rep.plugin.kind === 'scene' ? 'а' : ''} — {rep.plugin.kind === 'tool' ? 'он появился в «Инструменты»' : rep.plugin.kind === 'scene' ? 'она появилась в «Инструменты → Демо-сцены и планы»' : 'он появился в «Плагинах» подходящих устройств'} · <RiskBadge risk={rep.plugin.risk} /></div>
           : <div className="err-note" style={{ marginTop: 0 }}><b>Плагин не принят:</b><ul style={{ margin: '6px 0 0 18px' }}>{(rep.errors || []).map((e, i) => <li key={i}>{e}</li>)}</ul></div>}
         {(rep.warnings || []).length ? <div className="dim" style={{ fontSize: 12.5, marginTop: 6 }}><b>Замечания:</b><ul style={{ margin: '4px 0 0 18px' }}>{rep.warnings.map((e, i) => <li key={i}>{e}</li>)}</ul></div> : null}
       </div> : null}

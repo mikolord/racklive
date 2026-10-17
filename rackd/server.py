@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, queue, re, secrets, select
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, updater, sites as sites_mod, collector as collector_mod, sitelink, scenes as scenes_mod, sandbox as sandbox_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.7.3'
+VERSION = '2.8.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -65,6 +65,7 @@ class App:
         self.community = community.Community(DATA)
         self.updater = updater.Updater(self, VERSION, DEMO)
         self.sites = sites_mod.Sites(self)
+        self.sandbox = sandbox_mod.Sandbox(ROOT)
         self.collector = collector_mod.Collector(self, VERSION)
         for tid, name, why in self.themes.recheck():         # after an update: a look that no longer fits is switched off at once, the journal says why
             self.store.add_event(None, 'Оформление', 'warning', f'оформление «{name}» отключено — не подходит к этой версии Rack Live: {"; ".join(why)[:300]}')
@@ -149,6 +150,28 @@ class App:
             st = dict(st, status='warning', stale=True,
                       error='устройство включено и отвечает, но не принимает запросы Rack Live (' + short + '). Обычно это временно: роутер может на несколько минут закрыть доступ с адреса Rack Live после большого сканирования сети.')
         return st
+
+    BUILTIN_SCENES = {'builtin:campus': scenes_mod.campus, 'builtin:starter': scenes_mod.starter}
+
+    def scene_clean(self, sid):
+        """a scene by id (built-in or installed) → (title, checked scene, reference for the demo copy)"""
+        if sid in self.BUILTIN_SCENES:
+            sc = self.BUILTIN_SCENES[sid]()
+            errs, _, clean = scenes_mod.validate(sc)
+            if errs:
+                raise ValueError('; '.join(errs[:2]))
+            return sc.get('title'), clean, sid
+        m = self.community.get(str(sid or ''))
+        if not m or m.get('kind') != 'scene' or not m.get('scene'):
+            raise ValueError('такой сцены нет')
+        return m['title'], m['scene'], None
+
+    def scenes_list(self):
+        out = []
+        for sid, fn in self.BUILTIN_SCENES.items():
+            sc = fn()
+            out.append({'id': sid, 'title': sc['title'], 'description': sc['description'], 'builtin': True, 'stats': scenes_mod.stats(scenes_mod.validate(sc)[2])})
+        return out
 
     def apply_state(self, d, st):
         with self.lock:
@@ -960,7 +983,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
-                         'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list() if m.get('kind') != 'tool']
+                         'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list() if (m.get('kind') or 'plugin') == 'plugin']
                 return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG] + comm})
             if path == '/api/sites':                        # Инструменты → Удалённые площадки: the sites that report here, agents, and this installation's own collector mode
                 if not self.need_admin():
@@ -968,6 +991,11 @@ class Handler(BaseHTTPRequestHandler):
                 ag = [{'id': d['id'], 'name': d.get('name'), 'status': (APP.states.get(d['id']) or {}).get('status'), 'updated': (APP.states.get(d['id']) or {}).get('updated'),
                        'ip': ((APP.states.get(d['id']) or {}).get('summary') or {}).get('ip')} for d in APP.store.cfg['devices'] if d.get('driver') == 'agent']
                 return self.send({'sites': APP.sites.public(), 'agents': ag, 'collector': APP.collector.public(), 'demo': DEMO})
+            if path == '/api/scenes':                       # Инструменты → Демо-сцены и планы: built-in and installed scenes, the running demo copy, copies for undo (admin only)
+                if not self.need_admin():
+                    return
+                return self.send({'builtin': APP.scenes_list(), 'mine': [APP.community.public(m) for m in APP.community.scenes()], 'sandbox': APP.sandbox.status(),
+                                  'backups': scenes_mod.backups(APP.store), 'demo': DEMO})
             if path == '/api/update':                       # Settings → «О программе»: current / newest version, how it can be updated (admin only)
                 if not self.need_admin():
                     return
@@ -985,10 +1013,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 zip_ = path.endswith('.zip')
                 tool = self.query().get('kind') == 'tool'
-                b = community.template_zip('tool' if tool else 'plugin') if zip_ else community.guide_text().encode('utf-8')
+                scene = self.query().get('kind') == 'scene'
+                b = community.template_zip('scene' if scene else 'tool' if tool else 'plugin') if zip_ else (scenes_mod.guide_text() if self.query().get('kind') == 'scene' else community.guide_text()).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/zip' if zip_ else 'text/plain; charset=utf-8')
-                self.send_header('Content-Disposition', 'attachment; filename="' + (('racklive-tool-template.zip' if tool else 'racklive-plugin-template.zip') if zip_ else 'racklive-plugin-guide.txt') + '"')
+                self.send_header('Content-Disposition', 'attachment; filename="' + (('racklive-scene-template.zip' if scene else 'racklive-tool-template.zip' if tool else 'racklive-plugin-template.zip') if zip_ else ('racklive-scene-guide.txt' if scene else 'racklive-plugin-guide.txt')) + '"')
                 self.send_header('Content-Length', str(len(b)))
                 self.end_headers()
                 self.wfile.write(b)
@@ -1469,6 +1498,36 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.err(str(e), 400)
                 return self.send(dict(u.info(), ok=True))
+            if path.startswith('/api/scenes/') and method in ('POST', 'DELETE'):         # demo copy · preview · apply to my plan · undo (admin only; nothing here in the demo itself)
+                if not self.need_admin():
+                    return
+                if DEMO:
+                    return self.err('в демо-режиме сцены не применяются', 400)
+                try:
+                    if path == '/api/scenes/demo' and method == 'DELETE':
+                        APP.sandbox.stop()
+                        return self.send({'ok': True, 'sandbox': APP.sandbox.status()})
+                    if path == '/api/scenes/demo' and method == 'POST':
+                        title, clean, ref = APP.scene_clean(str(body.get('id') or ''))
+                        try:
+                            res = APP.sandbox.start(ref, None if ref else clean, title)
+                        except RuntimeError as e:
+                            return self.err(str(e), 502)
+                        st.add_event(None, 'Сцены', 'info', f'запущена демо-копия со сценой «{title}»')
+                        return self.send({'ok': True, 'sandbox': res})
+                    if path == '/api/scenes/preview' and method == 'POST':
+                        title, clean, _ = APP.scene_clean(str(body.get('id') or ''))
+                        real = [d for d in st.cfg['devices'] if d.get('driver') not in ('site_node',)]
+                        return self.send(dict(scenes_mod.preview(clean, real), title=title, hasPlan=bool(st.cfg.get('plan', {}).get('buildings')), hasRacks=bool(st.cfg.get('racks'))))
+                    if path == '/api/scenes/apply' and method == 'POST':
+                        title, clean, _ = APP.scene_clean(str(body.get('id') or ''))
+                        return self.send(dict(scenes_mod.apply_real(st, clean, body.get('mapping') or {}, str(body.get('mode') or '')), ok=True))
+                    if path == '/api/scenes/undo' and method == 'POST':
+                        scenes_mod.undo(st, body.get('backup'))
+                        return self.send({'ok': True})
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                return self.err('не найдено', 404)
             if path == '/api/community/install' and method == 'POST':     # from the community catalog: the archive must match the sha256 in the index
                 if not self.need_admin():
                     return
@@ -1906,7 +1965,17 @@ def main():
     APP = App()
     if DEMO:
         from .drivers import demo
-        demo.seed(APP.store)
+        scene_src = os.environ.get('RL_SCENE')          # a demo copy started by the sandbox (rackd/sandbox.py) shows a made-up network from a scene instead of the demo office
+        if scene_src:
+            from . import scenes
+            sc = {'builtin:campus': scenes.campus, 'builtin:starter': scenes.starter}.get(scene_src)
+            sc = sc() if sc else json.load(open(scene_src, encoding='utf-8'))
+            errs, _, clean = scenes.validate(sc)
+            if errs:
+                raise SystemExit('сцена не подходит: ' + '; '.join(errs[:3]))
+            scenes.seed(APP.store, clean)
+        else:
+            demo.seed(APP.store)
         APP.speed.items = APP.store._load('speedtests.json', [])
         APP.inet.items = APP.store._load('inetspeed.json', [])
         APP.inet.last_run = max([x['t'] for x in APP.inet.items] or [0])
@@ -1914,7 +1983,8 @@ def main():
         if not APP.uptime.data:
             APP.uptime.seed_demo(APP.store.cfg['devices'])
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
-        APP.sites.demo_seed()
+        if not scene_src:
+            APP.sites.demo_seed()
         log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()
     if not DEMO or os.environ.get('RL_E2E'):
@@ -1926,6 +1996,7 @@ def main():
     APP.store.add_event(None, 'Rack Live', 'info', f'сервер запущен (версия {VERSION})')
 
     def stop(*_):
+        APP.sandbox.stop()
         APP.store.save_runtime()
         os._exit(0)
     signal.signal(signal.SIGTERM, stop)

@@ -11,6 +11,8 @@ const realDriver = g => g.drivers[0];          // the driver names plugins are d
 const TOOLS = [
   { id: 'cameras', title: 'Камеры и видеорегистраторы', icon: 'camera', color: '#ff375f',
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
+  { id: 'scenes', title: 'Демо-сцены и планы', icon: 'home', color: '#ff9f0a',
+    text: 'Большая выдуманная сеть с домами, этажами и комнатами — посмотреть в отдельной демо-копии или перенести раскладку на свой план. Сцены можно составить с нейросетью.' },
   { id: 'sites', title: 'Удалённые площадки и агенты', icon: 'globe2', color: '#5e5ce6',
     text: 'Следить за другой сетью без белого IP и проброса портов: офис, дача, квартира родителей. Там ставится свой Rack Live (сборщик) или маленький агент — данные приходят сюда сами.' },
 ];
@@ -29,7 +31,7 @@ function ToolsView() {
   return <>
     <div className="view-switch"><Seg value={sec} onChange={s => { setSec(s); setTool(null); }}
       options={[{ value: 'devices', label: T('tab.devices', 'Устройства'), icon: 'list' }, { value: 'plugins', label: 'Плагины', icon: 'box' }, { value: 'catalog', label: 'Инструменты', icon: 'wrench' }]} /></div>
-    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : String(tool).startsWith('x-') ? <CommunityTool id={tool.slice(2)} onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
+    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : tool === 'scenes' ? <ScenesTool onBack={() => setTool(null)} /> : String(tool).startsWith('x-') ? <CommunityTool id={tool.slice(2)} onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
   </>;
 }
 
