@@ -485,7 +485,17 @@ def main():
             if j.get('done'):
                 break
             time.sleep(.3)
-        check('rcos: remove drops the site when asked', j.get('done') and not j.get('error') and len(api('/api/sites')['sites']) == n_sites, json.dumps(j, ensure_ascii=False)[:300])        # security advisor: findings, a fix, «это нормально»
+        check('rcos: remove drops the site when asked', j.get('done') and not j.get('error') and len(api('/api/sites')['sites']) == n_sites, json.dumps(j, ensure_ascii=False)[:300])        # ReckController OS on its own (no reporting): no site, a one-time download key, the machine's own panel and password
+        n_sites = len(api('/api/sites')['sites'])
+        jid = VP({'plugin': 'rcos', 'op': 'install', 'name': 'Сам по себе', 'server': '', 'port': 9998, 'tz': 'Europe/Moscow', 'ap': True})['job']
+        for _ in range(40):
+            j = VP({'plugin': 'rcos', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        rinfo = (j.get('result') or {}).get('info') or {}
+        check('rcos without reporting: no site, own panel, password and the point', j.get('done') and not j.get('error') and len(api('/api/sites')['sites']) == n_sites and not rinfo.get('siteName') and rinfo.get('password') and (rinfo.get('ap') or {}).get('password'), json.dumps(j, ensure_ascii=False)[:300])
+        VP({'plugin': 'rcos', 'op': 'remove'})        # security advisor: findings, a fix, «это нормально»
         sec = api('/api/state')['security']
         rdp = next((f for f in sec['findings'] if f['id'].endswith(':tcp:3389')), None)
         check('security: findings and score', rdp and rdp['level'] == 'bad' and rdp['fix'] and sec['score'] < 100, json.dumps(sec, ensure_ascii=False)[:300])
@@ -742,7 +752,7 @@ def main():
             if name == 'Инструменты — площадки':
                 check('площадки: список, агенты, режим сборщика', 'Удалённые площадки' in out or 'Площадки' in out, '') ; check('площадки: видна демо-площадка и «Эта установка — сборщик»', 'Склад (филиал)' in out and 'Эта установка' in out and 'Добавить площадку' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'VPS · Сборщик площадки':
-                check('плагин «Сборщик площадки»: название площадки, адрес панели, порт, управление, кнопка', 'Название площадки' in out and 'Адрес этой панели' in out and 'Порт панели на сервере' in out and 'Управление отсюда' in out and 'Установить сборщик' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+                check('плагин «Сборщик площадки»: название площадки, адрес панели, порт, управление, кнопка', 'Название площадки' in out and 'Адрес этой панели' in out and 'Порт панели на машине' in out and 'Присылать данные на эту панель' in out and 'Управление отсюда' in out and 'Установить сборщик' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'VPS · ReckController OS':
                 check('плагин ReckController OS: часовой пояс, точка, название и пароль Wi-Fi, кнопка', 'ReckController OS' in out and 'Часовой пояс машины' in out and 'Своя Wi-Fi-точка для телефона' in out and 'Пароль Wi-Fi' in out and 'Установить ReckController OS' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · Система':

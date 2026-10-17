@@ -8,7 +8,7 @@ from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.10.0'
+VERSION = '2.10.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -18,6 +18,20 @@ SYS_EVENTS = ('Страница', 'Обучение', 'Rack Live')              
 
 def log(*a):
     print(time.strftime('%Y-%m-%d %H:%M:%S'), *a, flush=True)
+
+
+def lan_url_toward(host):
+    """this panel's own address as another machine of the home network sees it (the source address of a route to it) — e.g. http://192.168.1.3:9998"""
+    h = re.sub(r'^\w+://|[:/].*$', '', str(host or '')) or '192.168.1.1'
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((h, 9))
+        ip = s.getsockname()[0]
+    except OSError:
+        ip = '127.0.0.1'
+    finally:
+        s.close()
+    return f"http://{ip}:{os.environ.get('RL_PORT', '8080')}"
 
 
 def port_errors(p):
@@ -394,22 +408,34 @@ class App:
         if op == 'remove':
             site = self.sites.get(info.get('siteId') or '')
             return dict(body, _site=site['id'] if site and body.get('removeSite') else None)
-        url = cinstall.clean_url(body.get('server') or (self.store.cfg.get('apps') or {}).get('url') or '')
+        # two addresses: where the new installation DOWNLOADS the code (this panel's home address as seen from that machine — found here, nothing to type)
+        # and where it REPORTS from wherever it is taken (a domain; empty = it works on its own, reporting can be switched on later on its own panel)
+        apps_url = (self.store.cfg.get('apps') or {}).get('url') or ''
+        report = cinstall.clean_url(body['server']) if body.get('server') else ('' if 'server' in body else (cinstall.clean_url(apps_url) if apps_url else ''))
+        pack = lan_url_toward(d.get('host'))
         try:
             port = int(body.get('port') or cinstall.DEFAULT_PORT)
         except (TypeError, ValueError):
             port = 0
         if not 1024 <= port <= 65535:
             raise ValueError('порт панели на сервере: число от 1024 до 65535')
-        site = self.sites.get(info.get('siteId') or '')
-        if not site:
-            site = self.sites.create(body.get('name') or d.get('name') or 'Новая площадка')
-            self.store.add_event(d['id'], d.get('name'), 'info', f"плагин collector: создана площадка «{site['name']}»")
+        name = re.sub(r'\s+', ' ', str(body.get('name') or d.get('name') or 'Новая площадка')).strip()[:40] or 'Новая площадка'
+        site = None
+        if report:
+            site = self.sites.get(info.get('siteId') or '') or next((s for s in self.sites.items if s['name'].lower() == name.lower() and not s.get('last')), None)   # one left by a failed try is reused
+            if not site:
+                site = self.sites.create(name)
+                self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: создана площадка «{site['name']}»")
+            token = site['token']
+        else:                                              # no site: a one-hour key that only lets the machine download the code
+            token = secrets.token_urlsafe(24)
+            self.pack_tokens = {k: v for k, v in (getattr(self, 'pack_tokens', None) or {}).items() if v > time.time()}
+            self.pack_tokens[token] = time.time() + 3600
         pw = secrets.token_urlsafe(12)
         level = str(body.get('level') or 'view')
-        cfg = cinstall.make_config(site['name'], url, site['token'], pw, level, bool(body.get('insecure')), dev=pid == 'rcos')
-        out = dict(body, _collector={'url': url, 'token': site['token'], 'cfg': cfg, 'port': port, 'password': pw, 'siteId': site['id'], 'siteName': site['name'],
-                                     'level': level, 'insecure': bool(body.get('insecure'))})
+        cfg = cinstall.make_config(site['name'] if site else name, report, token if site else '', pw, level, bool(body.get('insecure')), dev=pid == 'rcos', enabled=bool(site))
+        out = dict(body, _collector={'url': report, 'pack': pack, 'token': token, 'cfg': cfg, 'port': port, 'password': pw, 'siteId': site['id'] if site else None,
+                                     'siteName': site['name'] if site else None, 'level': level, 'insecure': bool(body.get('insecure'))})
         if pid == 'rcos':                                  # ReckController OS: time zone, our own access point (the password is made here and shown once the install is done)
             ap = body.get('ap') is not False
             out['_rcos'] = {'tz': hostops.check_tz(body['tz']) if body.get('tz') else '', 'ap': ap, 'band': 'a' if body.get('band') == 'a' else 'bg',
@@ -1114,7 +1140,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.site_link()
             if path == '/api/site/pack':                   # a collector being installed over SSH (plugin «Сборщик площадки») downloads this installation's own code; the site key is the pass
                 tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
-                if not tok or not any(secrets.compare_digest(s['token'], tok) for s in APP.sites.items):
+                one_time = (getattr(APP, 'pack_tokens', None) or {}).get(tok, 0) > time.time()          # «ReckController OS» without reporting: a one-hour download key
+                if not tok or not (one_time or any(secrets.compare_digest(s['token'], tok) for s in APP.sites.items)):
                     return self.err('неверный ключ площадки', 401)
                 b = cinstall.pack()
                 self.send_response(200)

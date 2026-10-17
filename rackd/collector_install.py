@@ -86,12 +86,25 @@ def clean_url(u):
     return u
 
 
-def make_config(name, url, token, password, level, insecure, dev=False):
-    """what is written to /var/lib/racklive/config.json of the new installation: the admin password (hash only), the title and the site key"""
+def make_config(name, url, token, password, level, insecure, dev=False, enabled=True):
+    """what is written to /var/lib/racklive/config.json of the new installation: the admin password (hash only), the title and — when it reports somewhere — the site key"""
     if level not in LEVELS:
         raise ValueError('уровень управления: view, actions или terminal')
-    return {'settings': dict({'title': name}, **({'devMode': True} if dev else {})), 'auth': auth.hash_password(password),
-            'collector': {'url': url, 'token': token, 'enabled': True, 'level': level, 'insecure': bool(insecure)}}
+    col = {'url': url, 'token': token, 'enabled': True, 'level': level, 'insecure': bool(insecure)} if enabled else {'enabled': False, 'level': level}
+    return {'settings': dict({'title': name}, **({'devMode': True} if dev else {})), 'auth': auth.hash_password(password), 'collector': col}
+
+
+def reach_script(url):
+    """before anything is changed on the machine: can it reach the panel it will download from?"""
+    u = shlex.quote(url.rstrip('/') + '/api/state')
+    return f'''U={u}
+if command -v curl >/dev/null 2>&1; then curl -s -o /dev/null -m 10 "$U" </dev/null && {{ echo @@ok; exit 0; }}
+elif command -v wget >/dev/null 2>&1; then wget -q -T 10 -O /dev/null "$U" </dev/null && {{ echo @@ok; exit 0; }}
+elif command -v python3 >/dev/null 2>&1; then python3 -c "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=10)" "$U" </dev/null >/dev/null 2>&1 && {{ echo @@ok; exit 0; }}
+else echo @@ok; exit 0
+fi
+echo "@@fail машина не достаёт до этой панели по адресу $U — проверьте, что она в той же сети"
+'''
 
 
 RCOS_CARD = {'id': 'rcos', 'drivers': ['ssh'], 'title': 'ReckController OS', 'icon': 'rack', 'kind': 'collector', 'rcos': True,
@@ -102,10 +115,12 @@ RCOS_MARK_SCRIPT = f'mkdir -p /etc/racklive && date > {RCOS_MARK} && echo @@ok\n
 RCOS_UNMARK_SCRIPT = f'rm -f {RCOS_MARK}; rmdir /etc/racklive 2>/dev/null; echo @@ok\n'
 
 
-def install_script(url, token, cfg, port, insecure=False):
-    """the whole installation as one shell script (secrets stay in shell variables and the environment, not in argument lists)"""
+def install_script(url, token, cfg, port, insecure=False, pack=None):
+    """the whole installation as one shell script (secrets stay in shell variables and the environment, not in argument lists).
+    pack: where the code is downloaded from (this panel's home address); url: where the new installation reports (may be empty)"""
     cfg_b64 = base64.b64encode(json.dumps(cfg, ensure_ascii=False).encode()).decode()
     port = int(port)
+    url = pack or url
     return f'''export DEBIAN_FRONTEND=noninteractive
 RL_URL={shlex.quote(url)}; RL_TOKEN={shlex.quote(token)}; RL_CFG={shlex.quote(cfg_b64)}; RL_PORT={port}; RL_INSECURE={1 if insecure else 0}
 fail() {{ echo "@@fail $1"; exit 0; }}
@@ -156,8 +171,9 @@ except Exception:
 if cur is None:
     print('@@created 1')
     cur = new
-else:                                  # a repeat install keeps the administrator and everything else: only the site key is renewed
-    cur['collector'] = new['collector']
+else:                                  # a repeat install keeps the administrator and everything else: only the site key is renewed (and only when there is a new one)
+    if new['collector'].get('enabled') or 'collector' not in cur:
+        cur['collector'] = new['collector']
     if new.get('settings', {{}}).get('devMode'):                   # ReckController OS: the developer mode and the access point it was installed with
         cur.setdefault('settings', {{}})['devMode'] = True
     if (new.get('dev') or {{}}).get('ap'):

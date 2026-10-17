@@ -372,7 +372,8 @@ function CollectorInfo({ info, site, title }) {
     <div className="col" style={{ gap: 6 }}>
       <div className="copy-row"><span className="dim">Панель там</span><a className="grow ellipsis" href={info.url} target="_blank" rel="noreferrer">{info.url}</a></div>
       {info.password ? <CopyRow k="Пароль администратора" v={info.password} /> : <div className="dim3" style={{ fontSize: 12.5 }}>Пароль администратора задан при прошлой установке — здесь он не показывается.</div>}
-      <div className="copy-row"><span className="dim">Площадка</span><span className="grow">{info.siteName}{site ? <> · {site.alive ? <span style={{ color: 'var(--green)' }}>на связи</span> : <span className="dim3">{site.last ? 'давно не отвечает' : 'ждём первого сообщения (до минуты)'}</span>}{site.devices ? ` · устройств: ${site.devices}` : ''}</> : null}</span></div>
+      {!info.siteName ? <div className="dim3" style={{ fontSize: 12.5 }}>Данные на эту панель не присылаются. Включить: на панели машины «Инструменты → Удалённые площадки и агенты → Эта установка — сборщик» (ключ площадки берётся здесь же, в «Удалённые площадки»).</div> : null}
+      {info.siteName ? <div className="copy-row"><span className="dim">Площадка</span><span className="grow">{info.siteName}{site ? <> · {site.alive ? <span style={{ color: 'var(--green)' }}>на связи</span> : <span className="dim3">{site.last ? 'давно не отвечает' : 'ждём первого сообщения (до минуты)'}</span>}{site.devices ? ` · устройств: ${site.devices}` : ''}</> : null}</span></div> : null}
       {info.version ? <div className="copy-row"><span className="dim">Версия</span><span className="grow">{info.version}</span></div> : null}
       {level ? <div className="copy-row"><span className="dim">Управление отсюда</span><span className="grow">{level}</span></div> : null}
       {info.tz ? <div className="copy-row"><span className="dim">Часовой пояс</span><span className="grow">{info.tz}</span></div> : null}
@@ -385,7 +386,7 @@ function CollectorInfo({ info, site, title }) {
           <div className="col" style={{ alignItems: 'center', gap: 4 }}><QrCode text={`WIFI:T:WPA;S:${wifiEsc(info.ap.ssid)};P:${wifiEsc(info.ap.password)};;`} size={130} /><span className="dim3" style={{ fontSize: 11.5 }}>QR: подключиться к сети</span></div></div></> : null}
       {(info.warnings || []).length ? <div className="cam-warn">{info.warnings.join('. ')}</div> : null}
       <div className="dim3" style={{ fontSize: 12.5 }}>Откройте панель по ссылке, войдите этим паролем — это обычный Rack Live: «Инструменты → Устройства → Сканировать сеть» найдёт всё в сети площадки, «Камеры» настроит камеры.
-        Все найденные устройства сами появятся на этой панели в «Инструменты → Удалённые площадки и агенты».</div>
+        {info.siteName ? 'Все найденные устройства сами появятся на этой панели в «Инструменты → Удалённые площадки и агенты».' : ''}</div>
     </div></div>;
 }
 
@@ -396,6 +397,7 @@ function CollectorPlugin({ p, device, reload }) {
   const [port, setPort] = useState(String(p.defaultPort || 9998));
   const [level, setLevel] = useState('view');
   const [insecure, setInsecure] = useState(false);
+  const [report, setReport] = useState(!p.rcos);              // a plain collector exists to report here; ReckController OS works on its own unless asked
   const [dropSite, setDropSite] = useState(false);
   const [tz, setTz] = useState(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow'; } catch (e) { return 'Europe/Moscow'; } });
   const [ap, setAp] = useState(true); const [apSsid, setApSsid] = useState('ReckController'); const [apPw, setApPw] = useState('');
@@ -415,16 +417,16 @@ function CollectorPlugin({ p, device, reload }) {
     return () => clearInterval(t);
   }, [job && job.id, job && job.done]);
   const required = (p.checks || []).filter(c => !c.optional);
-  const ready = required.every(c => c.ok) && server.trim() && name.trim() && /^\d+$/.test(port);
+  const ready = required.every(c => c.ok) && (!report || server.trim()) && name.trim() && /^\d+$/.test(port);
   const running = job && !job.done;
   const install = async () => {
-    const local = /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(server.trim());
-    if (!(await confirm(`Поставить ${p.rcos ? 'ReckController OS' : 'Rack Live'} на «${device.name}» как сборщик площадки «${name.trim()}»? Rack Live по SSH установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели (${server.trim()}), `
-      + `создаст службу racklive на порту ${port} и площадку здесь, на главной панели.`
+    const local = report && /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(server.trim());
+    if (!(await confirm(`Поставить ${p.rcos ? 'ReckController OS' : 'Rack Live'} на «${device.name}»? Rack Live по SSH сначала проверит связь, потом установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели по домашней сети и создаст службу racklive на порту ${port}.`
+      + (report ? ` Данные будут приходить сюда (${server.trim()}) как площадка «${name.trim()}».` : ' Данные сюда не присылаются — машина работает сама по себе (включить можно потом на её панели).')
       + (p.rcos ? ` Дополнительно: часовой пояс ${tz || 'без изменений'}, драйверы Wi-Fi и NetworkManager${ap ? `, Wi-Fi-точка «${apSsid}» с постоянным адресом` : ''}; включится режим разработчика на самой машине. Кабельная сеть и этот сеанс не затрагиваются.` : '')
       + ` Займёт ${p.rcos ? '3–8' : '1–4'} минут.`
-      + (local ? ' Адрес главной панели — из домашней сети: сервер сможет достучаться до него, только пока он в этой же сети.' : ''), { title: p.title, ok: 'Установить' }))) return;
-    start('install', { name: name.trim(), server: server.trim(), port: +port, level, insecure, ...(p.rcos ? { tz: tz.trim(), ap, ssid: apSsid.trim(), apPassword: apPw } : {}) });
+      + (local ? ' Адрес для данных — из домашней сети: из других мест машина до него не достучится, для этого нужен домен.' : ''), { title: p.title, ok: 'Установить' }))) return;
+    start('install', { name: name.trim(), server: report ? server.trim() : '', port: +port, level, insecure: report && insecure, ...(p.rcos ? { tz: tz.trim(), ap, ssid: apSsid.trim(), apPassword: apPw } : {}) });
   };
   const remove = async () => {
     if (!(await confirm(`Удалить ${p.rcos ? 'ReckController OS (вместе с Wi-Fi-точкой)' : 'сборщик'} с «${device.name}»? Служба и программа будут удалены с сервера, данные останутся в /var/lib/racklive.${dropSite && p.info ? ` Площадка «${p.info.siteName}» и её устройства исчезнут с этой панели.` : ''}`,
@@ -437,14 +439,18 @@ function CollectorPlugin({ p, device, reload }) {
     {info && p.installed ? <CollectorInfo info={info} site={p.site} title={p.rcos ? 'ReckController OS работает' : 'Сборщик работает'} />
       : p.installed ? <div className="plugin-result"><Icon name="check" size={16} /> Rack Live уже стоит на этом сервере{p.version ? ' (' + p.version + ')' : ''} — не через плагин, поэтому данных для входа здесь нет.</div> : null}
     {!p.installed ? <div className="awg-form">
-      <Field label="Название площадки" hint="Так она будет называться на этой панели: например «Квартира Ивановых» или «Офис».">
+      <Field label={p.rcos ? 'Название машины' : 'Название площадки'} hint={p.rcos ? 'Так она будет называться в своей панели (и здесь, если включить отправку данных).' : 'Так она будет называться на этой панели: например «Квартира Ивановых» или «Офис».'}>
         <input className="input" value={name} onChange={e => setName(e.target.value)} /></Field>
-      <Field label="Адрес этой панели" hint={p.serverUrl ? 'Взят из «Настройки → Приложения». Сервер скачает Rack Live и будет присылать данные по этому адресу.' : 'Адрес, по которому сервер достучится до этой панели: домен (https://racklive.example.com) или http://192.168.1.3:9998, если сервер в этой же сети. «Настройки → Приложения» создаст домен.'}>
-        <input className="input mono" value={server} placeholder="https://racklive.example.com" onChange={e => setServer(e.target.value)} /></Field>
-      <div className="row wrap" style={{ gap: 8 }}>
-        <Field label="Порт панели на сервере"><input className="input mono" style={{ maxWidth: 120 }} value={port} onChange={e => setPort(e.target.value.replace(/\D/g, ''))} /></Field>
+      <Field label="Порт панели на машине" hint="По этому порту откроется её собственная панель."><input className="input mono" style={{ maxWidth: 120 }} value={port} onChange={e => setPort(e.target.value.replace(/\D/g, ''))} /></Field>
+      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={report} onChange={setReport} />
+        <div className="grow"><div>Присылать данные на эту панель</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Rack Live скачается на машину с этой панели сам, по домашней сети — адрес вводить не нужно. Этот переключатель — чтобы машина и из других мест (у клиентов) присылала сюда, что видит; для этого нужен домен.
+            {p.rcos ? ' Можно не включать: машина полностью работает сама, а отправку данных можно включить позже на её панели.' : ''}</div></div></div>
+      {report ? <>
+        <Field label="Адрес этой панели в интернете" hint={p.serverUrl ? 'Взят из «Настройки → Приложения».' : 'Домен вида https://racklive.example.com — создать его можно в «Настройки → Приложения».'}>
+          <input className="input mono" value={server} placeholder="https://racklive.example.com" onChange={e => setServer(e.target.value)} /></Field>
         <Field label="Управление отсюда"><select className="input" value={level} onChange={e => setLevel(e.target.value)}>
-          {COLLECTOR_LEVELS.map(l => <option key={l[0]} value={l[0]}>{l[1]}</option>)}</select></Field></div>
+          {COLLECTOR_LEVELS.map(l => <option key={l[0]} value={l[0]}>{l[1]}</option>)}</select></Field></> : null}
       {p.rcos ? <>
         <Field label="Часовой пояс машины" hint="Например Europe/Moscow, Asia/Tbilisi. Подставлен часовой пояс вашего браузера."><input className="input mono" value={tz} onChange={e => setTz(e.target.value)} /></Field>
         <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={ap} onChange={setAp} />
@@ -453,11 +459,11 @@ function CollectorPlugin({ p, device, reload }) {
         {ap ? <div className="row wrap" style={{ gap: 8 }}>
           <Field label="Название сети"><input className="input" value={apSsid} onChange={e => setApSsid(e.target.value)} /></Field>
           <Field label="Пароль Wi-Fi" hint="Пусто — придумается сам и будет показан после установки."><input className="input mono" value={apPw} onChange={e => setApPw(e.target.value)} placeholder="придумается сам" /></Field></div> : null}</> : null}
-      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={insecure} onChange={setInsecure} />
+      {report && /^https:/.test(server.trim()) ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={insecure} onChange={setInsecure} />
         <div className="grow"><div>Не проверять сертификат этой панели</div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Только если адрес выше — https с самоподписанным сертификатом. С обычным доменом оставьте выключенным.</div></div></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Только для самоподписанного сертификата. С обычным доменом оставьте выключенным.</div></div></div> : null}
       <Btn kind="primary" icon="download" busy={running} disabled={!ready || running} onClick={install} style={{ padding: 12 }}>{running ? 'Устанавливаю…' : p.rcos ? 'Установить ReckController OS' : 'Установить сборщик'}</Btn>
-      {!ready && !running ? <div className="dim3" style={{ fontSize: 12.5 }}>{!server.trim() ? 'Укажите адрес этой панели.' : 'Кнопка станет активной, когда все пункты выше будут отмечены зелёным.'}</div> : null}
+      {!ready && !running ? <div className="dim3" style={{ fontSize: 12.5 }}>{report && !server.trim() ? 'Укажите адрес этой панели в интернете или выключите отправку данных.' : 'Кнопка станет активной, когда все пункты выше будут отмечены зелёным.'}</div> : null}
     </div> : null}
     {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
       <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.max(0, Math.round(now / 1000 - job.t))} с · окно можно закрыть, установка продолжится</div></div></div> : null}

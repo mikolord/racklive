@@ -377,6 +377,11 @@ done; wait; echo @@end'''
         if not c:
             raise DriverError('нет данных для установки')
         rc, warnings, ap_info = (params.get('_rcos') if pid == 'rcos' else None), [], None
+        src = c.get('pack') or c['url']
+        if not src:
+            raise DriverError('неизвестно, откуда скачивать Rack Live')
+        progress('Проверяю, что машина достаёт до этой панели')
+        run(collector_install.reach_script(src), 40)                        # first, before anything on the machine is changed
         if rc:                                                              # ReckController OS: time zone, Wi-Fi drivers, our own access point — before the collector, whose config remembers the point
             if rc.get('tz'):
                 progress(f"Часовой пояс: {rc['tz']}")
@@ -408,7 +413,7 @@ done; wait; echo @@end'''
             except (DriverError, ValueError) as e:
                 warnings.append(f'Wi-Fi: {e}')
         progress('Ставлю Rack Live на сервер: пакеты, скачивание, запуск (1–4 минуты)')
-        body = run(collector_install.install_script(c['url'], c['token'], c['cfg'], c['port'], c.get('insecure')), 900)
+        body = run(collector_install.install_script(c['url'], c['token'], c['cfg'], c['port'], c.get('insecure'), pack=c.get('pack')), 900)
         if '@@ok' not in body:
             raise DriverError('установка не завершилась: нет подтверждения от сервера')
         ver = next((l[6:].strip() for l in body.splitlines() if l.startswith('@@ver ')), '')

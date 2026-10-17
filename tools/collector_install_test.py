@@ -126,6 +126,32 @@ for bad in ({'server': 'nope'}, {'port': 80}, {'port': 'abc'}, {'level': 'root'}
         ok('отклонено: ' + str(bad), False)
     except ValueError:
         ok('отклонено: ' + str(bad), True)
+dev2 = {'id': 'mini', 'name': 'ReckController', 'driver': 'ssh', 'host': '192.168.1.21'}
+n0 = len(app.sites.items)
+b2 = server.App.collector_prepare(app, dev2, {'plugin': 'rcos', 'server': '', 'name': 'ReckController', 'tz': 'Europe/Moscow', 'ap': True}, 'install')
+c2 = b2['_collector']
+ok('без отправки данных: площадка не создаётся, сборщик на машине выключен', len(app.sites.items) == n0 and c2['siteId'] is None and c2['cfg']['collector'] == {'enabled': False, 'level': 'view'} and c2['cfg']['settings']['devMode'] is True, c2['cfg']['collector'])
+ok('без отправки данных: ключ на скачивание одноразовый, адрес для скачивания найден сам', c2['token'] in app.pack_tokens and re.match(r'^http://[\d.]+:\d+$', c2['pack']), c2['pack'])
+ok('ReckController OS: пароль точки придуман, если не задан', len(b2['_rcos']['password']) >= 8 and b2['_rcos']['ssid'] == 'ReckController')
+b3 = server.App.collector_prepare(app, dev2, {'plugin': 'rcos', 'server': 'https://racklive.example.com', 'name': 'Сбойная'}, 'install')
+b4 = server.App.collector_prepare(app, dev2, {'plugin': 'rcos', 'server': 'https://racklive.example.com', 'name': 'Сбойная'}, 'install')
+ok('повтор после сбоя: площадка, которая ещё ни разу не отвечала, переиспользуется', b3['_collector']['siteId'] == b4['_collector']['siteId'] and sum(1 for s in app.sites.items if s['name'] == 'Сбойная') == 1)
+class _NoReach(SSHHost):
+    def __init__(self):
+        self.ran = []
+
+    def _run(self, cfg, script, timeout=30, remote='sh -s'):
+        self.ran.append(script)
+        return '@@fail машина не достаёт до этой панели\n'
+
+
+fr0 = _NoReach()
+try:
+    fr0.plugin({'host': 'h'}, 'rcos', 'install', dict(b2, _progress=lambda s: None))
+    ok('нет связи с панелью: остановка до любых изменений на машине', False)
+except DriverError:
+    ok('нет связи с панелью: остановка до любых изменений на машине', len(fr0.ran) == 1 and '/api/state' in fr0.ran[0] and 'timedatectl' not in fr0.ran[0])
+syntax('проверка связи', ci.reach_script('http://192.168.1.3:9998'))
 ok('удаление: площадка уходит только по просьбе', server.App.collector_prepare(app, dev, {}, 'remove')['_site'] is None and server.App.collector_prepare(app, dev, {'removeSite': True}, 'remove')['_site'] == site['id'])
 
 
