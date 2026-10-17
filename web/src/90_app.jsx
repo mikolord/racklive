@@ -27,7 +27,7 @@ const TAB_HINTS = {
     'Подсказки вроде этой выключаются переключателем «Подсказки» в разделе «Основные».'],
 };
 const APP_MODE = window.RL_APP || (window.RL_FRANK ? 'frank' : '');     // /frank, /speed: separate installable apps
-const FRANK = APP_MODE === 'frank', SPEED_APP = APP_MODE === 'speed';
+const FRANK = APP_MODE === 'frank', SPEED_APP = APP_MODE === 'speed', TERM_APP = APP_MODE === 'terminal';
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
 
@@ -115,7 +115,7 @@ function App() {
     : <div className="dim">Загрузка…</div>}</div>;
   if (data.setupNeeded) return <AuthScreen setup title={data.settings && data.settings.title} onDone={refresh} />;
   if (tg === 'pending' && !data.authed) return <div className="auth"><div className="app-bg" /><div className="dim">Вход через Telegram…</div></div>;
-  if ((data.needLogin && !data.devices) || login || (FRANK && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin} codeLogin={data.loginCodes}
+  if ((data.needLogin && !data.devices) || login || ((FRANK || TERM_APP) && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : TERM_APP ? 'Терминал' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin} codeLogin={data.loginCodes}
     onDone={() => { setLogin(false); refresh(); }} />;
 
   const admin = !!data.authed;
@@ -147,6 +147,7 @@ function App() {
     askAi: q => setAi({ q, n: Date.now() }) };
   if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
   if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
+  if (TERM_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><TerminalApp /></AppCtx.Provider>;
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
   const stale = data.devices.length && (data.now - newest > Math.max(180, (data.settings.poll || 60) * 3));

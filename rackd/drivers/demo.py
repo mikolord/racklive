@@ -371,6 +371,22 @@ class DemoSwitch(DemoBase):
 
 class DemoNas(DemoBase):
     id, title, kind = 'demo_nas', 'Демо: NAS', 'nas'
+
+    def surveillance(self, cfg):
+        cams = [(10, 'Проход', '10.0.7.2', 'Dahua', 1), (11, 'Вход', '10.0.7.11', 'Hikvision', 1), (12, 'Парковка', '10.0.7.12', 'Dahua', 1), (13, 'Двор', '10.0.7.14', 'Tapo', 3)]
+        return {'name': 'Surveillance Station', 'host': cfg.get('host') or '10.0.0.5', 'url': 'http://10.0.0.5:9900', 'version': '9.2.0', 'licences': 60, 'max': 40,
+                'cameras': [{'id': i, 'name': n, 'ip': ip, 'port': 80, 'vendor': v, 'model': 'ONVIF', 'mac': '', 'status': s, 'statusText': 'работает' if s == 1 else 'нет связи', 'keepDays': 14} for i, n, ip, v, s in cams]}
+
+    def disks(self, cfg):
+        from .. import smart
+        return smart.demo()
+
+    def disk_test(self, cfg, disk, kind):
+        return 'Testing has begun (демо). Короткий тест займёт около 2 минут.'
+
+    def containers(self, cfg, notes=None):
+        from .. import dockerinfo
+        return dockerinfo.demo(cfg.get('host') or '10.0.0.5', notes)
     actions = [{'id': 'container_restart', 'label': 'Перезапустить контейнер', 'scope': 'service', 'confirm': 'Перезапустить {name}? (демо)'}]
 
     def poll(self, cfg):
@@ -411,6 +427,17 @@ class DemoHA(DemoBase):
 
 class DemoServer(DemoBase):
     id, title, kind = 'demo_server', 'Демо: удалённый сервер', 'server'
+
+    def disks(self, cfg):
+        from .. import smart
+        return smart.demo()
+
+    def disk_test(self, cfg, disk, kind):
+        return 'Testing has begun (демо). Короткий тест займёт около 2 минут.'
+
+    def containers(self, cfg, notes=None):
+        from .. import dockerinfo
+        return dockerinfo.demo(cfg.get('host') or '198.51.100.40', notes)
     actions = [{'id': 'iperf', 'label': 'Тест скорости (iperf3)', 'scope': 'device', 'kind': 'speed',
                 'confirm': 'Измерить скорость до сервера в обе стороны? (демо)'}]
 
@@ -435,10 +462,21 @@ class DemoServer(DemoBase):
                              {'label': 'Порты 80 и 443 свободны (или заняты nginx)', 'ok': True},
                              {'label': 'Не установлена вторая панель — две панели на одном сервере конфликтуют', 'ok': not (set(self._panels) - {p['id']})}])
             out.append(p)
+        from .. import agents
+        a = dict(agents.CATALOG[0], installed=True, helper=True, models=agents.MODELS, claudeAuth='Logged in as demo@example.com',
+                 config={'rc': True, 'auto': True, 'name': 'Франкфурт', 'model': 'sonnet', 'auth': 'sub', 'keys': []},
+                 sessions=[{'name': 'rl-main', 'line': 'rl-main: 1 windows'}, {'name': 'rl-c-Proverka-123', 'line': 'rl-c-Proverka-123: 1 windows'}],
+                 agents=[{k: x[k] for k in ('id', 'title', 'by', 'home')} | {'key': bool(x['key']), 'installed': x['id'] in ('claude', 'aider'), 'version': '2.1.300' if x['id'] == 'claude' else '0.86' if x['id'] == 'aider' else None} for x in agents.AGENTS],
+                 checks=[{'label': 'Linux (у вас Ubuntu 24.04 LTS)', 'ok': True}, {'label': 'Вход под root (или sudo без пароля — для tmux и Node.js)', 'ok': True, 'optional': True},
+                         {'label': 'tmux: tmux 3.4', 'ok': True, 'optional': True}, {'label': 'Node.js 18+ для Codex и Gemini CLI: будет установлен', 'ok': False, 'optional': True}])
+        out.append(a)
         return {'os': 'Ubuntu 24.04 LTS', 'ip': '198.51.100.40', 'plugins': out}
 
     def plugin(self, cfg, pid, op, params):
         progress = params.get('_progress') or (lambda s: None)
+        if pid == 'agents':
+            progress('Демо: установка агентов'); time.sleep(.6)
+            return {'ok': True, 'log': [{'cmd': '— демо', 'ok': True, 'msg': ''}], 'message': 'Готово (демо)', 'needSetup': False}
         if op == 'dns':
             dom = vps.clean_domain(params.get('domain'))
             ok = dom.endswith('example.com')

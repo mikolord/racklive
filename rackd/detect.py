@@ -60,13 +60,18 @@ def p_openwrt(host):
     try:
         code, _, body = _http(f'http://{host}/ubus', {'jsonrpc': '2.0', 'id': 1, 'method': 'call',
                                                       'params': ['0' * 32, 'session', 'access', {}]})
-        if '"jsonrpc"' in body:
+        try:
+            j = json.loads(body)
+        except ValueError:
+            j = None
+        # a real ubus answers {"jsonrpc":"2.0","id":1,"result":[…]}; a camera / «answers 200 to everything» device that echoes the request (it has "method") is not OpenWrt
+        if isinstance(j, dict) and j.get('jsonrpc') == '2.0' and 'method' not in j and ('result' in j or 'error' in j):
             return {'driver': 'openwrt', 'score': 95, 'what': 'OpenWrt (ubus)'}
     except Exception:
         pass
     try:
         code, _, body = _http(f'http://{host}/cgi-bin/luci/')
-        if 'luci' in body.lower():
+        if 'luci-static' in body or ('LuCI' in body and 'openwrt' in body.lower()):
             return {'driver': 'openwrt', 'score': 80, 'what': 'OpenWrt (LuCI)'}
     except Exception:
         pass
@@ -118,6 +123,9 @@ def p_ssh(host):
         sw = b.strip().split('\n')[0][:60]
         if 'IPSSH' in sw:                                    # TP-Link switches greet with «SSH-1.99-IPSSH-…»
             return {'driver': 'tplink_jetstream', 'score': 85, 'what': f'TP-Link JetStream (SSH {sw})'}
+        if 'for_windows' in sw.lower():                      # «SSH-2.0-OpenSSH_for_Windows_9.5»: the built-in OpenSSH server of Windows
+            return {'driver': 'windows', 'score': 88, 'kind': 'pc', 'username': 'Administrator',
+                    'what': f'Компьютер / сервер Windows с включённым SSH ({sw}): нагрузка, память, диски и их состояние'}
         return {'driver': 'ssh', 'score': 40, 'what': f'Linux / сервер по SSH ({sw})'}
 
 
@@ -159,7 +167,9 @@ def p_windows(host):
     rdp, smb = _open(host, 3389), _open(host, 445)
     if rdp or (smb and _open(host, 135)):
         return {'driver': 'ping', 'score': 30, 'kind': 'pc',
-                'what': 'Компьютер с Windows (' + ', '.join(x for x, on in (('удалённый рабочий стол', rdp), ('общие папки', smb)) if on) + ') — следить за доступностью'}
+                'what': 'Компьютер с Windows (' + ', '.join(x for x, on in (('удалённый рабочий стол', rdp), ('общие папки', smb)) if on) + ') — пока можно следить за доступностью. '
+                        'Чтобы видеть нагрузку, диски и их состояние, включите на компьютере встроенный OpenSSH-сервер — Rack Live предложит тип «Windows» сам',
+                'alt': 'windows'}
 
 
 PROBES = [p_keenetic, p_openwrt, p_synology, p_homeassistant, p_proxmox, p_snmp, p_telnet, p_ssh, p_nut, p_windows, p_http]

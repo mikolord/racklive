@@ -348,6 +348,10 @@ function MapView() {
   }, [q]);
 
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
+  useEffect(() => {                       // ?mapnode=<part of a name>: open that node's card (for links and tests)
+    const q = (new URLSearchParams(location.search).get('mapnode') || '').toLowerCase(); if (!q) return;
+    const id = Object.keys(L.nodes).find(k => String(L.nodes[k].label || '').toLowerCase().includes(q)); if (id) setSel(id);
+  }, []);
   const selNode = sel && L.nodes[sel];
   const [findOpen, setFindOpen] = useState(false);
   const [racksOpen, setRacksOpen] = useState(false);
@@ -517,6 +521,7 @@ function WanSetup({ n, L, data }) {
 }
 
 function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
+  const [edit, setEdit] = useState(null);                       // mac → ClientEditor (a client of a router: name, fixed IP, speed, policy)
   const pe = L.edges.find(e => e.target === n.id && !e.extra);
   const parent = pe && L.nodes[pe.source];
   const dev = n.deviceId && devById[n.deviceId];
@@ -532,5 +537,8 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
     {n.id === 'inet' || n.wan ? <WanSetup n={n} L={L} data={data} /> : null}
     {dev ? <Btn kind="primary" style={{ width: '100%', marginTop: 12 }} onClick={() => onOpen(dev)}>Подробнее</Btn> : null}
     {!dev && pe && pe.sourcePort && parent && parent.deviceId ? <Btn style={{ width: '100%', marginTop: 12 }} onClick={() => onOpen(devById[parent.deviceId], 'ports', pe.sourcePort)}>Порт {pe.sourcePort} на {parent.label}</Btn> : null}
+    {!dev && n.mac && findClient(data, n.mac) ? <Btn style={{ width: '100%', marginTop: 8 }} onClick={() => setEdit(n.mac)}>Настройки на роутере</Btn> : null}
+    {!dev && /^\d+\.\d+\.\d+\.\d+$/.test(n.sub || '') ? <ClientActions c={{ ip: n.sub, mac: n.mac, kind: n.kind, name: n.label }} onClose={onClose} /> : null}
+    {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
   </div>;
 }

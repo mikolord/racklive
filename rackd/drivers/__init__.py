@@ -43,8 +43,8 @@ class Driver:
     @classmethod
     def schema(cls):
         return {'id': cls.id, 'title': cls.title, 'kind': cls.kind, 'description': cls.description,
-                'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden,
-                'plugins': callable(getattr(cls, 'plugins', None)),      # driver has a «Плагины» tab (see rackd/plugins.py)
+                'fields': cls.fields, 'actions': cls.actions, 'hidden': cls.hidden, 'help': getattr(cls, 'help', None),
+                'plugins': callable(getattr(cls, 'plugins', None)) or cls.id in ('synology',),      # driver has a «Плагины» tab (rackd/plugins.py; Synology only has community plugins, rackd/community.py)
                 'backup': callable(getattr(cls, 'backup', None)),        # config versions (rackd/backups.py)
                 'clientMgmt': callable(getattr(cls, 'client', None)),    # name / static IP / speed / policy of a client on the router
                 'inetTest': callable(getattr(cls, 'inet_test', None))}   # internet speed through it (rackd/inet.py)

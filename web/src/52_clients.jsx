@@ -56,6 +56,40 @@ function PendingIp({ c }) {
     <Icon name="clock" size={12} />{c.staticIp} после переподключения</span>;
 }
 
+/* what else can be done with a device the tree already shows: from the last network scan (cameras → the camera tool, a Windows PC → disks and load, a recognised server → connect it) */
+function ClientActions({ c, onClose }) {
+  const ctx = useApp(); const { data, newDevice } = ctx;
+  const [it, setIt] = useState(undefined);
+  useEffect(() => { api('/api/netscan').then(r => setIt((r.items || []).find(x => x.ip === c.ip || (x.also || []).includes(c.ip) || (x.mac && c.mac && x.mac.toLowerCase() === c.mac.toLowerCase())) || null)).catch(() => setIt(null)); }, [c.ip]);
+  const ports = (it && it.ports) || [];
+  const cam = c.kind === 'camera' || (it && it.kind === 'camera') || ports.some(p => [554, 8000, 8554, 37777, 34567].includes(p));
+  const win = (c.kind === 'pc' || (it && it.kind === 'pc')) && !(it && it.driver && it.driver !== 'ping');
+  const drv = it && it.driver && it.driver !== 'ping' && !cam ? it : null;        // never «connect as a router» for a camera: its web server answers anything
+  const have = data.devices.some(d => hostOf(d) === c.ip);
+  const [guess, setGuess] = useState(null);                   // «what is it?»: the auto-detect of the add-device form, run on this address
+  const title = id => (data.drivers.find(d => d.id === id) || {}).title || id;
+  if (!cam && !win && !drv) {
+    if (!c.ip || it === undefined || have) return null;
+    return <div className="card" style={{ marginTop: 10, padding: 12 }}>
+      <div className="card-title" style={{ marginTop: 0 }}>Что ещё можно сделать с этим устройством</div>
+      {guess === null ? <Btn size="sm" icon="search" onClick={async () => { setGuess('wait'); try { const r = await api('/api/detect', { method: 'POST', body: { host: c.ip } }); setGuess(r.found || []); } catch (e) { setGuess([]); } }}>Определить, что это за устройство</Btn>
+        : guess === 'wait' ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Проверяю…</div>
+        : !guess.length ? <div className="dim3" style={{ fontSize: 12.5 }}>Ничего управляемого не нашлось: устройство не отвечает на известные порты. Если это камера — откройте «Инструменты → Инструменты → Камеры» и найдите её там.</div>
+        : <div className="col" style={{ gap: 6 }}>{guess.filter(g => g.driver && g.driver !== 'ping').slice(0, 3).map((g, i) => <div key={i} className="row" style={{ gap: 8 }}><span className="grow dim" style={{ fontSize: 12.5 }}>{g.what || title(g.driver)}</span>
+          <Btn size="sm" icon="plus" onClick={() => { onClose(); newDevice({ driver: g.driver, kind: g.kind || (data.drivers.find(d => d.id === g.driver) || {}).kind, name: c.name, fields: { host: g.host || c.ip, location: 'local' } }); }}>Подключить</Btn></div>)}</div>}
+    </div>;
+  }
+  return <div className="card" style={{ marginTop: 10, padding: 12 }}>
+    <div className="card-title" style={{ marginTop: 0 }}>Что ещё можно сделать с этим устройством</div>
+    <div className="row wrap" style={{ gap: 6 }}>
+      {cam ? <Btn size="sm" icon="camera" onClick={() => { onClose(); openToolById(ctx, 'cameras', c.ip); }}>Камеры: вход, пароль, адрес, кадр</Btn> : null}
+      {win && !have ? <Btn size="sm" icon="plus" onClick={() => { onClose(); newDevice({ driver: 'windows', kind: 'pc', name: c.name, fields: { host: c.ip, location: 'local' } }); }}>Windows: нагрузка, диски, их состояние</Btn> : null}
+      {drv && !have ? <Btn size="sm" icon="plus" onClick={() => { onClose(); newDevice({ driver: drv.driver, kind: (data.drivers.find(d => d.id === drv.driver) || {}).kind, name: c.name || drv.name, fields: { host: drv.host || c.ip, location: 'local' } }); }}>Подключить: {title(drv.driver)}</Btn> : null}
+    </div>
+    {win && !have ? <div className="dim3" style={{ fontSize: 12, marginTop: 6 }}>Для Windows нужно один раз включить встроенный OpenSSH-сервер — подсказка будет в форме.</div> : null}
+  </div>;
+}
+
 function ClientEditor({ mac, onClose, initialName }) {
   const { data, refresh } = useApp(); const toast = useToast();
   const found = findClient(data, mac);
@@ -124,5 +158,6 @@ function ClientEditor({ mac, onClose, initialName }) {
         <option value="deny">Запретить интернет</option>
       </select></Field>
     {done ? <div className="ok-box"><Icon name="check" size={16} />{done.join(' · ')}</div> : null}
+    <ClientActions c={c} onClose={onClose} />
   </Modal>;
 }

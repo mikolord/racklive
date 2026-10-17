@@ -517,6 +517,26 @@ class Cameras:
             raise CamError('в списке больше нет паролей для пробы — введите правильный вручную')
         return [(c['id'], c['user'], c['password']) for c in part], len(order) - off - len(part)
 
+    def recorders(self):
+        """video recorders that live on your devices: Synology Surveillance Station (the NAS itself records) — cached for a minute"""
+        c = getattr(self, '_rec', None)
+        if c and time.time() - c[0] < 60:
+            return c[1]
+        from .drivers import REGISTRY
+        out = []
+        for d in self.store.cfg['devices']:
+            drv = REGISTRY.get(d.get('driver'))
+            if not d.get('enabled', True) or not hasattr(drv, 'surveillance'):
+                continue
+            try:
+                r = drv.surveillance(d)
+            except Exception as e:
+                r = {'name': 'Surveillance Station', 'error': str(e)[:140], 'cameras': [], 'host': d.get('host') or ''}
+            if r:
+                out.append(dict(r, deviceId=d['id'], deviceName=d.get('name')))
+        self._rec = (time.time(), out)
+        return out
+
     def public(self):
         subs = self.app.netscan.subnets()
         s = self.s

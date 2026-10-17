@@ -24,9 +24,8 @@ function DevicesView() {
   const routers = ((data.routerScan || {}).list || []).filter(r => !r.dismissed);
   const [showRouters, setShowRouters] = useState(() => new URLSearchParams(location.search).get('routers') === '1');
   const [scan, setScan] = useState(() => new URLSearchParams(location.search).get('netscan') === '1');       // «Сканировать сеть» (?netscan=1)
-  const changed = onlyBad || sort !== 'group';
+  const changed = onlyBad || sort !== 'group' || loc !== 'all';
   return <>
-    <div className="dev-loc"><Seg value={loc} onChange={setLoc} options={LOC_TABS} /></div>
     <div className="dev-tools">
       {find || q ? <div className="dev-find"><SearchBox value={q} onChange={setQ} placeholder="Имя, адрес, площадка" autoFocus />
         <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFind(false); }} /></div>
@@ -34,6 +33,9 @@ function DevicesView() {
       <div style={{ position: 'relative' }}>
         <button type="button" className={'round-btn sort-btn' + (changed ? ' on' : '')} title="Фильтр и сортировка" onClick={() => setMenu(!menu)}><Icon name="sort" size={18} /></button>
         {menu ? <div className="sort-menu">
+          <div className="sort-head">Где находятся</div>
+          {LOC_TABS.map(t => <button key={t.value} type="button" className="sort-opt" onClick={() => { setLoc(t.value); setMenu(false); }}>
+            <span className="sort-check">{loc === t.value ? <Icon name="check" size={15} stroke={2.6} /> : null}</span><span className="grow">{t.label.split(' · ')[0]}</span><span className="dim3">{counts[t.value]}</span></button>)}
           <div className="sort-head">Показать</div>
           <button type="button" className="sort-opt" onClick={() => { setOnlyBad(!onlyBad); setMenu(false); }}>
             <span className="sort-check">{onlyBad ? <Icon name="check" size={15} stroke={2.6} /> : null}</span><span className="grow">Только с проблемами</span><span className="dim3">{counts.problems}</span></button>
@@ -42,7 +44,7 @@ function DevicesView() {
             <span className="sort-check">{sort === k ? <Icon name="check" size={15} stroke={2.6} /> : null}</span><span className="grow">{l}</span></button>)}
         </div> : null}
       </div>
-      {changed ? <span className="dim" style={{ fontSize: 13 }}>{[onlyBad ? 'только с проблемами' : '', sort !== 'group' ? DEV_SORTS.find(x => x[0] === sort)[1].toLowerCase() : ''].filter(Boolean).join(' · ')}</span> : null}
+      {changed ? <span className="dim" style={{ fontSize: 13 }}>{[loc !== 'all' ? (loc === 'local' ? 'локальные' : 'удалённые') : '', onlyBad ? 'только с проблемами' : '', sort !== 'group' ? DEV_SORTS.find(x => x[0] === sort)[1].toLowerCase() : ''].filter(Boolean).join(' · ')}</span> : null}
       <div className="grow" />
       {admin ? <Btn icon="search" title="Найти устройства в сети" onClick={() => setScan(true)}>Сканировать сеть</Btn> : null}
       {admin ? <span data-tour="add-dev" style={{ display: 'inline-flex' }}><Btn kind="primary" icon="plus" onClick={() => openEditor(null)}>Добавить</Btn></span> : null}
@@ -248,6 +250,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
     footer={<>{device ? <Btn kind="danger" icon="trash" onClick={del}>Удалить</Btn> : <Btn onClick={toPicker}>Назад</Btn>}<div className="grow" />
       {drvId !== 'agent' ? <Btn onClick={doTest} busy={test && test.busy}>Проверить</Btn> : null}<Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
     {entry ? <div className="dim" style={{ fontSize: 13.5 }}>{entry.text}</div> : drv.description ? <div className="dim" style={{ fontSize: 13.5 }}>{drv.description}</div> : null}
+    {drv.help ? <div className="err-note" style={{ marginTop: 8, whiteSpace: 'pre-wrap', fontSize: 12.5, userSelect: 'text' }}><b>Как подготовить компьютер.</b>{'\n'}{drv.help}</div> : null}
     {entry && entry.steps && entry.steps.length ? <details className="guide" open>
       <summary>Что нужно сделать</summary>
       <ol className="steps">{entry.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>

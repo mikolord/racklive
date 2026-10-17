@@ -11,6 +11,9 @@ REACT = '18.3.1'
 VENDOR = {
     'react.production.min.js': f'https://unpkg.com/react@{REACT}/umd/react.production.min.js',
     'react-dom.production.min.js': f'https://unpkg.com/react-dom@{REACT}/umd/react-dom.production.min.js',
+    'xterm.js': 'https://unpkg.com/xterm@5.3.0/lib/xterm.js',                      # the terminal in Settings (MIT)
+    'xterm.css': 'https://unpkg.com/xterm@5.3.0/css/xterm.css',
+    'xterm-addon-fit.js': 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js',
 }
 
 

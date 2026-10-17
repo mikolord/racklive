@@ -7,7 +7,7 @@ Transport: paramiko when it is installed (dev machines), otherwise the system ss
 import json, os, random, re, secrets, shlex, shutil, subprocess, tempfile, time
 
 from . import Driver, FIELD_PASS
-from .. import speedtest, vps
+from .. import agents, speedtest, vps
 from ..util import DriverError
 
 SCRIPT = r'''
@@ -62,7 +62,59 @@ class SSHHost(Driver):
     def command(self, cfg, cmd):
         return self._run(cfg, '{\n' + cmd + '\n} 2>&1\n', timeout=180)
 
-    def _run(self, cfg, script, timeout=30):
+    def interactive_args(self, cfg, remote=None):
+        """the command line of an interactive `ssh -tt` (for the browser terminal): → (args, env, temp file to delete). Same ways of signing in as _run."""
+        host, port = cfg['host'].strip(), int(cfg.get('sshPort') or 22)
+        user = cfg.get('username') or 'root'
+        key, pw = (cfg.get('privateKey') or '').strip(), cfg.get('password') or ''
+        if not shutil.which('ssh'):
+            raise DriverError('в системе нет ssh-клиента')
+        args = ['ssh', '-tt', '-p', str(port), '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR', '-o', 'ServerAliveInterval=15', '-o', 'ConnectTimeout=12']
+        env, keyfile = dict(os.environ), None
+        env.setdefault('TERM', 'xterm-256color')
+        if key:
+            fd, keyfile = tempfile.mkstemp()
+            with os.fdopen(fd, 'w') as f:
+                f.write(key.replace('\r\n', '\n') + '\n')
+            os.chmod(keyfile, 0o600)
+            args += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes']
+        elif pw:
+            if shutil.which('sshpass'):
+                env['SSHPASS'] = pw
+                args = ['sshpass', '-e'] + args + ['-o', 'PubkeyAuthentication=no']
+            else:
+                askdir = os.environ.get('RL_DATA') or None
+                if askdir and not os.path.isdir(askdir):
+                    askdir = None
+                fd, keyfile = tempfile.mkstemp(prefix='rl-ask-', suffix='.sh', dir=askdir)
+                with os.fdopen(fd, 'w') as f:
+                    f.write('#!/bin/sh\nprintf \'%s\\n\' "$RL_SSH_PW"\n')
+                os.chmod(keyfile, 0o700)
+                env.update(RL_SSH_PW=pw, SSH_ASKPASS=keyfile, SSH_ASKPASS_REQUIRE='force', DISPLAY=env.get('DISPLAY') or 'rl:0')
+                args += ['-o', 'PubkeyAuthentication=no', '-o', 'NumberOfPasswordPrompts=1']
+        args += [f'{user}@{host}']
+        if remote:
+            args.append(remote)                      # a fixed command from a whitelist (server.terminal), not text from the page
+        return args, env, keyfile
+
+    def disks(self, cfg):
+        """S.M.A.R.T. of every disk (rackd/smart.py)"""
+        from .. import smart
+        return smart.parse(self._run(cfg, smart.SCRIPT, timeout=90))
+
+    def disk_test(self, cfg, disk, kind):
+        from .. import smart
+        try:
+            return self._run(cfg, smart.test_script(disk, kind), timeout=60).strip() or 'Команда отправлена диску'
+        except ValueError as e:
+            raise DriverError(str(e))
+
+    def containers(self, cfg, notes=None):
+        """Docker in detail: image, ports, addresses, uptime, CPU / memory / traffic (rackd/dockerinfo.py)"""
+        from .. import dockerinfo
+        return dockerinfo.parse(self._run(cfg, dockerinfo.SCRIPT, timeout=90), cfg['host'].strip(), notes)
+
+    def _run(self, cfg, script, timeout=30, remote='sh -s'):          # remote: what the other side runs to read the script from stdin (Windows: PowerShell, see drivers/windows.py)
         host, port = cfg['host'].strip(), int(cfg.get('sshPort') or 22)
         user = cfg.get('username') or 'root'
         key, pw = (cfg.get('privateKey') or '').strip(), cfg.get('password') or ''
@@ -87,7 +139,7 @@ class SSHHost(Driver):
                         raise DriverError('не удалось прочитать приватный ключ')
                 c.connect(host, port=port, username=user, password=pw or None, pkey=pkey, timeout=12, banner_timeout=12,
                           auth_timeout=12, look_for_keys=False, allow_agent=False)
-                i, o, e = c.exec_command('sh -s', timeout=timeout)
+                i, o, e = c.exec_command(remote, timeout=timeout)
                 i.write(script)
                 i.channel.shutdown_write()
                 return o.read().decode('utf-8', 'replace')
@@ -129,7 +181,7 @@ class SSHHost(Driver):
                     args += ['-o', 'PubkeyAuthentication=no', '-o', 'NumberOfPasswordPrompts=1']
             else:
                 args += ['-o', 'BatchMode=yes']
-            args += [f'{user}@{host}', 'sh -s']
+            args += [f'{user}@{host}', remote]
             r = subprocess.run(args, input=script, capture_output=True, text=True, timeout=timeout, env=env)
             if r.returncode == 255 or (r.returncode and not r.stdout):
                 err = (r.stderr or '').strip().splitlines()
@@ -265,9 +317,123 @@ done; wait; echo @@end'''
                             'ok': not web or p['installed']},
                            {'label': f"Не установлен {'Remnawave' if other == 'rw' else '3x-ui'} — две панели на одном сервере конфликтуют", 'ok': not st.get(other)}]
             out.append(p)
+        try:
+            out.append(self._agents_card(cfg))
+        except DriverError:
+            pass
         return {'os': st.get('os'), 'ip': st.get('ip'), 'plugins': out}
 
+    # ───────── plugin «ИИ-агенты» (rackd/agents.py) ─────────
+    def _agents_card(self, cfg):
+        s = agents.parse_status(self._run(cfg, agents.STATUS, 60))
+        root = s.get('uid') == '0'
+        conf = s.get('conf') or {}
+        p = dict(agents.CATALOG[0])
+        p['installed'] = bool(s['bins'])
+        p['agents'] = [{k: a[k] for k in ('id', 'title', 'by', 'home')} | {'key': bool(a['key']), 'installed': a['bin'] in s['bins'], 'version': s['bins'].get(a['bin'])} for a in agents.AGENTS]
+        p['config'] = {'rc': conf.get('RC') == '1', 'auto': conf.get('AUTO') == '1', 'name': conf.get('NAME') or '', 'model': conf.get('MODEL') or '',
+                       'auth': conf.get('AUTH') or 'sub', 'keys': [k for k in s['envkeys'] if k.endswith('_API_KEY')]}
+        p['sessions'] = s['sessions']
+        p['claudeAuth'] = s.get('cauth') or ''
+        p['helper'] = bool(s.get('helper'))
+        p['models'] = agents.MODELS
+        p['checks'] = [{'label': f"Linux (у вас {s.get('os') or '?'})", 'ok': bool(s.get('os'))},
+                       {'label': 'Вход под root (или sudo без пароля — для tmux и Node.js)', 'ok': root, 'optional': True},
+                       {'label': f"tmux: {s.get('tmux') or 'будет установлен'}", 'ok': bool(s.get('tmux')), 'optional': True},
+                       {'label': f"Node.js 18+ для Codex и Gemini CLI: {s.get('node') or 'будет установлен'}", 'ok': bool(s.get('node')), 'optional': True}]
+        return p
+
+    def _agents(self, cfg, op, params):
+        progress = params.get('_progress') or (lambda s: None)
+        log = []
+
+        def stage(title, script, timeout=900, fatal=True):
+            progress(title)
+            body = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', self._run(cfg, script, timeout=timeout))
+            log.append({'cmd': f'— {title}', 'ok': True, 'msg': ''})
+            log.extend({'cmd': l[:220], 'ok': '@@fail' not in l, 'msg': ''} for l in body.splitlines() if l.strip() and not l.startswith('@@ok'))
+            if '@@fail' in body and fatal:
+                raise DriverError(f"{title}: " + body.split('@@fail', 1)[1].splitlines()[0].strip())
+            return body
+
+        try:
+            if op == 'new_chat':
+                name = agents.check_text(params.get('name'), r'^[\w .\-А-Яа-яЁё]+$', 'имя чата', 40)
+                out = self._run(cfg, agents.PATHS + f'\nracklive-agent new {shlex.quote(name)} 2>&1 | tail -3', 30)
+                return {'ok': True, 'message': 'Чат запущен' + (': ' + out.strip().splitlines()[-1] if out.strip() else ''), 'log': []}
+            if op == 'restart':
+                self._run(cfg, agents.PATHS + '\nracklive-agent restart 2>&1 | tail -2', 40)
+                return {'ok': True, 'message': 'Сессии перезапущены', 'log': []}
+            if op == 'stop':
+                s = agents.check_text(params.get('session'), r'^(rl-[\w.\-]+|all)$', 'сессия', 60)
+                self._run(cfg, agents.PATHS + f'\nracklive-agent stop {shlex.quote(s)} 2>&1 | tail -2', 20)
+                return {'ok': True, 'message': 'Сессия остановлена', 'log': []}
+            if op == 'remove':
+                a = agents.BY_ID.get(str(params.get('agent') or ''))
+                if not a:
+                    raise DriverError('неизвестный агент')
+                stage(f'Удаление {a["title"]}', agents.remove_script(a), 300)
+                return {'ok': True, 'log': log, 'message': f'{a["title"]} удалён'}
+            if op not in ('install', 'save'):
+                raise DriverError('неизвестное действие')
+
+            want = [i for i in (params.get('agents') or []) if i in agents.BY_ID] if op == 'install' else []
+            cl = params.get('claude') or {}
+            st = agents.parse_status(self._run(cfg, agents.STATUS, 60))
+            have_claude = 'claude' in st['bins'] or 'claude' in want
+            if want or have_claude:
+                stage('tmux и нужные программы', agents.PREREQ, 600)
+            if any(not agents.BY_ID[i].get('install') and agents.BY_ID[i]['bin'] not in st['bins'] for i in want):      # Codex, Gemini CLI come from npm
+                stage('Node.js', agents.NODE, 900)
+            for i in want:
+                a = agents.BY_ID[i]
+                if a['bin'] in st['bins'] and not params.get('reinstall'):
+                    log.append({'cmd': f'{a["title"]} уже установлен ({st["bins"][a["bin"]]})', 'ok': True, 'msg': ''})
+                    continue
+                try:
+                    stage(f'Установка {a["title"]}', agents.install_script(a), 900)
+                except DriverError:
+                    if not (a.get('install') and a.get('npm')):
+                        raise
+                    stage('Node.js', agents.NODE, 900)
+                    stage(f'Установка {a["title"]} через npm', agents.install_script(a, via_npm=True), 900)
+            msg = ', '.join(agents.BY_ID[i]['title'] for i in want) or 'настройки'
+            res = {'ok': True, 'log': log, 'message': f'Готово: {msg}', 'needSetup': False}
+            if have_claude:
+                rc, auto = bool(cl.get('rc')), bool(cl.get('auto'))
+                name = agents.check_text(cl.get('name') or 'server', r'^[\w .\-А-Яа-яЁё]+$', 'имя сессии', 40) or 'server'
+                model = agents.check_text(cl.get('model'), r'^[A-Za-z0-9._\-\[\]]+$', 'модель', 60)
+                auth = 'key' if (cl.get('auth') == 'key' and not rc) else 'sub'
+                keys, strip = {}, []
+                if auth == 'key' and cl.get('apiKey'):
+                    keys['ANTHROPIC_API_KEY'] = agents.check_text(cl.get('apiKey'), r'^[A-Za-z0-9_\-.]+$', 'ключ Claude', 300)
+                elif auth == 'sub':
+                    strip.append('ANTHROPIC_API_KEY')                     # a key in the environment would switch Claude Code (and Remote Control) to API billing
+                for ident, var in (('codex', 'OPENAI_API_KEY'), ('gemini', 'GEMINI_API_KEY')):
+                    v = (params.get('keys') or {}).get(ident)
+                    if v:
+                        keys[var] = agents.check_text(v, r'^[A-Za-z0-9_\-.]+$', 'ключ ' + ident, 300)
+                stage('Настройки, команда racklive-agent и автозапуск', agents.configure_script(rc, auto, name, model, auth, keys, strip), 120)
+                if rc:
+                    res['needSetup'] = True
+                    res['message'] += '. Осталось один раз войти в аккаунт Claude: кнопка «Войти и запустить»'
+                elif 'claude' in (st['bins'] or {}) or 'claude' in want:
+                    self._run(cfg, agents.PATHS + '\nracklive-agent restart 2>&1 | tail -2', 40)
+            else:
+                keys = {}
+                for ident, var in (('codex', 'OPENAI_API_KEY'), ('gemini', 'GEMINI_API_KEY')):
+                    v = (params.get('keys') or {}).get(ident)
+                    if v:
+                        keys[var] = agents.check_text(v, r'^[A-Za-z0-9_\-.]+$', 'ключ ' + ident, 300)
+                if keys:
+                    stage('Ключи и команда racklive-agent', agents.configure_script(False, False, 'server', '', 'sub', keys), 60)
+            return res
+        except ValueError as e:
+            raise DriverError(str(e))
+
     def plugin(self, cfg, pid, op, params):
+        if pid == 'agents':
+            return self._agents(cfg, op, params)
         meta = next((p for p in vps.CATALOG if p['id'] == pid), None)
         if not meta:
             raise DriverError('неизвестный плагин')

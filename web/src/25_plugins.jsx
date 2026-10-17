@@ -48,6 +48,8 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.kind === 'installer' ? <InstallerPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
       {p.kind === 'modem' ? <ModemPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'panel' ? <PanelPlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'agents' ? <AgentsPlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'community' ? <CommunityPlugin p={p} device={device} reload={reload} /> : null}
     </div> : null}
   </div>;
 }
@@ -357,6 +359,104 @@ function PanelPlugin({ p, device, reload }) {
       {p.installed ? <Btn kind="danger" icon="trash" disabled={running} onClick={remove}>Удалить {p.title}</Btn> : null}
       {p.home ? <a className="btn" href={p.home} target="_blank" rel="noreferrer"><Icon name="link" size={16} />О проекте</a> : null}
     </div>
+  </>;
+}
+
+/* AI agents on a server: Claude Code (+ Remote Control, autostart, «new chat»), Codex, Gemini CLI, OpenCode, Aider (rackd/agents.py) */
+function AgentsPlugin({ p, device, reload }) {
+  const toast = useToast(); const confirm = useConfirm();
+  const cfg = p.config || {};
+  const [sel, setSel] = useState(() => new Set(p.agents.some(a => a.installed) ? [] : ['claude']));
+  const [rc, setRc] = useState(p.helper ? !!cfg.rc : true);
+  const [auto, setAuto] = useState(p.helper ? !!cfg.auto : true);
+  const [name, setName] = useState(cfg.name || device.name || 'server');
+  const [model, setModel] = useState(cfg.model || '');
+  const [auth, setAuth] = useState(cfg.auth === 'key' ? 'key' : 'sub');
+  const [apiKey, setApiKey] = useState('');
+  const [keys, setKeys] = useState({ codex: '', gemini: '' });
+  const [chat, setChat] = useState('');
+  const [job, setJob] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const [term, setTerm] = useState(null);                   // '&run=agent-setup' | '&run=agent-attach&session=…'
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'agents', ...body } });
+  const claudeOn = sel.has('claude') || p.agents.find(a => a.id === 'claude').installed;
+  const useKey = auth === 'key' && !rc;
+  const toggle = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const payload = () => ({ agents: [...sel], claude: { rc, auto, name, model, auth: useKey ? 'key' : 'sub', apiKey }, keys });
+  const start = async op => {
+    try { const r = await call(op === 'install' ? { op, ...payload() } : { op }); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000 }); }
+    catch (e) { toast(e.message, true); }
+  };
+  useEffect(() => {
+    if (!job || job.done) return;
+    const t = setInterval(async () => { setNow(Date.now());
+      try { const j = await call({ op: 'job', job: job.id }); setJob(x => ({ ...x, ...j }));
+        if (j.done) { toast(j.error ? 'Не получилось: ' + j.error : (j.result && j.result.message) || 'Готово', !!j.error); setApiKey(''); setKeys({ codex: '', gemini: '' }); setSel(new Set()); reload(); } } catch (e) { }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [job && job.id, job && job.done]);
+  const quick = async (body, ok) => { try { const r = await call(body); toast(r.message || ok); reload(); } catch (e) { toast(e.message, true); } };
+  const remove = async a => {
+    if (!(await confirm(`Удалить ${a.title} с сервера?${a.id === 'claude' ? ' Вместе с ним уберу команду racklive-agent, автозапуск и сохранённые ключи; вход в аккаунт и история чатов Claude останутся в папке ~/.claude.' : ''}`,
+      { title: a.title, ok: 'Удалить', danger: true }))) return;
+    try { const r = await call({ op: 'remove', agent: a.id }); setJob({ id: r.job, stage: 'Удаление…', done: false, t: Date.now() / 1000 }); } catch (e) { toast(e.message, true); }
+  };
+  const running = job && !job.done;
+  const loggedIn = /logged in|signed in|authenticated|email|account/i.test(p.claudeAuth || '') && !/not logged|not signed|no auth|not authenticated/i.test(p.claudeAuth || '');
+  const needSetup = rc && claudeOn && !loggedIn;
+  const noRoot = (p.checks || []).find(c => c.label.startsWith('Вход под root'));
+  return <>
+    <Checks checks={p.checks || []} />
+    <div className="card-title" style={{ marginTop: 6 }}>Что установить</div>
+    {p.agents.map(a => <div key={a.id} className="row" style={{ gap: 10, padding: '6px 0', alignItems: 'center' }}>
+      <Switch on={a.installed || sel.has(a.id)} disabled={a.installed || running} onChange={() => toggle(a.id)} />
+      <div className="grow" style={{ minWidth: 0 }}><b>{a.title}</b> <span className="dim3" style={{ fontSize: 12.5 }}>{a.by}{a.installed ? ` · установлен${a.version ? ' ' + a.version : ''}` : ''}</span></div>
+      <a className="btn sm" href={a.home} target="_blank" rel="noreferrer" title="О проекте"><Icon name="link" size={14} /></a>
+      {a.installed ? <Btn size="sm" kind="danger" icon="trash" disabled={running} onClick={() => remove(a)} /> : null}
+    </div>)}
+    {claudeOn ? <div className="awg-form" style={{ marginTop: 8 }}>
+      <div className="card-title">Claude Code</div>
+      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={rc} onChange={setRc} />
+        <div className="grow"><div>Remote Control — управлять с телефона и из браузера</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Сессия появится в приложении Claude и на claude.ai/code. Работает только при входе по подписке Pro / Max / Team — ключ API для этого не подходит.</div></div></div>
+      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={auto} onChange={setAuto} />
+        <div className="grow"><div>Автозапуск после перезагрузки сервера</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>{noRoot && !noRoot.ok ? 'Через cron @reboot.' : 'Службой systemd.'} Новые чаты тоже запоминаются и поднимаются сами.</div></div></div>
+      <Field label="Название сессии" hint="Так она будет называться в приложении Claude"><input className="input" value={name} onChange={e => setName(e.target.value)} /></Field>
+      <Field label="Модель"><select className="input" value={model} onChange={e => setModel(e.target.value)}>{p.models.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+      <Field label="Как входить" hint={rc ? 'С Remote Control — только подписка (вход один раз кнопкой ниже).' : undefined}>
+        <select className="input" value={useKey ? 'key' : 'sub'} disabled={rc} onChange={e => setAuth(e.target.value)}>
+          <option value="sub">Подписка claude.ai (вход один раз)</option><option value="key">Ключ API (платишь за токены)</option></select></Field>
+      {useKey ? <Field label="Ключ API Anthropic" hint={(cfg.keys || []).includes('ANTHROPIC_API_KEY') ? 'Ключ уже сохранён на сервере. Оставьте пустым, чтобы не менять.' : 'Сохраняется только на сервере в ~/.racklive-agents/env (доступ 600), Rack Live его не хранит.'}>
+        <input className="input" type="password" value={apiKey} autoComplete="off" placeholder="sk-ant-…" onChange={e => setApiKey(e.target.value)} /></Field> : null}
+    </div> : null}
+    {['codex', 'gemini'].filter(id => sel.has(id) || p.agents.find(a => a.id === id).installed).map(id => <Field key={id} label={`Ключ ${id === 'codex' ? 'OpenAI (Codex)' : 'Gemini'} — по желанию`}
+      hint={(cfg.keys || []).includes(id === 'codex' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY') ? 'Ключ уже сохранён на сервере.' : 'Можно войти и внутри программы.'}>
+      <input className="input" type="password" value={keys[id]} autoComplete="off" onChange={e => setKeys({ ...keys, [id]: e.target.value })} /></Field>)}
+    <div className="row wrap" style={{ marginTop: 8 }}>
+      <Btn kind="primary" icon="download" busy={running} disabled={running || (!sel.size && !claudeOn)} onClick={async () => {
+        if (sel.size && !(await confirm(`Установить на «${device.name}»: ${[...sel].map(id => p.agents.find(a => a.id === id).title).join(', ')}? Rack Live по SSH поставит программы${claudeOn ? ', настроит автозапуск и команду racklive-agent' : ''}. Займёт несколько минут.`, { title: 'ИИ-агенты', ok: 'Установить' }))) return;
+        start('install'); }}>{running ? 'Работаю…' : sel.size ? 'Установить' : 'Сохранить настройки'}</Btn>
+      {needSetup ? <Btn icon="terminal" disabled={running} onClick={() => setTerm('&run=agent-setup')}>Войти и запустить</Btn> : null}
+      {p.helper && claudeOn ? <Btn icon="refresh" disabled={running} onClick={() => quick({ op: 'restart' }, 'Перезапущено')}>Перезапустить сессии</Btn> : null}
+    </div>
+    {needSetup ? <div className="err-note" style={{ marginTop: 8 }}><b>Нужен один вход в аккаунт Claude.</b> Нажмите «Войти и запустить»: откроется терминал сервера, он покажет ссылку — откройте её на телефоне, войдите и вставьте код. Потом ответьте <code>y</code> на два вопроса.
+      Или вручную в любом SSH (Termius): <code>~/.racklive-agents/racklive-agent setup</code>. Это нужно один раз; дальше сессия сама поднимается после перезагрузки.</div> : null}
+    {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
+      <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.max(0, Math.round(now / 1000 - job.t))} с · окно можно закрыть, работа продолжится</div></div></div> : null}
+    {job && job.done ? (job.error ? <PluginResult r={{ error: job.error, kept: true, log: [] }} /> : <PluginResult r={{ ...job.result, kept: true, up: true }} />) : null}
+    {p.helper ? <>
+      <div className="card-title" style={{ marginTop: 12 }}>Чаты</div>
+      {(p.sessions || []).length ? p.sessions.map(s => <div key={s.name} className="row" style={{ gap: 8, padding: '4px 0' }}>
+        <div className="grow ellipsis"><b>{s.name.replace(/^rl-c-/, '').replace(/^rl-main$/, 'основная сессия')}</b> <span className="dim3" style={{ fontSize: 12 }}>{s.name}</span></div>
+        <Btn size="sm" icon="terminal" onClick={() => setTerm('&run=agent-attach&session=' + encodeURIComponent(s.name))}>Открыть</Btn>
+        <Btn size="sm" kind="danger" icon="x" onClick={() => quick({ op: 'stop', session: s.name }, 'Остановлено')} /></div>) : <div className="dim3" style={{ fontSize: 13 }}>Сейчас ни одна сессия не запущена.</div>}
+      <div className="row" style={{ gap: 8, marginTop: 6 }}><input className="input grow" value={chat} placeholder="Название нового чата" onChange={e => setChat(e.target.value)} />
+        <Btn icon="plus" onClick={async () => { await quick({ op: 'new_chat', name: chat.trim() || undefined }, 'Чат запущен'); setChat(''); }}>Новый чат</Btn></div>
+      <div className="dim3" style={{ fontSize: 12.5, marginTop: 4 }}>Новый чат наследует модель и Remote Control{auto ? ' и автозапуск' : ''}. С Remote Control он сразу виден в приложении Claude; «Открыть» показывает его здесь, в терминале.</div>
+    </> : null}
+    {term ? <Modal title="Терминал сервера" wide onClose={() => { setTerm(null); reload(); }} icon={<Icon name="terminal" size={20} color="var(--accent)" />}>
+      <TerminalView extra={`&device=${encodeURIComponent(device.id)}${term}`} onClose={() => { setTerm(null); reload(); }} /></Modal> : null}
   </>;
 }
 

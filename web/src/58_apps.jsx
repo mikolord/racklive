@@ -5,6 +5,7 @@ const APPS = [
   { id: 'frank', path: '/frank', name: 'Frank', icon: APP_ICONS.frank, text: 'Помощник: вопросы о сети простыми словами, разговоры сохраняются' },
   // the speed test measures the home network: it is installed by the LAN address — through the domain the traffic would go via the router's https proxy
   { id: 'speed', path: '/speed', name: 'Тест скорости', icon: APP_ICONS.speed, text: 'Замер Wi-Fi и домашней сети с телефона — в каждой комнате', lan: true },
+  { id: 'terminal', path: '/terminal', name: 'Терминал', icon: APP_ICONS.terminal, text: 'SSH-терминал к вашим серверам, NAS и роутерам — как отдельное приложение, на телефоне и на компьютере' },
   { id: 'rack', path: '/', name: 'Rack Live', icon: APP_ICONS.rack, text: 'Вся панель: шкафы, карта, устройства, уведомления' },
 ];
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -45,6 +46,7 @@ function InstallModal({ app, base, lanBase, onClose }) {
   const [via, setVia] = useState('domain');
   const url = ((both && via === 'lan') ? lanBase : base).replace(/\/$/, '') + app.path;
   const http = url.startsWith('http://');
+  const inApp = isInstalled();                // already running from the home screen: a link here opens inside this app, it cannot install another one
   const toast = useToast();
   const copy = () => { const ok = copyText(url); toast(ok ? 'Ссылка скопирована' : 'Не получилось скопировать — выделите ссылку вручную', !ok); };
   return <Modal title={'Установить «' + app.name + '»'} onClose={onClose} icon={<img src={app.icon} width="28" height="28" style={{ borderRadius: 7 }} alt="" />}>
@@ -59,7 +61,12 @@ function InstallModal({ app, base, lanBase, onClose }) {
       <div className="col" style={{ gap: 10, minWidth: 0 }}>
         <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.45 }}>Наведите камеру телефона на код — откроется {app.name}. Или откройте ссылку на самом телефоне:</div>
         <div className="row" style={{ gap: 6 }}><a className="mono ellipsis inst-url" href={url} target="_blank" rel="noreferrer">{url}</a><Btn size="sm" icon="copy" onClick={copy} title="Скопировать" /></div>
-        <a className="btn primary" href={url} target="_blank" rel="noreferrer"><Icon name="download" size={16} />Открыть и установить</a>
+        {inApp ? <>
+          <div className="warn-box" style={{ margin: 0 }}><Icon name="alert" size={16} /><div><b>Вы сейчас внутри установленного приложения.</b> Из него установить другое приложение нельзя: ссылка просто откроется здесь же.
+            Установка делается из браузера: нажмите «Скопировать ссылку», откройте <b>Safari</b> (на Android — Chrome), вставьте ссылку в адресную строку и добавьте на экран «Домой». Или наведите камеру другого телефона на QR-код.</div></div>
+          <div className="row wrap" style={{ gap: 8 }}><Btn kind="primary" icon="copy" onClick={copy}>Скопировать ссылку</Btn>
+            {navigator.share ? <Btn icon="share" onClick={() => { try { navigator.share({ url, title: app.name }); } catch (e) { } }}>Поделиться…</Btn> : null}</div>
+        </> : <a className="btn primary" href={url} target="_blank" rel="noreferrer"><Icon name="download" size={16} />Открыть и установить</a>}
       </div>
     </div>
     <div className="inst-steps">

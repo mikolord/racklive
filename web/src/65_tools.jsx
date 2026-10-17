@@ -4,6 +4,7 @@ const PLUGIN_GROUPS = [
   { id: 'keenetic', title: 'Keenetic / Netcraze', drivers: ['keenetic', 'demo_router'], icon: 'router', empty: 'роутер Keenetic или Netcraze' },
   { id: 'openwrt', title: 'OpenWrt', drivers: ['openwrt', 'demo_openwrt'], icon: 'router', empty: 'роутер на OpenWrt (логин root, SSH включён)' },
   { id: 'ssh', title: 'Сервер / VPS по SSH', drivers: ['ssh', 'demo_server'], icon: 'server', empty: 'сервер или VPS по SSH' },
+  { id: 'synology', title: 'Synology', drivers: ['synology'], icon: 'server', empty: 'NAS Synology (нужен включённый SSH)' },
 ];
 const groupOfDriver = d => PLUGIN_GROUPS.find(g => g.drivers.includes(d));
 const realDriver = g => g.drivers[0];          // the driver names plugins are declared for (rackd/plugins.py, vps.py)
@@ -12,9 +13,17 @@ const TOOLS = [
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
 ];
 
+/* open an instrument from anywhere: the Tools tab → «Инструменты» → the tool (and a camera's address to pick in it) */
+function openToolById(ctx, id, cam) {
+  try { sessionStorage.setItem('rl_pending_tool', id); if (cam) sessionStorage.setItem('rl_pending_cam', cam); } catch (e) { }
+  ctx.setToolsSec('catalog'); ctx.setTab('tools');
+  setTimeout(() => window.dispatchEvent(new CustomEvent('rl-open-tool', { detail: id })), 120);
+}
+
 function ToolsView() {
   const { toolsSec: sec, setToolsSec: setSec } = useApp();
-  const [tool, setTool] = useState(() => new URLSearchParams(location.search).get('tool') || null);
+  const [tool, setTool] = useState(() => { const t = new URLSearchParams(location.search).get('tool') || ssGet('rl_pending_tool') || null; try { sessionStorage.removeItem('rl_pending_tool'); } catch (e) { } return t; });
+  useEffect(() => { const h = e => setTool(e.detail); window.addEventListener('rl-open-tool', h); return () => window.removeEventListener('rl-open-tool', h); }, []);       // «open the cameras tool» from elsewhere (the scan window, a client's card)
   return <>
     <div className="view-switch"><Seg value={sec} onChange={s => { setSec(s); setTool(null); }}
       options={[{ value: 'devices', label: T('tab.devices', 'Устройства'), icon: 'list' }, { value: 'plugins', label: 'Плагины', icon: 'box' }, { value: 'catalog', label: 'Инструменты', icon: 'wrench' }]} /></div>
@@ -58,6 +67,7 @@ function PluginsOverview() {
   const { data, openDevice } = useApp(); const toast = useToast();
   const [cat, setCat] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [comm, setComm] = useState(() => new URLSearchParams(location.search).get('community') === '1');      // ?community=1 opens the manager
   const [status, setStatus] = useState({});            // deviceId → {pluginId: installed} | 'error' | 'loading'
   useEffect(() => { api('/api/plugins/catalog').then(r => setCat(r.plugins)).catch(e => toast(e.message, true)); }, []);
   const check = async d => {
@@ -72,7 +82,12 @@ function PluginsOverview() {
   const toggle = d => { const o = openId === d.id ? null : d.id; setOpenId(o); if (o && !status[d.id]) check(d); };
   return <>
     <Hint id="tools-plugins2">Здесь устройства, на которые Rack Live умеет ставить дополнения. Нажмите на устройство — раскроется список плагинов; нажмите на плагин — откроется установка с проверкой и журналом.</Hint>
-    {!devs.length ? <div className="card" style={{ marginBottom: 10 }}><div className="dim" style={{ fontSize: 13.5 }}>Пока нет устройств, для которых есть плагины. Добавьте роутер Keenetic / Netcraze, роутер на OpenWrt или сервер по SSH.</div></div> : null}
+    <div className="card plug-comm" style={{ marginBottom: 10 }}><div className="row" style={{ gap: 10, alignItems: 'center' }}>
+      <div className="ico-circle"><Icon name="box" size={18} /></div>
+      <div className="grow" style={{ minWidth: 0 }}><b>Плагины сообщества</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4 }}>Каталог от других пользователей, загрузка своего плагина и инструкция, как его написать. Каждый плагин проверяется и запускается только после вашего подтверждения.</div></div>
+      <Btn onClick={() => { setComm(true); }}>Открыть</Btn></div></div>
+    {comm ? <CommunityManager onClose={() => { setComm(false); api('/api/plugins/catalog').then(r => setCat(r.plugins)).catch(() => { }); }} /> : null}
+    {!devs.length ? <div className="card" style={{ marginBottom: 10 }}><div className="dim" style={{ fontSize: 13.5 }}>Пока нет устройств, для которых есть плагины. Ниже все плагины по типам устройств: откройте нужный тип и добавьте такое устройство.</div></div> : null}
     <div className="col" style={{ gap: 10 }}>{devs.map(d => {
       const g = groupOfDriver(d.driver);
       const list = cat.filter(p => (p.drivers || []).includes(realDriver(g)));
@@ -97,8 +112,30 @@ function PluginsOverview() {
         </div> : null}
       </div>;
     })}</div>
-    {missing.length ? <div className="dim3" style={{ fontSize: 12.5, marginTop: 14, lineHeight: 1.5 }}>Не добавлено: {missing.map(g => g.empty).join('; ')}. Добавьте — и здесь появятся их плагины.</div> : null}
+    {missing.map(g => <MissingGroup key={g.id} g={g} list={cat.filter(p => (p.drivers || []).includes(realDriver(g)))} />)}
   </>;
+}
+
+/* a device type the user has none of: its plugins are still shown (greyed), with the reason they cannot be installed yet */
+function MissingGroup({ g, list }) {
+  const { newDevice } = useApp(); const [open, setOpen] = useState(false);
+  if (!list.length) return null;
+  return <div className={'card plugin plug-dev-card plug-missing' + (open ? ' open' : '')} style={{ marginTop: 10, opacity: .92 }}>
+    <button type="button" className="plugin-head" onClick={() => setOpen(!open)}>
+      <div className="ico-circle" style={{ opacity: .6 }}><Icon name={g.icon} size={18} /></div>
+      <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b className="ellipsis" style={{ display: 'block' }}>{g.title}</b>
+        <div className="dim" style={{ fontSize: 12.5 }}>плагинов: {list.length} · устройства этого типа нет</div></div>
+      <span className="badge">недоступно</span>
+      <Icon name="chevron" size={16} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} /></button>
+    {open ? <div className="plug-list">
+      <div className="err-note" style={{ marginTop: 0 }}>Эти плагины сейчас установить нельзя: у вас нет устройства типа «{g.title}» ({g.empty}).
+        Добавьте такое устройство — или, если оно уже есть в Rack Live, но с другим типом, откройте его и выберите тип вручную. После этого плагины станут доступны.</div>
+      <div><Btn size="sm" kind="primary" icon="plus" onClick={() => newDevice({ driver: realDriver(g) })}>Добавить устройство этого типа</Btn></div>
+      {list.map(p => <div key={p.id} className="plug-row" style={{ opacity: .6, cursor: 'default' }}>
+        <span className="ico-circle"><Icon name={p.icon || 'box'} size={17} /></span>
+        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{p.title}</b><small>{p.description}</small></span></div>)}
+    </div> : null}
+  </div>;
 }
 
 /* ───────── catalog of tools ───────── */
@@ -130,13 +167,15 @@ function CameraTool({ onBack }) {
   const [bulk, setBulk] = useState(false);
   const [credsOpen, setCredsOpen] = useState(false);
   const [brandsOpen, setBrandsOpen] = useState(false);
+  const [recs, setRecs] = useState([]); const [rec, setRec] = useState(null);       // recorders that live on your devices (Synology Surveillance Station)
+  useEffect(() => { api('/api/cameras/recorders').then(r => setRecs(r.recorders || [])).catch(() => { }); }, []);
   const load = async () => { try { const r = await api('/api/cameras'); setInfo(r); return r; } catch (e) { return null; } };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (!info || !info.running) return; const t = setInterval(load, 1000); return () => clearInterval(t); }, [info && info.running]);
   const start = async () => { try { setSel(new Set()); await api('/api/cameras/start', { method: 'POST', body: { cidrs: where } }); load(); } catch (e) { toast(e.message, true); } };
   const stop = async () => { try { await api('/api/cameras/stop', { method: 'POST', body: {} }); } catch (e) { } };
   const probe = async () => { try { const r = await api('/api/cameras/probe', { method: 'POST', body: { ip: manual } }); await load(); setOpen(r.item); setManual(''); } catch (e) { toast(e.message, true); } };
-  useEffect(() => { const ip = new URLSearchParams(location.search).get('cam'); if (ip && info && !open) { const it = (info.items || []).find(x => x.ip === ip); if (it) setOpen(it); } }, [info && info.items && info.items.length]);
+  useEffect(() => { const ip = new URLSearchParams(location.search).get('cam') || ssGet('rl_pending_cam'); if (ip && info && !open) { const it = (info.items || []).find(x => x.ip === ip); if (it) setOpen(it); } }, [info && info.items && info.items.length]);
   if (!info) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загрузка…</div>;
   const pct = info.total ? Math.min(100, Math.round(info.done * 100 / info.total)) : 0;
   const mine = new Set(data.devices.map(hostOf));
@@ -162,8 +201,18 @@ function CameraTool({ onBack }) {
       {info.error ? <div style={{ color: 'var(--orange)', fontSize: 13, marginTop: 8 }}>{info.error}</div> : null}
       {!info.running && info.finished && info.cidr ? <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Искали в: {info.cidr}{info.skipped && info.skipped.length ? '. Адреса роутеров (' + info.skipped.join(', ') + ') не проверяем: роутер принимает это за сканирование и на несколько минут закрывает доступ.' : ''}</div> : null}
     </Card>
+    {recs.length ? <>
+      <div className="card-title" style={{ margin: '16px 0 8px' }}><Icon name="server" size={14} />Видеорегистраторы на ваших устройствах · {recs.length}</div>
+      <div className="list">{recs.map((r, i) => <div className="li netscan-row cam-row" key={i}>
+        <button type="button" className="cam-main" onClick={() => setRec(r)}>
+          <KindIcon kind="nas" size={36} round={10} />
+          <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}>
+            <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 14 }} className="ellipsis">{r.name}</b><span className="found-type">Видеорегистратор</span></div>
+            <div className="dim ellipsis" style={{ fontSize: 12.5 }}>на «{r.deviceName}» · {r.host}{r.version ? ' · версия ' + r.version : ''}</div>
+            <div className="row wrap" style={{ gap: 5, marginTop: 3 }}>{r.error ? <span className="badge warning">{r.error}</span> : <><span className="badge online">{r.cameras.length} камер</span>{r.licences ? <span className="badge">лицензий {r.licences}</span> : null}</>}</div>
+          </div><Icon name="chevron" size={14} /></button></div>)}</div></> : null}
     <div className="row between" style={{ margin: '16px 0 8px', gap: 8 }}>
-      <div className="card-title" style={{ margin: 0 }}><Icon name="camera" size={14} />Найдено · {items.length}</div>
+      <div className="card-title" style={{ margin: 0 }}><Icon name="camera" size={14} />Найдено в сети · {items.length}</div>
       {items.length ? <button type="button" className="btn sm" onClick={() => setSel(allOn ? new Set() : new Set(items.map(i => i.ip)))}>{allOn ? 'Снять выбор' : 'Выбрать все'}</button> : null}
     </div>
     {!items.length ? <div className="dim" style={{ fontSize: 13.5 }}>{info.finished ? 'Камер не найдено. Выберите сеть камер в «Сети» (они часто в своём VLAN) или введите адрес вручную ниже.' : 'Пока ничего. Нажмите «Искать камеры».'}</div>
@@ -177,7 +226,7 @@ function CameraTool({ onBack }) {
               <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 14 }} className="ellipsis">{it.ip}</b><span className="found-type">{KIND_WORD[it.kind] || KIND_WORD.unknown}</span></div>
               <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{it.what}</div>
               <div className="row wrap" style={{ gap: 5, marginTop: 3 }}><span className={'badge ' + lt[1]}>{lt[0]}</span>{it.onvif ? <span className="badge">ONVIF</span> : <span className="badge warning">без ONVIF</span>}
-                {it.mac ? <span className="dim3 mono" style={{ fontSize: 11 }}>{it.mac}</span> : null}</div>
+                {it.mac ? <span className="dim3 mono" style={{ fontSize: 11 }}>{it.mac}</span> : null}{recs.some(r => r.cameras.some(c => c.ip === it.ip)) ? <span className="badge" title="Эту камеру записывает видеорегистратор">пишет {recs.find(r => r.cameras.some(c => c.ip === it.ip)).name}</span> : null}</div>
             </div><Icon name="chevron" size={14} /></button>
           {mine.has(it.ip) ? <span className="badge online hide-sm">в Rack Live</span> : <Btn size="sm" icon="plus" title="Следить, на связи ли" onClick={() => follow(it)}><span className="hide-sm">Следить</span></Btn>}
         </div>;
@@ -193,8 +242,25 @@ function CameraTool({ onBack }) {
       <div className="row" style={{ gap: 8 }}><Btn size="sm" onClick={() => setSel(new Set())}>Снять</Btn><Btn size="sm" kind="primary" icon="edit" onClick={() => setBulk(true)}>Действия с выбранными</Btn></div></div> : null}
     {open ? <CameraSheet item={open} creds={info.creds} reloadCreds={load} onClose={() => { setOpen(null); load(); }} /> : null}
     {bulk ? <BulkModal items={items.filter(i => sel.has(i.ip))} creds={info.creds} onClose={() => { setBulk(false); load(); }} /> : null}
+    {rec ? <RecorderModal rec={rec} found={items} onClose={() => setRec(null)} onOpenCam={ip => { const it = items.find(x => x.ip === ip); if (it) { setRec(null); setOpen(it); } }} /> : null}
     {credsOpen ? <CredsModal creds={info.creds} onChange={load} onClose={() => setCredsOpen(false)} /> : null}
   </>;
+}
+
+/* a recorder on one of your devices (Synology Surveillance Station): its cameras and their state */
+function RecorderModal({ rec, found, onClose, onOpenCam }) {
+  return <Modal title={rec.name} wide onClose={onClose} icon={<Icon name="server" size={20} color="var(--accent)" />}>
+    <div className="row wrap" style={{ gap: 8 }}><span className="found-type">Видеорегистратор</span><span className="dim" style={{ fontSize: 13 }}>на «{rec.deviceName}» ({rec.host}){rec.version ? ' · версия ' + rec.version : ''}</span></div>
+    {rec.error ? <div className="cam-warn">Не удалось прочитать список камер: {rec.error}</div> : <div className="dk-sum" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div><b>{rec.cameras.length}</b><span>камер подключено</span></div><div><b>{rec.cameras.filter(c => c.status === 1).length}</b><span>работают</span></div><div><b>{rec.licences != null ? rec.licences : '—'}</b><span>лицензий (макс. {rec.max || '—'})</span></div></div>}
+    <div className="list">{rec.cameras.map(c => { const f = found.find(x => x.ip === c.ip);
+      return <div className="li" key={c.id}><span className={'dot ' + (c.status === 1 ? 'online' : c.status === 7 ? '' : 'offline')} />
+        <div className="grow" style={{ minWidth: 0 }}><b>{c.name}</b><div className="dim mono" style={{ fontSize: 12 }}>{c.ip}{c.port ? ':' + c.port : ''} · {[c.vendor, c.model].filter(Boolean).join(' ')}</div></div>
+        <span className="dim" style={{ fontSize: 12.5 }}>{c.statusText}{c.keepDays ? ' · хранит ' + c.keepDays + ' дн' : ''}</span>
+        {f ? <Btn size="sm" onClick={() => onOpenCam(c.ip)}>Настроить</Btn> : null}</div>; })}</div>
+    {rec.url ? <a className="btn" href={rec.url} target="_blank" rel="noopener">Открыть {rec.name}</a> : null}
+    <div className="dim3" style={{ fontSize: 12 }}>Это список камер, которые видит сам регистратор. Чтобы сменить пароль или адрес камеры, нажмите «Настроить» (если Rack Live её нашёл) — но потом обновите данные камеры и в Surveillance Station.</div>
+  </Modal>;
 }
 
 /* the list of saved camera passwords: the passwords themselves never come back from the server — only the login, a label and dots */

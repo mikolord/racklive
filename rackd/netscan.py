@@ -24,10 +24,10 @@ SAMPLE = [  # shown in the demo
     {'ip': '10.0.0.3', 'mac': 'aa:00:00:00:00:03', 'name': 'nas', 'vendor': 'Synology', 'ports': [22, 80, 445, 5000, 5001], 'driver': 'synology', 'score': 95, 'kind': 'nas', 'what': 'Synology DiskStation'},
     {'ip': '10.0.0.6', 'mac': 'aa:00:00:00:00:06', 'name': 'homeassistant', 'vendor': '', 'ports': [8123], 'driver': 'homeassistant', 'score': 90, 'kind': 'server', 'what': 'Home Assistant'},
     {'ip': '10.0.0.30', 'mac': 'aa:00:00:00:00:30', 'name': 'proxmox', 'vendor': '', 'ports': [22, 8006], 'driver': 'proxmox', 'score': 90, 'kind': 'server', 'what': 'Proxmox VE'},
-    {'ip': '10.0.0.21', 'mac': 'aa:00:00:00:00:21', 'name': '', 'vendor': '', 'ports': [80, 554, 37777], 'driver': None, 'score': 0, 'kind': 'camera', 'what': 'Камера или видеорегистратор'},
+    {'ip': '10.0.0.21', 'mac': 'aa:00:00:00:00:21', 'name': '', 'vendor': '', 'ports': [80, 554, 37777], 'driver': None, 'score': 0, 'kind': 'camera', 'what': 'Камера или видеорегистратор', 'tree': {'router': 'demo', 'mac': 'aa:00:00:00:00:21', 'name': 'Камера входа'}},
     {'ip': '10.0.0.22', 'mac': 'aa:00:00:00:00:22', 'name': '', 'vendor': '', 'ports': [80, 554, 37777], 'driver': None, 'score': 0, 'kind': 'camera', 'what': 'Камера или видеорегистратор'},
     {'ip': '10.0.0.40', 'mac': 'aa:00:00:00:00:40', 'name': 'office-printer', 'vendor': '', 'ports': [80, 631, 9100], 'driver': None, 'score': 0, 'kind': 'printer', 'what': 'Принтер'},
-    {'ip': '10.0.0.41', 'mac': 'aa:00:00:00:00:41', 'name': 'PC-Accounting', 'vendor': '', 'ports': [135, 445, 3389], 'driver': 'ping', 'score': 30, 'kind': 'pc', 'what': 'Компьютер с Windows'},
+    {'ip': '10.0.0.41', 'mac': 'aa:00:00:00:00:41', 'name': 'PC-Accounting', 'vendor': '', 'ports': [135, 445, 3389], 'driver': 'ping', 'score': 30, 'kind': 'pc', 'what': 'Компьютер с Windows', 'tree': {'router': 'demo', 'mac': 'aa:00:00:00:00:41', 'name': 'PC-Accounting'}},
     {'ip': '10.0.0.77', 'mac': 'aa:00:00:00:00:77', 'name': '', 'vendor': '', 'ports': [], 'driver': None, 'score': 0, 'kind': 'other', 'what': 'Устройство в сети (портов не открыто — телефон, умная техника)'},
 ]
 
@@ -244,16 +244,21 @@ class NetScan:
             # names the routers already know
             known_macs, known_ips = self.app.routers.known()
             mine = local_ips()
-            names = {}
-            for st in self.app.states.values():
+            names, tree_ip, tree_mac = {}, {}, {}                    # what the routers / switches already show in the network tree (their clients)
+            for did, st in self.app.states.items():
                 for c in st.get('clients') or []:
                     if c.get('ip'):
                         names[c['ip']] = c.get('name') or c.get('hostname') or ''
+                    t = {'router': did, 'mac': (c.get('mac') or '').lower(), 'name': c.get('name') or c.get('hostname') or c.get('ip') or ''}
+                    if c.get('ip'):
+                        tree_ip.setdefault(c['ip'], t)
+                    if t['mac']:
+                        tree_mac.setdefault(t['mac'], t)
             items = {}
             for ip in sorted(alive, key=lambda x: ipaddress.ip_address(x)):
                 mac = alive[ip]
                 items[ip] = {'ip': ip, 'mac': mac, 'name': names.get(ip, ''), 'vendor': OUI.get(mac[:8], '') or routers.vendor_of(names.get(ip)) or '', 'ports': sorted(ports[ip]),
-                             'driver': None, 'score': 0, 'kind': self._guess(ports[ip]), 'what': '', 'self': ip in mine, 'added': ip in known_ips or routers.related(mac, known_macs) if mac else ip in known_ips}
+                             'driver': None, 'score': 0, 'kind': self._guess(ports[ip]), 'what': '', 'self': ip in mine, 'tree': tree_ip.get(ip) or tree_mac.get((mac or '').lower()), 'added': ip in known_ips or routers.related(mac, known_macs) if mac else ip in known_ips}
             with self.lock:
                 self.s['items'] = list(items.values())
             # 3. what Rack Live can watch there
@@ -268,6 +273,8 @@ class NetScan:
                     try:
                         best = next((r for r in f.result(timeout=40) if r['driver'] not in ('ping',) and r['score'] >= 60), None)
                     except Exception:
+                        best = None
+                    if best and items[ip]['kind'] == 'camera':      # a camera (RTSP / ONVIF / Dahua ports) answers many probes by accident («200 to everything») — it is handled by the camera tool, never offered as a router or server
                         best = None
                     if best:
                         drv = REGISTRY.get(best['driver'])

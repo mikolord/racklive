@@ -95,6 +95,21 @@ function Card({ title, right, children, pad = true, className = '', style }) {
   return <div className={'card ' + (pad ? 'pad ' : '') + className} style={style}>
     {title ? <div className="card-title"><span className="grow">{title}</span>{right}</div> : null}{children}</div>;
 }
+/* a round button with a drop-down (the same look as the devices filter): options = [[value, label, count?]] */
+function PickMenu({ value, options, onChange, title = 'Фильтр', head = 'Показать', icon = 'sort', showLabel = true, defaultValue = '' }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!open) return; const close = e => { if (!e.target.closest('.pick-wrap')) setOpen(false); };
+    document.addEventListener('pointerdown', close); return () => document.removeEventListener('pointerdown', close); }, [open]);
+  const cur = options.find(o => o[0] === value);
+  return <div className="pick-wrap" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+    <button type="button" className={'round-btn sort-btn' + (value !== defaultValue ? ' on' : '')} title={title} onClick={() => setOpen(!open)}><Icon name={icon} size={18} /></button>
+    {showLabel && cur ? <button type="button" className="pick-label" onClick={() => setOpen(!open)}>{cur[1]}<Icon name="chevron" size={12} style={{ transform: 'rotate(90deg)' }} /></button> : null}
+    {open ? <div className="sort-menu"><div className="sort-head">{head}</div>
+      {options.map(([k, l, n]) => <button key={k} type="button" className="sort-opt" onClick={() => { onChange(k); setOpen(false); }}>
+        <span className="sort-check">{value === k ? <Icon name="check" size={15} stroke={2.6} /> : null}</span><span className="grow">{l}</span>{n != null ? <span className="dim3">{n}</span> : null}</button>)}</div> : null}
+  </div>;
+}
+
 function SearchBox({ value, onChange, placeholder = 'Поиск', autoFocus }) {
   return <div className="search"><Icon name="search" size={15} /><input className="input" value={value} placeholder={placeholder} autoFocus={autoFocus} onChange={e => onChange(e.target.value)} /></div>;
 }

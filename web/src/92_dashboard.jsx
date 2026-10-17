@@ -75,7 +75,8 @@ function ShortcutsWidget() {
     <span className="ellipsis">{x.label}</span></button>)}</div></Card>;
 }
 
-function NoteWidget({ w, edit, onOpts }) {
+function NoteWidget({ w, edit: editMode, onOpts }) {
+  const { admin } = useApp(); const edit = !!admin;               // a note is written right where it lies, no edit mode needed
   const text = (w.opts || {}).text || '';
   const [draft, setDraft] = useState(text);
   const latest = useRef({ draft: text, saved: text, onOpts }); latest.current.onOpts = onOpts;
@@ -87,7 +88,7 @@ function NoteWidget({ w, edit, onOpts }) {
   return <Card title={w.title || 'Заметка'}>
     {edit ? <textarea className="input" rows={4} value={draft} placeholder="Что угодно: пароль от гостевого Wi-Fi, телефон провайдера, что купить…"
       onChange={e => type(e.target.value)} onBlur={flush} style={{ width: '100%', resize: 'vertical' }} />
-      : <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.5 }}>{text || <span className="dim3">Пусто — включите «Редактирование», чтобы написать.</span>}</div>}
+      : <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.5 }}>{text || <span className="dim3">Пусто. Войдите как администратор, чтобы написать.</span>}</div>}
   </Card>;
 }
 
@@ -329,7 +330,8 @@ function Dashboard() {
     </Modal> : null}
     {full ? <Modal title={full.title || WIDGETS[full.type].title} wide onClose={() => setFull(null)}
       icon={<span className="wg-tile-ic" style={{ background: WIDGETS[full.type].color, width: 28, height: 28 }}><Icon name={WIDGETS[full.type].icon} size={15} color="#fff" /></span>}>
-      <div className="wg-full">{WIDGETS[full.type].render(full, edit && admin, () => {})}</div>
+      <div className="wg-full">{(() => { const cur = list.find(x => x.id === full.id) || full;       // the live copy, so what was just typed stays on screen
+        return WIDGETS[cur.type].render(cur, edit && admin, o => save(list.map(x => x.id === cur.id ? { ...x, opts: { ...(x.opts || {}), ...o } } : x))); })()}</div>
     </Modal> : null}
   </>;
 }

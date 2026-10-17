@@ -4,7 +4,8 @@ const PHASE_TEXT = { ping: 'Ищу включённые устройства', p
 const hostOf = d => String(d.host || (d.state && d.state.summary && d.state.summary.ip) || '').replace(/^\w+:\/\//, '').replace(/[:/].*$/, '');
 
 function NetScanModal({ onClose }) {
-  const { data, newDevice } = useApp(); const toast = useToast();
+  const ctx = useApp(); const { data, newDevice } = ctx; const toast = useToast();
+  const [edit, setEdit] = useState(null);             // mac → ClientEditor (a device the network tree already shows)
   const [info, setInfo] = useState(null);
   const [where, setWhere] = useState([]);                // [] = every network Rack Live knows about
   const [more, setMore] = useState(false);
@@ -16,8 +17,9 @@ function NetScanModal({ onClose }) {
   if (!info) return <Modal title="Сканировать сеть" wide onClose={onClose} icon={<Icon name="search" size={20} color="var(--accent)" />}><div className="dim">Загрузка…</div></Modal>;
   const mine = new Set(data.devices.map(hostOf));
   const items = (info.items || []).map(it => ({ ...it, have: it.added || mine.has(it.ip) }));
-  const addable = items.filter(it => it.driver && !it.have && it.driver !== 'ping');
-  const others = items.filter(it => !it.have && !(it.driver && it.driver !== 'ping'));
+  const seen = items.filter(it => it.tree && !it.have);        // already in the network tree (a router's client): not offered as «new», but what can be done with it is shown here
+  const addable = items.filter(it => it.driver && !it.have && !it.tree && it.driver !== 'ping');
+  const others = items.filter(it => !it.have && !it.tree && !(it.driver && it.driver !== 'ping'));
   const have = items.filter(it => it.have);
   const pct = info.total ? Math.min(100, Math.round(info.done * 100 / info.total)) : 0;
   const drvKind = id => (data.drivers.find(d => d.id === id) || {}).kind;
@@ -30,6 +32,20 @@ function NetScanModal({ onClose }) {
         fields: { host: it.ip, location: 'local', notes: [it.vendor, it.mac, it.ports.length ? 'порты ' + it.ports.join(', ') : ''].filter(Boolean).join(' · ') } });
     }
   };
+  const isCam = it => it.kind === 'camera' || (it.ports || []).some(p => [554, 8000, 8554, 37777, 34567].includes(p));
+  const driverTitle = id => (data.drivers.find(d => d.id === id) || {}).title || id;
+  const seenRow = it => <div className="li netscan-row" key={it.ip}>
+    <KindIcon kind={it.driver && it.driver !== 'ping' ? (drvKind(it.driver) || it.kind) : it.kind} size={36} round={10} />
+    <div className="grow" style={{ minWidth: 0 }}>
+      <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 14 }} className="ellipsis">{it.tree.name || it.name || it.ip}</b><span className="badge online">в дереве сети</span></div>
+      <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{it.what}</div>
+      <div className="dim3 mono ellipsis" style={{ fontSize: 11.5 }}>{[it.ip, it.mac, it.ports.length ? 'порты ' + it.ports.join(' ') : ''].filter(Boolean).join(' · ')}</div>
+      <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>
+        {isCam(it) ? <Btn size="sm" icon="camera" onClick={() => { onClose(); openToolById(ctx, 'cameras', it.ip); }}>Камеры: вход, пароль, кадр</Btn> : null}
+        {it.driver && it.driver !== 'ping' && !isCam(it) ? <Btn size="sm" icon="plus" onClick={() => add(it)}>Подключить как «{driverTitle(it.driver).slice(0, 34)}»</Btn> : null}
+        {it.kind === 'pc' && !it.driver ? <Btn size="sm" icon="plus" onClick={() => newDevice({ driver: 'windows', kind: 'pc', name: it.tree.name || it.name, fields: { host: it.ip, location: 'local' } })}>Windows: нагрузка и диски</Btn> : null}
+        {it.mac && findClient(data, it.mac) ? <Btn size="sm" onClick={() => setEdit(it.mac)}>Настройки на роутере</Btn> : null}
+      </div></div></div>;
   const row = (it, primary) => <div className="li netscan-row" key={it.ip}>
     <KindIcon kind={it.driver && it.driver !== 'ping' ? (drvKind(it.driver) || it.kind) : it.kind} size={36} round={10} />
     <div className="grow" style={{ minWidth: 0 }}>
@@ -55,6 +71,10 @@ function NetScanModal({ onClose }) {
       <div className="card-title" style={{ margin: '4px 0 0' }}><Icon name="plus" size={14} />Можно добавить в Rack Live · {addable.length}</div>
       {addable.length ? <div className="list">{addable.map(it => row(it, true))}</div>
         : <div className="dim3" style={{ fontSize: 13 }}>{info.running ? 'Пока ничего не определено…' : 'Ничего подходящего не нашлось — смотрите «Другие устройства» ниже или добавьте по адресу вручную.'}</div>}
+      {seen.length ? <>
+        <div className="card-title" style={{ margin: '8px 0 0' }}><Icon name="check" size={14} />Уже видны в сети, ничего добавлять не нужно · {seen.length}</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>Эти устройства уже показаны роутером в дереве сети. Ниже — что с ними ещё можно сделать.</div>
+        <div className="list">{seen.map(seenRow)}</div></> : null}
       {others.length ? <>
         <button type="button" className="link-btn" style={{ alignSelf: 'flex-start' }} onClick={() => setMore(!more)}>{more ? 'Скрыть' : 'Показать'} другие устройства · {others.length}</button>
         {more ? <div className="list">{others.map(it => row(it, false))}</div> : null}
@@ -62,5 +82,6 @@ function NetScanModal({ onClose }) {
       {have.length ? <div className="dim3" style={{ fontSize: 12.5 }}>Уже есть в Rack Live: {have.length} {ruPlural(have.length, 'устройство', 'устройства', 'устройств')}.</div> : null}
       {info.finished ? <div className="dim3" style={{ fontSize: 11.5 }}>Просканировано {fmt.ago(info.finished, data.now)} · сеть {info.cidr} · всего найдено {items.length}</div> : null}
     </> : null}
+    {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
   </Modal>;
 }

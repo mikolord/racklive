@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, socke
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cameras, plugins as plugins_mod, vps as vps_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.5.0'
+VERSION = '2.6.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -60,7 +60,9 @@ class App:
         self.advisor = advisor.Advisor(self, DEMO)
         self.netscan = netscan.NetScan(self, DEMO)
         self.cameras = cameras.Cameras(self, DEMO)
+        self.hostnet = hostnet.HostNet(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
+        self.community = community.Community(DATA)
         for tid, name, why in self.themes.recheck():         # after an update: a look that no longer fits is switched off at once, the journal says why
             self.store.add_event(None, 'Оформление', 'warning', f'оформление «{name}» отключено — не подходит к этой версии Rack Live: {"; ".join(why)[:300]}')
         self.lock = threading.RLock()
@@ -94,6 +96,23 @@ class App:
             self.fails.pop(d['id'], None)
         self.apply_state(d, st)
         return st
+
+    def smart_seen(self, d, res):
+        """a disk that got worse since the last look → one line in «События» (the verdicts are remembered in data/smart.json)"""
+        try:
+            memo = self.store._load('smart.json', {})
+            mine = memo.setdefault(d['id'], {})
+            rank = {'good': 0, 'unknown': 1, 'warn': 2, 'bad': 3}
+            for k in res.get('disks') or []:
+                key = (k.get('serial') or k['dev'])
+                was = mine.get(key)
+                if k['verdict'] in ('warn', 'bad') and (was is None or rank[k['verdict']] > rank.get(was, 0)):
+                    self.store.add_event(d['id'], d.get('name'), 'warning' if k['verdict'] == 'warn' else 'offline',
+                                         f"диск {k['dev']} ({k['model'] or '?'}): " + ('внимание' if k['verdict'] == 'warn' else 'плохое состояние') + ' — ' + (k['reasons'][0] if k['reasons'] else ''))
+                mine[key] = k['verdict']
+            self.store._dump('smart.json', memo)
+        except Exception:
+            traceback.print_exc()
 
     @staticmethod
     def _alive(d):
@@ -628,6 +647,63 @@ class Handler(BaseHTTPRequestHandler):
             return self.send({'ok': False, 'error': str(e), 'apps': st.cfg.get('apps') or {}, 'router': {'id': d['id'], 'name': d.get('name')}})
         return self.send({'ok': True, 'apps': st.cfg.get('apps') or {}, 'router': dict(r, id=d['id'], name=d.get('name'), target=f'{ip}:{port}')})
 
+    def terminal(self):
+        """WebSocket → a shell on the machine Rack Live runs on (rackd/terminal.py). Admin only, same-site only."""
+        q = self.query()
+        if q.get('tok') and not self.headers.get('X-RL-Session'):          # the Telegram mini app keeps the session in a header-less iframe
+            self.headers['X-RL-Session'] = q['tok']
+        if not self.need_admin():
+            return
+        origin = self.headers.get('Origin')
+        if origin and urllib.parse.urlparse(origin).netloc != (self.headers.get('Host') or ''):
+            return self.err('запрос с чужого сайта', 403)
+        if 'websocket' not in (self.headers.get('Upgrade') or '').lower() or not self.headers.get('Sec-WebSocket-Key'):
+            return self.err('это адрес для WebSocket', 400)
+        if DEMO or not terminal.supported():
+            return self.err('терминал здесь недоступен', 400)
+        if q.get('device'):                               # a server added as a device (plugin «ИИ-агенты»: sign-in, look at a chat)
+            dev = next((x for x in APP.store.cfg['devices'] if x['id'] == q['device']), None)
+            d, cfg, why = APP.hostnet.ssh_target(dev) if dev else (None, None, 'устройство не найдено')
+        else:
+            d, cfg, why = APP.hostnet.terminal_target()
+        if not d:
+            return self.err(why, 400)
+        if len(terminal.KEYS) >= terminal.MAX_SESSIONS:
+            return self.err('открыто слишком много терминалов (не больше %d)' % terminal.MAX_SESSIONS, 429)
+        remote, run = None, q.get('run')
+        if run == 'agent-setup':
+            remote = 'bash -lc \'$HOME/.racklive-agents/racklive-agent setup; echo; echo "Можно закрыть окно."; exec bash -l\''
+        elif run == 'agent-attach' and re.match(r'^rl-[\w.\-]{1,40}$', q.get('session') or ''):
+            remote = f"bash -lc 'tmux attach -t {q['session']} || $HOME/.racklive-agents/racklive-agent list; exec bash -l'"
+        elif run:
+            return self.err('неизвестная команда терминала', 400)
+        from .drivers.sshhost import SSHHost
+        try:
+            args, env, keyfile = SSHHost().interactive_args(cfg, remote)
+        except DriverError as e:
+            return self.err(str(e), 400)
+        cols, rows = int(q.get('cols') or 100), int(q.get('rows') or 30)
+        self.send_response(101)
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', terminal.accept_key(self.headers['Sec-WebSocket-Key']))
+        self.end_headers()
+        self.close_connection = True
+        ip = self.client_ip()
+        APP.store.add_event(None, 'Терминал', 'warning', f"открыт терминал на «{d.get('name')}» ({cfg['username']}@{cfg['host']}) с адреса {ip}")
+        why, secs = 'закрыт', 0
+        try:
+            why, secs = terminal.run(self.connection, args, env, max(20, min(cols, 400)), max(5, min(rows, 150)), None)
+        except Exception as e:
+            why = f'ошибка: {type(e).__name__}'
+        finally:
+            if keyfile:
+                try:
+                    os.remove(keyfile)
+                except OSError:
+                    pass
+        APP.store.add_event(None, 'Терминал', 'info', f"терминал на «{d.get('name')}» {why} (длился {secs // 60} мин {secs % 60} с)")
+
     def need_admin(self):
         if not self.authed():
             self.err('нужен вход администратора', 401)
@@ -638,7 +714,7 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, path):
         if path in ('', '/'):
             path = '/index.html'
-        if path.rstrip('/') in ('/frank', '/speed'):          # separate installable apps (own manifest and icon): Frank, speed test
+        if path.rstrip('/') in ('/frank', '/speed', '/terminal'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal
             path = path.rstrip('/') + '.html'
         full = os.path.normpath(os.path.join(WEB, path.lstrip('/')))
         if not full.startswith(os.path.normpath(WEB)) or not os.path.isfile(full):
@@ -705,6 +781,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split('?')[0]
         try:
+            if path == '/api/term/ws':
+                return self.terminal()
+            if path == '/api/term/info':                   # Settings → «Терминал»: which machine, and whether it can be opened
+                if not self.need_admin():
+                    return
+                d, cfg, why = APP.hostnet.terminal_target() if terminal.supported() else (None, None, 'Терминал работает только на Linux / Synology / OpenWrt / Entware (не на Windows).')
+                if d is None and DEMO:
+                    why = 'В демо-режиме терминал отключён: он открывает настоящую командную строку.'
+                devs = []                                   # every device we can sign in to over SSH (the «Терминал» app lets you pick any of them)
+                if terminal.supported() and not DEMO:
+                    for x in APP.store.cfg['devices']:
+                        xd, xc, _ = APP.hostnet.ssh_target(x)
+                        if xd:
+                            devs.append({'id': x['id'], 'name': x.get('name'), 'driver': x.get('driver'), 'user': xc.get('username'), 'host': xc.get('host'), 'port': xc.get('sshPort') or 22})
+                return self.send({'ok': bool(d) and not DEMO, 'why': why if (not d or DEMO) else '', 'device': {'id': d['id'], 'name': d.get('name'), 'driver': d.get('driver'), 'user': cfg.get('username'), 'host': cfg.get('host'), 'port': cfg.get('sshPort') or 22} if d else None,
+                                  'devices': devs, 'supported': terminal.supported() and not DEMO, 'sessions': len(terminal.KEYS)})
             if path == '/api/state':
                 a = self.authed()
                 cfg = APP.store.cfg
@@ -747,6 +839,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(b)))
                 self.end_headers()
                 return self.wfile.write(b)
+            if path == '/api/network':                      # Settings → «Сеть»: the network of the machine Rack Live runs on
+                if not self.need_admin():
+                    return
+                return self.send(APP.hostnet.view())
+            if path == '/api/cameras/recorders':           # Synology Surveillance Station and the like: recorders that live on added devices
+                if not self.need_admin():
+                    return
+                return self.send({'recorders': APP.cameras.recorders()})
             if path == '/api/cameras':                      # tool «Камеры»: progress and what was found
                 if not self.need_admin():
                     return
@@ -759,7 +859,35 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/plugins/catalog':              # tab «Инструменты → Плагины»: every plugin Rack Live knows, by device type
                 if not self.need_admin():
                     return
-                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG]})
+                comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
+                         'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list()]
+                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG] + comm})
+            if path == '/api/community':                    # installed community plugins (admin only)
+                if not self.need_admin():
+                    return
+                return self.send({'plugins': [APP.community.public(m) for m in APP.community.list()], 'api': community.PLUGIN_API})
+            if path == '/api/community/index':              # the community catalog (a separate GitHub repository)
+                if not self.need_admin():
+                    return
+                return self.send(dict(APP.community.index(force=self.query().get('refresh') == '1'), installed={m['id']: m['version'] for m in APP.community.list()}))
+            if path in ('/api/community/template.zip', '/api/community/guide.txt'):
+                if not self.need_admin():
+                    return
+                zip_ = path.endswith('.zip')
+                b = community.template_zip() if zip_ else community.guide_text().encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip' if zip_ else 'text/plain; charset=utf-8')
+                self.send_header('Content-Disposition', 'attachment; filename="' + ('racklive-plugin-template.zip' if zip_ else 'racklive-plugin-guide.txt') + '"')
+                self.send_header('Content-Length', str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+                return
+            m = re.match(r'^/api/community/([a-z][a-z0-9-]{2,30})$', path)
+            if m and self.command == 'GET':                  # the exact commands, for the «what will run» preview
+                if not self.need_admin():
+                    return
+                det = APP.community.detail(m.group(1))
+                return self.send(det) if det else self.err('плагин не найден', 404)
             if path == '/api/netscan':                      # «Сканировать сеть»: progress and what was found (admin only)
                 if not self.need_admin():
                     return
@@ -834,6 +962,24 @@ class Handler(BaseHTTPRequestHandler):
                 if rep['ok']:
                     st.add_event(None, 'Оформление', 'info', f"добавлено оформление «{rep.get('name')}»" + (f" ({len(rep['warnings'])} замечаний)" if rep['warnings'] else ''))
                 return self.send(rep)
+            if path == '/api/community/upload' and method == 'POST':     # a plugin .zip (raw bytes): checked; accepted only if nothing in it is forbidden or undeclared
+                if not self.need_admin():
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > community.MAX_ZIP:
+                    return self.err(f'архив должен быть не больше {community.MAX_ZIP // 1024} КБ', 413)
+                rep = APP.community.install_zip(self.rfile.read(n), 'own')
+                if rep['ok']:
+                    p = rep['plugin']
+                    st.add_event(None, 'Плагины', 'warning', f"загружен свой плагин «{p['title']}» {p['version']} (риск: {p['risk']})")
+                return self.send(rep)
+            m = re.match(r'^/api/community/([a-z][a-z0-9-]{2,30})$', path)
+            if m and method == 'DELETE':
+                if not self.need_admin():
+                    return
+                APP.community.remove(m.group(1))
+                st.add_event(None, 'Плагины', 'info', f'плагин сообщества «{m.group(1)}» удалён из Rack Live')
+                return self.send({'ok': True})
             m = re.match(r'^/api/themes/([a-z][a-z0-9-]{2,31})$', path)
             if m and method == 'DELETE':
                 if not self.need_admin():
@@ -1142,6 +1288,14 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})
+            if path == '/api/community/install' and method == 'POST':     # from the community catalog: the archive must match the sha256 in the index
+                if not self.need_admin():
+                    return
+                rep = APP.community.install_from_index(str(body.get('id') or ''))
+                if rep['ok']:
+                    p = rep['plugin']
+                    st.add_event(None, 'Плагины', 'info', f"из каталога сообщества: «{p['title']}» {p['version']} (риск: {p['risk']})")
+                return self.send(rep)
             if path == '/api/dashboard' and method == 'PUT':     # «Главная»: widgets, their order and sizes
                 ws = body.get('widgets')
                 if not isinstance(ws, list) or len(ws) > 60:
@@ -1267,16 +1421,61 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send({'ok': True})
                 if sub == 'poll' and method == 'POST':
                     return self.send({'ok': True, 'state': APP.poll_device(d)})
+                if sub == 'disks' and method == 'POST':               # S.M.A.R.T. of the disks (the device card, tab «Диски»)
+                    drv = REGISTRY.get(d.get('driver'))
+                    if not hasattr(drv, 'disks'):
+                        return self.err('у этого устройства нет сведений о дисках')
+                    try:
+                        if body.get('op') == 'test':
+                            kind = 'long' if body.get('kind') == 'long' else 'short'
+                            res = drv.disk_test(d, str(body.get('disk') or ''), kind)
+                            st.add_event(did, d.get('name'), 'info', f"запущен {'расширенный' if kind == 'long' else 'быстрый'} тест диска {body.get('disk')}")
+                            return self.send({'ok': True, 'message': res})
+                        res = drv.disks(d)
+                        APP.smart_seen(d, res)
+                        return self.send(dict(res, ok=True, now=time.time()))
+                    except DriverError as e:
+                        return self.err(str(e), 502)
+                if sub == 'containers' and method == 'POST':           # Docker in detail (the device card, tab «Сервисы»)
+                    drv = REGISTRY.get(d.get('driver'))
+                    if not hasattr(drv, 'containers'):
+                        return self.err('у этого устройства нет сведений о контейнерах')
+                    if body.get('op') == 'note':                        # the owner's own one-line description of a container
+                        name = str(body.get('name') or '')
+                        if not re.match(r'^[\w.-]{1,80}$', name):
+                            return self.err('неверное имя контейнера')
+                        notes = d.setdefault('dockerNotes', {})
+                        text = str(body.get('text') or '').strip()[:200]
+                        notes[name] = text
+                        if not text:
+                            notes.pop(name, None)
+                        st.save()
+                        return self.send({'ok': True})
+                    try:
+                        return self.send(dict(drv.containers(d, d.get('dockerNotes') or {}), ok=True, now=time.time()))
+                    except DriverError as e:
+                        return self.err(str(e), 502)
                 if sub == 'plugins' and method == 'POST':
                     drv = REGISTRY.get(d.get('driver'))
-                    if not hasattr(drv, 'plugins'):
+                    comm = APP.community.target_of(d.get('driver')) is not None and hasattr(drv, 'command')
+                    if not hasattr(drv, 'plugins') and not comm:
                         return self.err('у этого устройства нет плагинов')
                     if body.get('op') == 'status':
-                        return self.send(dict(drv.plugins(d), ok=True))
+                        res = dict(drv.plugins(d), ok=True) if hasattr(drv, 'plugins') else {'ok': True, 'plugins': []}
+                        if comm:                                 # community plugins (rackd/community.py): their status is read by their own read-only script
+                            res['plugins'] = res['plugins'] + APP.community.cards(d, drv)
+                        return self.send(res)
                     pid, op = str(body.get('plugin') or ''), str(body.get('op') or '')
                     if op == 'job':                             # progress of a background install
                         j = APP.jobs.get(str(body.get('job') or ''))
                         return self.send({k: v for k, v in j.items() if k != 'device'} if j and j['device'] == did else {'done': True, 'error': 'задача не найдена'})
+                    if pid.startswith('x-'):                    # a community plugin: only install / remove, as a background job, after the administrator confirmed the exact commands (digest)
+                        if not comm or op not in ('install', 'remove'):
+                            return self.err('неверный запрос плагина')
+                        if DEMO:
+                            return self.err('в демо-режиме плагины сообщества не запускаются', 400)
+                        APP.store.add_event(did, d.get('name'), 'warning', f'плагин сообщества {pid[2:]}: {"установка" if op == "install" else "удаление"} подтверждена администратором')
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, community.Shim(APP.community, drv), pid, op, body)['id']})
                     if op in getattr(drv, 'async_ops', ()):
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     try:
@@ -1357,6 +1556,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path in ('/api/network/apply', '/api/network/confirm', '/api/network/revert') and method == 'POST':
+                if not self.need_admin():
+                    return
+                try:
+                    return self.send({'apply': lambda: APP.hostnet.apply(body), 'confirm': APP.hostnet.confirm, 'revert': APP.hostnet.revert}[path.rsplit('/', 1)[1]]())
+                except ValueError as e:
+                    return self.err(str(e), 400)
             if path == '/api/cameras/creds' and method == 'POST':        # the list of camera passwords (they never come back to the browser)
                 if not self.need_admin():
                     return

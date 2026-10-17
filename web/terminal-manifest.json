@@ -1,0 +1,17 @@
+{
+  "id": "/terminal",
+  "name": "Терминал",
+  "short_name": "Терминал",
+  "description": "SSH-терминал к вашим серверам, NAS и роутерам — Rack Live",
+  "start_url": "/terminal",
+  "scope": "/terminal",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    { "src": "/terminal-icon.svg?v=27", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/terminal-icon-192.png?v=27", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/terminal-icon-512.png?v=27", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/terminal-icon-512.png?v=27", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

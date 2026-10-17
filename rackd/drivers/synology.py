@@ -29,6 +29,47 @@ class Synology(Driver):
         return SSHHost()._run({'host': host, 'sshPort': cfg.get('sshPort') or 22, 'username': cfg.get('username') or '',
                                'password': pw}, script, timeout=300)
 
+    def containers(self, cfg, notes=None):
+        """Docker in detail over SSH (DSM admin + sudo): image, ports, addresses, uptime, CPU / memory / traffic"""
+        from .. import dockerinfo
+        out = self.command(cfg, dockerinfo.SCRIPT)
+        if 'Permission denied' in out[:300] or 'sudo' in out[:200].lower() and '@@ver' not in out:
+            raise DriverError('SSH: ' + out.strip()[:160] + ' — включите SSH в DSM и войдите администратором')
+        return dockerinfo.parse(out, urllib.parse.urlparse(self._base(cfg)).hostname or '', notes)
+
+    SS_STATUS = {1: 'работает', 2: 'удалена', 3: 'нет связи', 4: 'недоступна', 5: 'готова', 6: 'нет доступа', 7: 'отключена', 8: 'неизвестно'}
+
+    def surveillance(self, cfg):
+        """Synology Surveillance Station (the NAS as a video recorder): version, licences and its cameras — None when the package is not installed"""
+        call, logout = self._login(cfg)
+        try:
+            info = call('SYNO.API.Info', '1', 'query', query='SYNO.SurveillanceStation.Camera') or {}
+            if 'SYNO.SurveillanceStation.Camera' not in info:
+                return None
+            si = call('SYNO.SurveillanceStation.Info', '1', 'GetInfo') or {}
+            cams = (call('SYNO.SurveillanceStation.Camera', '9', 'List', blIncludeDeletedCam='false', privCamType='1') or {}).get('cameras') or []
+        finally:
+            logout()
+        v = si.get('version') or {}
+        host = urllib.parse.urlparse(self._base(cfg)).hostname or ''
+        return {'name': 'Surveillance Station', 'host': host, 'url': f"http://{host}:{si.get('customizedPortHttp') or 9900}", 'version': '.'.join(str(v.get(k)) for k in ('major', 'minor', 'small') if v.get(k) is not None),
+                'licences': si.get('liscenseNumber'), 'max': si.get('maxCameraSupport'),
+                'cameras': [{'id': c.get('id'), 'name': c.get('newName') or c.get('name') or ('Камера %s' % c.get('id')), 'ip': c.get('ip') or c.get('host') or '', 'port': c.get('port'), 'vendor': c.get('vendor') or '', 'model': c.get('model') or '',
+                             'mac': c.get('mac') or '', 'status': c.get('status'), 'statusText': self.SS_STATUS.get(c.get('status'), 'статус %s' % c.get('status')), 'keepDays': c.get('recordingKeepDays') if c.get('enableRecordingKeepDays') else None}
+                            for c in cams]}
+
+    def disks(self, cfg):
+        """S.M.A.R.T. of every disk over SSH (rackd/smart.py)"""
+        from .. import smart
+        return smart.parse(self.command(cfg, smart.SCRIPT))
+
+    def disk_test(self, cfg, disk, kind):
+        from .. import smart
+        try:
+            return self.command(cfg, smart.test_script(disk, kind)).strip() or 'Команда отправлена диску'
+        except ValueError as e:
+            raise DriverError(str(e))
+
     def _base(self, cfg):
         h = cfg['host'].rstrip('/')
         return h if h.startswith('http') else 'https://' + h + ':5001'

@@ -146,8 +146,8 @@ const THEME = { id: null, strings: {}, icons: {}, kindColors: {}, appIcons: {}, 
 /* every text a look may replace goes through T(ключ, текст по умолчанию): the default stays in the code, the build (build.py) lists these calls in theme-defaults.json */
 const T = (key, def) => { const v = THEME.strings[key]; return typeof v === 'string' && v !== '' ? v : def; };
 /* the app icons (Rack Live / Frank / speed test) — same files as on the home screen; ?v= busts the old cached ones */
-const APP_ICONS = { rack: '/icon.svg?v=27', frank: '/frank-icon.svg?v=27', speed: '/speed-icon.svg?v=27' };
-const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1' };
+const APP_ICONS = { rack: '/icon.svg?v=27', frank: '/frank-icon.svg?v=27', speed: '/speed-icon.svg?v=27', terminal: '/terminal-icon.svg?v=27' };
+const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1', terminal: '/terminal-icon.svg?v=27' };
 function AppIcon({ app = 'rack', size = 30, radius, style }) {
   const st = { borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, ...style };
   if (THEME.appIcons[app]) return <img src={THEME.appIcons[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;      // the custom look brings its own

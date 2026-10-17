@@ -157,7 +157,8 @@ const SET_SECTIONS = [
     state: d => d.ai.ready ? 'включён · ' + d.ai.title.split(' ')[0] : d.ai.keySet ? 'выключен' : 'не настроен' },
   { id: 'apps', label: 'Приложения', icon: 'phone', color: '#007aff', desc: 'Frank и тест скорости на экран телефона, доменное имя',
     state: d => (d.apps || {}).url ? d.apps.url.replace(/^https:\/\//, '') : 'установка на телефон' },
-  { id: 'network', label: 'Сеть', icon: 'globe', color: '#30b0c7', desc: 'Сетевые настройки самого Rack Live', state: () => 'скоро' },
+  { id: 'network', label: 'Сеть', icon: 'globe', color: '#30b0c7', desc: 'Сеть машины, где работает Rack Live: адреса, DHCP или постоянный адрес', state: () => location.hostname },
+  { id: 'terminal', label: 'Терминал', icon: 'terminal', color: '#3a3a3c', desc: 'Командная строка машины, где работает Rack Live' , state: () => '' },
   { id: 'access', label: 'Доступ', icon: 'lock', color: '#34c759', desc: 'Пароль, второй фактор, устройства с доступом' },
   { id: 'backup', label: 'Резервная копия', icon: 'download', color: '#ff9500', desc: 'Скачать все настройки или восстановить из файла' },
   { id: 'about', label: 'О программе', icon: 'other', color: '#8e8e93', desc: 'Версия и ссылки', state: d => 'Rack Live ' + d.version },
@@ -170,7 +171,7 @@ function useMedia(q) {
 }
 
 /* the phone list: grouped cells like iOS Settings — a coloured icon, the name, a short status, a chevron */
-const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps', 'network'], ['access', 'backup'], ['about']];
+const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps', 'network', 'terminal'], ['access', 'backup'], ['about']];
 function IosSettingsList({ secs, data, onPick }) {
   return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
     return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
@@ -284,7 +285,8 @@ function SettingsView() {
     <SessionPolicyCard />
     <Card title="Сеанс"><div className="dim" style={{ fontSize: 13.5, marginBottom: 12 }}>Выйти из Rack Live в этом браузере. Вход — по паролю (и второму фактору) или через Telegram.</div>
       <Btn icon="logout" onClick={logout}>Выйти</Btn></Card></> : null}
-    {cur.id === 'network' ? <Card title="Сеть"><div className="dim" style={{ fontSize: 13.5 }}>Здесь будут сетевые настройки самого Rack Live. Раздел пока пустой.</div></Card> : null}
+    {cur.id === 'network' ? <NetworkCard /> : null}
+    {cur.id === 'terminal' ? <TerminalCard /> : null}
     {cur.id === 'backup' ? <Card title="Резервная копия и импорт">
       <div className="col" style={{ gap: 12 }}>
         <div className="dim" style={{ fontSize: 13.5 }}>Копия содержит устройства (с паролями), схему шкафа, карту и настройки. Храните её в надёжном месте.</div>
@@ -334,8 +336,9 @@ function SystemEvents() {
 function EventsView() {
   const { data } = useApp(); const [flt, setFlt] = useState(() => new URLSearchParams(location.search).get('sys') === '1' ? 'sys' : '');
   const ev = data.events.filter(e => !flt || e.level === flt);
-  return <><div className="row wrap" style={{ marginBottom: 14 }}>{[['', 'Все'], ['offline', 'Сбои'], ['online', 'Восстановления'], ['warning', 'Предупреждения'], ['info', 'Действия'], ...(data.sysEvents ? [['sys', 'Системные']] : [])].map(([k, l]) =>
-    <button key={k} className={'chip' + (flt === k ? ' on' : '')} onClick={() => setFlt(k)}>{l}</button>)}</div>
+  const cnt = k => k === '' ? data.events.length : data.events.filter(e => e.level === k).length;
+  return <><div style={{ marginBottom: 14 }}><PickMenu value={flt} onChange={setFlt} title="Какие события показать" head="Показать"
+    options={[['', 'Все события', cnt('')], ['offline', 'Сбои', cnt('offline')], ['online', 'Восстановления', cnt('online')], ['warning', 'Предупреждения', cnt('warning')], ['info', 'Действия', cnt('info')], ...(data.sysEvents ? [['sys', 'Системные', null]] : [])]} /></div>
     {flt === 'sys' ? <SystemEvents /> : <EventsList events={ev} />}</>;
 }
 

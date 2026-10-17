@@ -95,6 +95,18 @@ def main():
         check('looks: all.css and the themed manifest answer', b'my-look' in raw('/themes/all.css')[0] and json.loads(raw('/manifest.json?skin=my-look')[0])['name'] == 'Rack Live')
         check('looks: Frank and the speed test have their own themed manifests', json.loads(raw('/frank-manifest.json?skin=my-look')[0])['name'] and json.loads(raw('/speed-manifest.json?skin=my-look')[0])['name'])
         check('looks: the guide for neural networks downloads', b'html[data-theme-id=' in raw('/api/themes/guide.txt')[0] and b'tour.hi.title' in raw('/api/themes/guide.txt')[0])
+        ctpl = raw('/api/community/template.zip')[0]
+        cup = json.loads(raw('/api/community/upload', ctpl, headers={'Content-Type': 'application/zip'})[0])
+        check('community: the starter plugin uploads over HTTP and is accepted', cup.get('ok') and cup['plugin']['id'] == 'hello-uptime' and cup['plugin']['risk'] == 'low', json.dumps(cup)[:200])
+        check('community: it is listed', any(p['id'] == 'hello-uptime' for p in api('/api/community')['plugins']))
+        det = api('/api/community/hello-uptime')
+        check('community: the preview gives the exact commands', det['install'] and 'RL_P_NOTE' in det['install'][0]['script'], json.dumps(det)[:200])
+        cbad = json.loads(raw('/api/community/upload', b'junk', headers={'Content-Type': 'application/zip'})[0])
+        check('community: garbage is refused with a reason', cbad.get('ok') is False and cbad.get('errors'))
+        check('community: the guide for a neural network is served', b'plugin_api' in raw('/api/community/guide.txt')[0])
+        check('community: the catalog answers even when GitHub does not', 'plugins' in api('/api/community/index'))
+        api('/api/community/hello-uptime', None, 'DELETE')
+        check('community: a plugin can be removed again', not api('/api/community')['plugins'])
         badup = json.loads(raw('/api/themes/upload', b'not a zip at all', headers={'Content-Type': 'application/zip'})[0])
         check('looks: garbage is refused with a reason, not an error page', badup.get('ok') is False and badup.get('errors'), json.dumps(badup)[:160])
         try:
@@ -340,7 +352,7 @@ def main():
         OP({'plugin': 'modem', 'op': 'remove', 'profile': 'mm'})
         # VPS panels: DNS check, background install job with stages, credentials kept as a secret
         VP = lambda body: api(f"/api/devices/{vps['id']}/plugins", body, 'POST')
-        check('vps plugins: status', [p['id'] for p in VP({'op': 'status'})['plugins']] == ['3xui', 'remnawave'])
+        check('vps plugins: status', [p['id'] for p in VP({'op': 'status'})['plugins']] == ['3xui', 'remnawave', 'agents'])
         check('vps: DNS check', VP({'plugin': '3xui', 'op': 'dns', 'domain': 'vpn.example.com'})['match'] and
               not VP({'plugin': '3xui', 'op': 'dns', 'domain': 'other.org'})['match'])
         jid = VP({'plugin': '3xui', 'op': 'install', 'withDomain': True, 'domain': 'vpn.example.com', 'inbounds': True})['job']
@@ -450,10 +462,10 @@ def main():
                                + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
-                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools',
+                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools',
                  'Камера — вход': '?tsec=catalog&tool=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
-                 'ИБП': f'?device={dev["ups"]}', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
+                 'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
                  'Кросс': f'?unit={units["cross"]}#rack', 'ONT': f'?unit={units["modem"]}#rack',
                  'Юнит ONT — правка': f'?mode=edit&editunit={units["modem"]}#rack', 'Распиновка кросса': f'?mode=edit&editunit={units["cross"]}&pm=1#rack',
                  'Юнит ИБП — правка': f'?mode=edit&editunit={units["ups"]}#rack', 'Светлая тема': '?theme=light#plan',
@@ -475,11 +487,12 @@ def main():
                  'Новое устройство — группы': '?add=1#devices', 'Новое устройство — роутеры': '?add=1&addgrp=router#devices',
                  'VPS · 3x-ui': f'?device={dev["demo_server"]}&tab=plugins&plugin=3xui',
                  'VPS · Remnawave': f'?device={dev["demo_server"]}&tab=plugins&plugin=remnawave',
+                 'VPS · ИИ-агенты': f'?device={dev["demo_server"]}&tab=plugins&plugin=agents',
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
                  'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings',
-                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map',
+                 'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map', 'Карта — камера в дереве': '?mapnode=камера · вход#map',
                  'Новый юнит — что ставим': '?mode=edit&editunit=new#rack', 'Переезд места': '?mode=edit&move=1#rack',
                  'Карта — правка (магнит)': '?mode=edit#map',
                  'Блок розеток — нагрузка': '?unit=upduA#rack', 'Блок розеток — розетки': '?mode=edit&editunit=upduA&pw=1#rack',
@@ -561,12 +574,13 @@ def main():
                 check('вкладка «Системные»: журнал и кнопка «Скопировать всё»', 'Системные события' in out and 'Скопировать всё' in out and 'загружена (navigate)' in out)
             if name == 'Устройства — сканирование сети':
                 check('окно «Сканировать сеть»: сети, кнопка, результаты', 'Сканировать сеть' in out and 'Сканировать' in out and 'стучится' in out)
+                check('сканирование: то, что уже в дереве сети, не предлагается как новое, а показано отдельно', 'ничего добавлять не нужно' in out and 'в дереве сети' in out and 'Камеры: вход, пароль, кадр' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
             if name == 'Настройки — оформление':
                 check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
             if name == 'Главная — стиль «Графит»':
                 check('стиль «Графит» включается атрибутами на <html>', 'data-skin="graphite"' in out and 'data-accent="green"' in out)
             if name == 'Устройства — удалённые':
-                check('вкладки Все / Локальные / Удалённые', all(x in out for x in ('Все · ', 'Локальные · ', 'Удалённые · ')))
+                check('«Где находятся» — в меню фильтра (кнопка), отдельных вкладок нет', 'удалённые' in out and 'dev-loc' not in out and 'sort-btn' in out)
             if name == 'Новое устройство — группы':
                 check('типы устройств по группам', all(x in out for x in ('Роутеры', 'Коммутаторы', 'Серверы и хранилища', 'Питание', 'Проверка доступности')))
             if name == 'Новое устройство — роутеры':
@@ -588,6 +602,8 @@ def main():
                 check('окно «Переезд»', 'Переезд' in out and out.count('place-opt') == 2)
             if name == 'Доступность':
                 check('доступность за 30 дней', 'up-bars' in out and 'сбо' in out)
+            if name == 'Карта — камера в дереве':
+                check('карта: у камеры в дереве есть действия, а не только порт коммутатора', 'node-info' in out and 'Камеры: вход, пароль, адрес, кадр' in out, re.sub(r'<[^>]+>', ' ', out[out.find('node-info'): out.find('node-info') + 1500]) if 'node-info' in out else 'карточки узла нет')
             if name == 'Карта — ONT':
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':
@@ -610,6 +626,11 @@ def main():
                 check('тест скорости отдельным приложением (/speed)', 'speed-app' in out and 'sp-start' in out and 'gauge' in out and 'data-js-error="' not in out)
                 man = json.loads(urllib.request.urlopen(base + '/speed-manifest.json', timeout=10).read())
                 check('манифест теста скорости', man['start_url'] == '/speed')
+                out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=600,900', '--virtual-time-budget=6000',
+                                      '--dump-dom', base + '/terminal'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
+                check('терминал отдельным приложением (/terminal)', 'term-app' in out and 'terminal-manifest.json' in out and 'data-js-error="' not in out)
+                man = json.loads(urllib.request.urlopen(base + '/terminal-manifest.json', timeout=10).read())
+                check('манифест терминала', man['start_url'] == '/terminal' and all(urllib.request.urlopen(base + i['src'], timeout=10).status == 200 for i in man['icons']))
                 out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
                                       '--dump-dom', base + '/?section=apps&install=frank#settings'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
                 check('окно установки Frank с QR-кодом', 'class="qr"' in out and '<svg' in out.split('class="qr"', 1)[-1][:200] and 'data-js-error="' not in out)

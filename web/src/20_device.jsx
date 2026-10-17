@@ -43,8 +43,9 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
   if ((st.vpn || []).length) tabs.push({ id: 'vpn', label: `VPN · ${st.vpn.filter(t => t.up).length}` });
   if (st.storage) tabs.push({ id: 'storage', label: 'Хранилище' });
   if ((st.vms || []).length) tabs.push({ id: 'vms', label: `Виртуалки · ${st.vms.filter(v => v.status === 'running').length}/${st.vms.length}` });
-  if ((st.services || []).length || (st.entities || []).length) tabs.push({ id: 'services', label: st.entities ? 'Управление' : `Сервисы · ${st.services.length}` });
-  if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигурация' });
+  if ((st.services || []).length || (st.entities || []).length) tabs.push({ id: 'services', label: st.entities ? 'Управление' : DOCKER_DRIVERS.includes(device.driver) ? `Docker · ${st.services.length}` : `Сервисы · ${st.services.length}` });
+  if (admin && DISK_DRIVERS.includes(device.driver)) tabs.push({ id: 'smart', label: 'Диски' });
+if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигурация' });
   if (admin && drv && drv.plugins) tabs.push({ id: 'plugins', label: 'Плагины' });
   const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : 'overview');
   return <Sheet onClose={onClose} tab={tab} setTab={setTab} tabs={tabs}
@@ -61,6 +62,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
     {tab === 'storage' ? <StorageTab storage={st.storage} /> : null}
     {tab === 'vms' ? <VmsTab device={device} drv={drv} /> : null}
     {tab === 'services' ? <ServicesTab device={device} drv={drv} /> : null}
+    {tab === 'smart' ? <DisksTab device={device} /> : null}
     {tab === 'plugins' ? <PluginsTab device={device} /> : null}
     {tab === 'config' ? <BackupsTab device={device} /> : null}
   </Sheet>;
@@ -488,12 +490,149 @@ function ServicesTab({ device, drv }) {
         <div className="grow"><div style={{ fontWeight: 600, fontSize: 14 }}>{e.name}</div><div className="dim mono" style={{ fontSize: 12 }}>{e.id}</div></div>
         {admin && toggle ? <Switch on={cur === 'on'} disabled={e.state === 'unavailable'} onChange={() => flip(e)} />
           : <span className="badge">{e.state}</span>}</div>; })}</div></Card></>;
+  if (DOCKER_DRIVERS.includes(device.driver)) return <DockerList device={device} restart={restart} simple={(st.services || [])} />;
   return <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{(st.services || []).map(s => {
     const ok = /running|up/i.test(s.state || '');
     return <div className="li" key={s.name}><span className={'dot ' + (ok ? 'online' : 'offline')} /><div className="grow" style={{ fontWeight: 600, fontSize: 14 }}>{s.name}</div>
       <span className="dim" style={{ fontSize: 13 }}>{s.state}</span>
       {admin && restart ? <Btn size="sm" icon="refresh" onClick={() => runAction(device, restart, { name: s.name })} title="Перезапустить" /> : null}</div>;
   })}</div></Card>;
+}
+
+/* Disk health (S.M.A.R.T.): a verdict in plain words, wear of SSD / NVMe, bad sectors, temperature, a quick test (rackd/smart.py) */
+const DISK_DRIVERS = ['synology', 'ssh', 'windows', 'demo_nas', 'demo_server'];
+const VERDICT = { good: ['Исправен', 'online'], warn: ['Внимание', 'warning'], bad: ['Плохое состояние', 'offline'], unknown: ['Нет данных', ''] };
+const hoursText = h => h == null ? '—' : h >= 8760 ? (h / 8760).toFixed(1).replace('.0', '') + ' г' : h >= 24 ? Math.floor(h / 24) + ' дн' : h + ' ч';
+function DisksTab({ device }) {
+  const { admin } = useApp(); const toast = useToast();
+  const [r, setR] = useState(null); const [err, setErr] = useState(''); const [open, setOpen] = useState(null); const [busy, setBusy] = useState('');
+  const load = async () => { setErr(''); try { setR(await api(`/api/devices/${device.id}/disks`, { method: 'POST', body: {} })); } catch (e) { setErr(e.message); } };
+  useEffect(() => { load(); }, [device.id]);
+  const test = async (d, kind) => {
+    if (!confirm(kind === 'long' ? `Запустить ПОЛНЫЙ тест диска ${d.dev}? Он идёт несколько часов и слегка замедляет диск, но данные не трогает.` : `Запустить быстрый тест диска ${d.dev}? Около 2 минут, диск остаётся доступным.`)) return;
+    setBusy(d.dev + kind);
+    try { const x = await api(`/api/devices/${device.id}/disks`, { method: 'POST', body: { op: 'test', disk: d.dev, kind } }); toast(x.message || 'Тест запущен'); setTimeout(load, 4000); }
+    catch (e) { toast(e.message, true); } finally { setBusy(''); }
+  };
+  if (!r && !err) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Читаю состояние дисков…</div>;
+  if (err) return <div className="cam-warn">Не удалось прочитать диски: {err}.{device.driver === 'synology' ? ' Нужен SSH: DSM → Панель управления → Терминал → «Включить SSH».' : ''}<div className="row" style={{ marginTop: 8 }}><Btn size="sm" icon="refresh" onClick={load}>Повторить</Btn></div></div>;
+  if (!r.smartctl) return <div className="cam-warn">{r.error || 'На устройстве нет smartctl.'} Установите пакет <b>smartmontools</b> (на Debian/Ubuntu: <span className="mono">apt install smartmontools</span>).</div>;
+  const cnt = k => r.disks.filter(d => d.verdict === k).length;
+  return <>
+    <Hint id="disks">Состояние дисков читается через S.M.A.R.T. — встроенный в диск самодиагностический журнал. Чтение диск не будит и не нагружает. Быстрый тест (около 2 минут) проверяет диск изнутри, данные не трогает.</Hint>
+    <div className="dk-sum">
+      <div><b>{r.disks.length}</b><span>дисков</span></div><div><b style={{ color: 'var(--green)' }}>{cnt('good')}</b><span>исправны</span></div>
+      <div><b style={{ color: cnt('warn') ? 'var(--orange)' : undefined }}>{cnt('warn')}</b><span>внимание</span></div><div><b style={{ color: cnt('bad') ? 'var(--red)' : undefined }}>{cnt('bad')}</b><span>плохое состояние</span></div></div>
+    <div className="col" style={{ gap: 8 }}>{r.disks.map(d => {
+      const v = VERDICT[d.verdict] || VERDICT.unknown; const isOpen = open === d.dev;
+      return <div className="card dk-card" key={d.dev}>
+        <button type="button" className="dk-head" onClick={() => setOpen(isOpen ? null : d.dev)}>
+          <span className={'dot ' + v[1]} />
+          <span className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b className="ellipsis" style={{ display: 'block' }}>{d.model || d.dev}</b>
+            <span className="dim ellipsis" style={{ display: 'block', fontSize: 12 }}>{d.dev} · {d.kind === 'nvme' ? 'NVMe SSD' : d.kind === 'ssd' ? 'SSD' : 'HDD' + (d.rpm ? ' ' + d.rpm + ' об/мин' : '')} · {d.sizeBytes ? fmt.bytes(d.sizeBytes) : '—'}</span></span>
+          <span className="dk-chips">{d.temp != null ? <span className="badge">{d.temp}°</span> : null}{d.lifeLeft != null ? <span className="badge">ресурс {d.lifeLeft}%</span> : null}<span className={'badge ' + v[1]}>{v[0]}</span></span>
+          <Icon name="chevron" size={15} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+        </button>
+        <div className="dk-body" style={{ borderTop: 0, paddingTop: 0 }}>
+          {d.reasons.map((x, i) => <div key={i} className="dk-reason" style={{ color: d.verdict === 'bad' && i === 0 ? 'var(--red)' : d.verdict === 'warn' && i === 0 ? 'var(--orange)' : undefined }}>{x}</div>)}
+          {d.testRunning ? <div className="dk-reason"><span className="spin-dot" /> Самотест {d.testRunning}</div> : d.selftest ? <div className="dim3" style={{ fontSize: 12 }}>Последний самотест: {d.selftest.type} — {d.selftest.result}</div> : null}
+        </div>
+        {isOpen ? <div className="dk-body">
+          <div className="dk-grid">
+            <div><div className="dk-h">Паспорт</div><div className="dk-line"><span className="dim">Модель</span> <b>{d.model || '—'}</b></div>{d.family ? <div className="dk-line"><span className="dim">Серия</span> <b>{d.family}</b></div> : null}
+              <div className="dk-line"><span className="dim">Серийный номер</span> <b className="mono">{d.serial || '—'}</b></div><div className="dk-line"><span className="dim">Наработка</span> <b>{hoursText(d.hours)}</b> <span className="dim3" style={{ fontSize: 11.5 }}>({d.hours != null ? d.hours + ' ч' : ''})</span></div>
+              {d.written ? <div className="dk-line"><span className="dim">Записано за жизнь</span> <b>{d.written}</b></div> : null}</div>
+            <div><div className="dk-h">Здоровье</div><div className="dk-line"><span className="dim">Заключение SMART</span> <b>{d.health === 'PASSED' ? 'исправен' : d.health === 'FAILED' ? 'неисправен' : 'неизвестно'}</b></div>
+              {d.lifeLeft != null ? <div className="dk-line"><span className="dim">Остаток ресурса</span> <b>{d.lifeLeft}%</b><span className="dk-bar"><i style={{ width: d.lifeLeft + '%', background: d.lifeLeft < 30 ? 'var(--red)' : 'var(--accent)' }} /></span></div> : null}
+              {d.realloc != null ? <div className="dk-line"><span className="dim">Заменённых секторов</span> <b>{d.realloc}</b></div> : null}{d.pending != null ? <div className="dk-line"><span className="dim">Ждут переназначения</span> <b>{d.pending}</b></div> : null}
+              {d.uncorrectable != null ? <div className="dk-line"><span className="dim">Неисправимых ошибок</span> <b>{d.uncorrectable}</b></div> : null}{d.crc != null ? <div className="dk-line"><span className="dim">Ошибок кабеля (CRC)</span> <b>{d.crc}</b></div> : null}
+              {d.spare != null ? <div className="dk-line"><span className="dim">Запас ячеек</span> <b>{d.spare}%</b></div> : null}</div>
+          </div>
+          {d.attrs.length ? <details style={{ marginTop: 10 }}><summary className="dim" style={{ cursor: 'pointer', fontSize: 12.5 }}>Все атрибуты SMART ({d.attrs.length})</summary>
+            <div className="dk-attrs">{d.attrs.map(a => <div key={a.id} className={a.thresh && a.value <= a.thresh ? 'bad' : ''}><span className="mono dim3">{a.id}</span><span>{a.name.replace(/_/g, ' ')}</span><b className="mono">{a.raw}</b><span className="dim3 mono">{a.value}/{a.worst}/{a.thresh}</span></div>)}</div></details> : null}
+          {admin ? <div className="row wrap" style={{ gap: 8, marginTop: 10 }}><Btn size="sm" icon="check" disabled={!!busy} onClick={() => test(d, 'short')}>Быстрый тест (2 мин)</Btn><Btn size="sm" disabled={!!busy} onClick={() => test(d, 'long')}>Полный тест (часы)</Btn></div> : null}
+        </div> : null}
+      </div>;
+    })}</div>
+    <div className="row" style={{ marginTop: 10 }}><Btn size="sm" icon="refresh" onClick={load}>Обновить</Btn></div>
+  </>;
+}
+
+/* Docker in detail: what runs, since when, on which address and port, which image, how much it eats (rackd/dockerinfo.py) */
+const DOCKER_DRIVERS = ['synology', 'ssh', 'demo_nas', 'demo_server'];
+const sinceText = s => s >= 86400 ? Math.floor(s / 86400) + ' дн' : s >= 3600 ? Math.floor(s / 3600) + ' ч' : Math.max(1, Math.floor(s / 60)) + ' мин';
+function DockerList({ device, restart, simple }) {
+  const { admin } = useApp(); const runAction = useAction(); const toast = useToast();
+  const [r, setR] = useState(null); const [err, setErr] = useState(''); const [q, setQ] = useState(''); const [open, setOpen] = useState(() => new URLSearchParams(location.search).get('container'));
+  const [note, setNote] = useState(null);
+  const load = async () => { try { setR(await api(`/api/devices/${device.id}/containers`, { method: 'POST', body: {} })); setErr(''); } catch (e) { setErr(e.message); } };
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [device.id]);
+  const saveNote = async c => { try { await api(`/api/devices/${device.id}/containers`, { method: 'POST', body: { op: 'note', name: c.name, text: note.text } }); setNote(null); load(); } catch (e) { toast(e.message, true); } };
+  if (!r && !err) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Читаю контейнеры…</div>;
+  const plain = () => <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{simple.map(s => <div className="li" key={s.name}><span className={'dot ' + (/running|up/i.test(s.state || '') ? 'online' : 'offline')} /><div className="grow" style={{ fontWeight: 600, fontSize: 14 }}>{s.name}</div><span className="dim" style={{ fontSize: 13 }}>{s.state}</span></div>)}</div></Card>;
+  if (err || !r.docker) return <>
+    <div className="cam-warn" style={{ marginBottom: 10 }}>Подробности о контейнерах недоступны: {err || r.error}.{device.driver === 'synology' ? ' Нужен SSH: DSM → Панель управления → Терминал → «Включить SSH»; вход — тем же администратором, порт укажите в настройках устройства.' : ' Нужен SSH-доступ пользователя к Docker.'}
+      <div className="row" style={{ marginTop: 8 }}><Btn size="sm" icon="refresh" onClick={load}>Повторить</Btn></div></div>{simple.length ? plain() : null}</>;
+  const d = r.docker;
+  const list = r.containers.filter(c => !q || (c.name + ' ' + c.image + ' ' + (c.project || '')).toLowerCase().includes(q.toLowerCase()));
+  const tag = i => { const m = String(i || '').match(/^(.*?)(?::([^:/]+))?$/); return [m[1].replace(/^.*\//, ''), m[2] || 'latest']; };
+  const bar = p => <span className="dk-bar"><i style={{ width: Math.min(100, p || 0) + '%', background: (p || 0) > 85 ? 'var(--red)' : (p || 0) > 60 ? 'var(--orange)' : 'var(--accent)' }} /></span>;
+  return <>
+    <div className="dk-sum">
+      <div><b>{d.running}</b><span>из {d.total} работают</span></div><div><b>{d.cpu}%</b><span>процессор</span></div><div><b>{fmt.bytes(d.mem)}</b><span>память</span></div><div><b>{d.version}</b><span>версия Docker</span></div></div>
+    <SearchBox value={q} onChange={setQ} />
+    <div className="col" style={{ gap: 8, marginTop: 8 }}>{list.map(c => {
+      const isOpen = open === c.name; const [img, tg] = tag(c.image);
+      const loop = c.state === 'restarting';                         // a crash loop: it keeps starting and dying
+      const tone = loop ? 'warning' : !c.running ? 'offline' : c.health === 'unhealthy' ? 'warning' : 'online';
+      const pub = c.ports.filter(p => p.published);
+      return <div className={'card dk-card' + (isOpen ? ' open' : '')} key={c.id + c.name}>
+        <button type="button" className="dk-head" onClick={() => setOpen(isOpen ? null : c.name)}>
+          <span className={'dot ' + tone} />
+          <span className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b className="ellipsis" style={{ display: 'block' }}>{c.name}</b>
+            <span className="dim mono ellipsis" style={{ display: 'block', fontSize: 11.5 }}>{img}:{tg}{pub.length ? ' · порт ' + pub.map(p => p.hostPort).join(', ') : c.hostNetwork && c.listening.length ? ' · порт ' + c.listening.map(p => p.port).join(', ') : ''}</span></span>
+          <span className="dk-chips">{loop ? <span className="badge warning">перезапускается</span> : c.running ? <><span className="badge">{sinceText(c.uptime)}</span>{c.cpu != null ? <span className="badge">{c.cpu}%</span> : null}{c.mem != null ? <span className="badge">{fmt.bytes(c.mem)}</span> : null}</>
+            : <span className="badge offline">остановлен</span>}</span>
+          <Icon name="chevron" size={15} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+        </button>
+        {isOpen ? <div className="dk-body">
+          <div className="dk-desc">{note && note.name === c.name ? <div className="row" style={{ gap: 6 }}><input className="input grow" autoFocus maxLength={200} value={note.text} onChange={e => setNote({ name: c.name, text: e.target.value })} placeholder="Что это за контейнер (одной строкой)" onKeyDown={e => e.key === 'Enter' && saveNote(c)} />
+            <Btn size="sm" kind="primary" onClick={() => saveNote(c)}>Сохранить</Btn><Btn size="sm" onClick={() => setNote(null)}>×</Btn></div>
+            : <div className="row" style={{ gap: 8 }}><span className="grow">{c.description ? <>{c.description} <span className="dim3" style={{ fontSize: 11.5 }}>· {c.descriptionFrom}</span></> : <span className="dim">Описания нет — {c.project ? 'проект «' + c.project + '», ' : ''}образ {img}. Напишите свою заметку.</span>}</span>
+              {admin ? <Btn size="sm" icon="edit" onClick={() => setNote({ name: c.name, text: c.descriptionFrom === 'ваша заметка' ? c.description : '' })}>Заметка</Btn> : null}</div>}</div>
+          <div className="dk-grid">
+            <div><div className="dk-h">Где доступен</div>
+              {pub.length ? pub.map((p, i) => <div className="dk-line" key={i}><b className="mono">{p.host}:{p.hostPort}</b><span className="dim"> → порт {p.port}/{p.proto} внутри</span></div>) : null}
+              {c.hostNetwork ? <><div className="dim" style={{ fontSize: 12.5, margin: '2px 0' }}>Сеть хоста: слушает прямо на адресе сервера</div>
+                {c.listening.length ? c.listening.map((p, i) => <div className="dk-line" key={i}><b className="mono">{p.addr === '0.0.0.0' || p.addr === '*' || p.addr === '::' ? device.host && String(device.host).replace(/^\w+:\/\//, '').replace(/[:/].*$/, '') : p.addr}:{p.port}</b><span className="dim"> {p.proc}</span></div>) : <div className="dim" style={{ fontSize: 12.5 }}>порты не определены (нужны права на ss)</div>}</> : null}
+              {!c.hostNetwork && !pub.length ? <div className="dim" style={{ fontSize: 12.5 }}>Наружу порты не открыты — доступен только другим контейнерам в Docker-сети.</div> : null}
+              {c.networks.map((n, i) => <div className="dk-line" key={i}><span className="dim">Docker-сеть «{n.name}»: </span><b className="mono">{n.ip || '—'}</b></div>)}
+              {!c.hostNetwork && c.ports.filter(p => !p.published).length ? <div className="dim" style={{ fontSize: 12, marginTop: 2 }}>Внутренние порты: {c.ports.filter(p => !p.published).map(p => p.port).join(', ')}</div> : null}
+            </div>
+            <div><div className="dk-h">Нагрузка</div>
+              {c.running ? <>
+                <div className="dk-line"><span className="dim">Процессор</span> <b>{c.cpu}%</b>{bar(c.cpu)}</div>
+                <div className="dk-line"><span className="dim">Память</span> <b>{fmt.bytes(c.mem)}</b>{c.memLimit ? <span className="dim"> из {fmt.bytes(c.memLimit)}{c.memLimitSet ? '' : ' (всего на сервере)'}</span> : null}{bar(c.memPct)}</div>
+                <div className="dk-line"><span className="dim">Сеть</span> <b>↓ {fmt.bytes(c.netRx)}</b> <b>↑ {fmt.bytes(c.netTx)}</b> <span className="dim3" style={{ fontSize: 11.5 }}>всего с запуска</span></div>
+                <div className="dk-line"><span className="dim">Диск</span> <b>чтение {fmt.bytes(c.blkR)}</b> <b>запись {fmt.bytes(c.blkW)}</b></div>
+                <div className="dk-line"><span className="dim">Процессов</span> <b>{c.pids}</b></div></>
+                : loop ? <div className="dim" style={{ fontSize: 12.5 }}>Контейнер постоянно падает и запускается заново (перезапусков: {c.restarts}). Посмотрите его журнал: <span className="mono">docker logs {c.name}</span>.</div>
+                : <div className="dim" style={{ fontSize: 12.5 }}>Остановлен{c.finishedAt ? ' ' + fmt.ago(c.finishedAt, r.now) : ''}{c.exitCode != null ? ', код выхода ' + c.exitCode : ''}{c.oom ? ' (не хватило памяти)' : ''}</div>}</div>
+            <div><div className="dk-h">О контейнере</div>
+              <div className="dk-line"><span className="dim">Образ</span> <b className="mono" style={{ wordBreak: 'break-all' }}>{c.image}</b></div>
+              {c.running ? <div className="dk-line"><span className="dim">Работает</span> <b>{fmt.uptime(c.uptime)}</b> <span className="dim3" style={{ fontSize: 11.5 }}>с {fmt.time(c.startedAt)}</span></div> : null}
+              <div className="dk-line"><span className="dim">Перезапуски</span> <b>{c.restarts}</b> <span className="dim3" style={{ fontSize: 11.5 }}>политика: {c.restartPolicy}</span></div>
+              {c.project ? <div className="dk-line"><span className="dim">Проект</span> <b>{c.project}</b>{c.service ? <span className="dim"> / {c.service}</span> : null}</div> : null}
+              {c.health ? <div className="dk-line"><span className="dim">Самопроверка</span> <b>{c.health === 'healthy' ? 'в порядке' : c.health === 'unhealthy' ? 'не проходит' : c.health}</b></div> : null}
+              {c.mounts.length ? <div className="dk-line" style={{ display: 'block' }}><span className="dim">Папки:</span>{c.mounts.map((m, i) => <div key={i} className="mono dim" style={{ fontSize: 11.5, wordBreak: 'break-all' }}>{m.src} → {m.dst}{m.rw ? '' : ' (только чтение)'}</div>)}</div> : null}
+            </div>
+          </div>
+          {admin && restart ? <div className="row" style={{ marginTop: 10 }}><Btn size="sm" icon="refresh" onClick={() => runAction(device, restart, { name: c.name })}>Перезапустить</Btn></div> : null}
+        </div> : null}
+      </div>;
+    })}</div>
+    {!list.length ? <div className="dim" style={{ marginTop: 8 }}>Ничего не найдено.</div> : null}
+  </>;
 }
 
 function EventsList({ events, compact, bare }) {

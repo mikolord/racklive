@@ -101,11 +101,18 @@ TOOLS = [
     ('config_changes', 'Бэкапы конфигурации устройства: список версий и изменения (diff, секреты скрыты) в выбранной или последней версии.',
      {'device': ('string', 'имя или id устройства'), 'version': ('integer', 'время версии (unix), необязательно')}),
     ('topology', 'Связи между узлами карты сети: кто к какому порту подключён, скорость, тип связи (кабель, Wi-Fi, mesh).', {}),
+    ('docker_containers', 'Docker-контейнеры устройства (Synology, сервер по SSH) подробно: образ, состояние и аптайм, перезапуски, на каком адресе и порту доступны, '
+                          'Docker-сети и адреса, потребление (процессор, память, сеть, диск), описание. Для «что за контейнер», «кто ест память», «почему падает».',
+     {'device': ('string', 'имя или id устройства (NAS, сервер)')}),
+    ('disk_health', 'Состояние дисков по S.M.A.R.T. (Synology, сервер по SSH): вердикт по каждому диску, температура, наработка, износ SSD/NVMe, плохие секторы, '
+                    'последний самотест. Для «в порядке ли диски», «пора ли менять».',
+     {'device': ('string', 'имя или id устройства (NAS, сервер)')}),
+    ('panel_network', 'Сеть той машины, где работает сам Rack Live: адреса, шлюз, DNS, DHCP или постоянный адрес по каждой сетевой карте, на каком устройстве панель стоит.', {}),
 ]
 
 LABEL = {'network_overview': 'обзор сети', 'device_details': 'устройство', 'find_clients': 'клиенты', 'network_health': 'здоровье сети',
          'security_findings': 'безопасность', 'availability': 'доступность', 'events': 'журнал', 'device_history': 'история', 'speed_tests': 'замеры скорости',
-         'config_changes': 'конфигурация', 'topology': 'топология', 'propose_action': 'готовлю действие', 'client_settings': 'клиент'}
+         'config_changes': 'конфигурация', 'topology': 'топология', 'docker_containers': 'контейнеры', 'disk_health': 'диски', 'panel_network': 'сеть панели', 'propose_action': 'готовлю действие', 'client_settings': 'клиент'}
 
 # the only way Frank can change anything: a proposal card the admin has to press
 ACTION_TOOL = ('propose_action', 'Предложить пользователю действие: появится карточка с кнопкой «Выполнить», выполнится только после нажатия. '
@@ -276,8 +283,9 @@ SYSTEM = """Тебя зовут Frank. Ты — помощник внутри Ra
 - Можно короткий Markdown: **жирный**, списки, `код`. Таблиц не делай.
 - {ACTIONS}
 
-Где что в Rack Live: вкладки «Размещение» (шкафы; карточки «Здоровье сети», «Безопасность», «Интернет»), «Карта сети» (кнопка «Анализ»),
-«План» (помещения, покрытие Wi-Fi по замерам), «Устройства» (добавить/изменить, «Новые в сети»), «События», «Настройки» (уведомления, Telegram).
+Где что в Rack Live: «Главная» (виджеты), «Карта» (карта сети с кнопкой «Анализ» и «План» помещений), «Инструменты» (разделы «Устройства» — добавить/изменить, «Новые в сети»;
+«Плагины» — по устройствам; «Инструменты» — поиск и настройка камер), «События», «Настройки» (уведомления, Telegram, «Сеть» и «Терминал» той машины, где стоит сама панель).
+Панель работает на конкретной машине (см. network_overview → panelRunsOn): с ПОЛНЫМ ДОСТУПОМ ты можешь работать на ней device_command, как в терминале Rack Live. Контейнеры и диски смотри инструментами docker_containers и disk_health.
 Карточка устройства (нажать на устройство): «Обзор», «Порты» (кнопки перезапуска порта/PoE, проверка кабеля), «Клиенты», «VPN»,
 «Плагины», «Конфигурация» (бэкапы и изменения). Кнопка-спидометр вверху — тест скорости Wi-Fi.
 
@@ -351,7 +359,11 @@ def run_tool(app, name, args):
                         'uptimeH': round(s['uptime'] / 3600, 1) if isinstance(s.get('uptime'), (int, float)) else None,
                         'ports': len(st.get('ports') or []), 'clients': len(st.get('clients') or []), 'updated': _ago(st.get('updated'))})
         h, sec = view.get('health') or {}, view.get('security') or {}
-        return {'title': cfg['settings'].get('title'), 'devices': out,
+        try:
+            ph = app.hostnet.find_host()
+        except Exception:
+            ph = None
+        return {'title': cfg['settings'].get('title'), 'devices': out, 'panelRunsOn': {'id': ph['id'], 'name': ph.get('name')} if ph else None,
                 'health': {'score': h.get('score'), 'type': (h.get('type') or {}).get('name'),
                            'problems': [c.get('title') for c in h.get('checks') or [] if c.get('level') in ('bad', 'warn')]} if h else None,
                 'security': {'score': sec.get('score'), 'counts': sec.get('counts')} if sec else None}
@@ -395,6 +407,26 @@ def run_tool(app, name, args):
                 if not q or q in json.dumps(r, ensure_ascii=False).lower():
                     rows.append(r)
         return {'count': len(rows), 'clients': rows[:80], 'more': max(0, len(rows) - 80)}
+    if name in ('docker_containers', 'disk_health'):
+        d = _find_device(app, args.get('device'))
+        if not d:
+            return {'error': 'устройство не найдено', 'devices': [x.get('name') for x in cfg['devices']]}
+        drv = REGISTRY.get(d.get('driver'))
+        fn = getattr(drv, 'containers' if name == 'docker_containers' else 'disks', None)
+        if not fn:
+            return {'error': 'у этого устройства нет таких данных (нужен Synology или сервер по SSH)'}
+        try:
+            r = fn(d, d.get('dockerNotes') or {}) if name == 'docker_containers' else fn(d)
+        except Exception as e:
+            return {'error': str(e)[:200]}
+        if name == 'docker_containers':
+            return {'docker': r.get('docker'), 'error': r.get('error'), 'containers': [{k: c.get(k) for k in ('name', 'image', 'state', 'health', 'uptime', 'restarts', 'restartPolicy', 'networkMode', 'networks', 'ports', 'listening', 'project',
+                                                                                                           'description', 'cpu', 'mem', 'memPct', 'netRx', 'netTx', 'blkR', 'blkW') if c.get(k) not in (None, '', [])} for c in r.get('containers') or []]}
+        return {'smartctl': r.get('smartctl'), 'error': r.get('error'), 'disks': [{k: x.get(k) for k in ('dev', 'model', 'kind', 'sizeBytes', 'health', 'verdict', 'reasons', 'temp', 'hours', 'lifeLeft', 'realloc', 'pending', 'uncorrectable', 'crc', 'selftest', 'testRunning')
+                                                                                   if x.get(k) not in (None, '')} for x in r.get('disks') or []]}
+    if name == 'panel_network':
+        v = app.hostnet.view()
+        return {'panel': v['panel'], 'host': {k: (v['host'] or {}).get(k) for k in ('device', 'os', 'method', 'supported', 'why', 'interfaces')}, 'pendingChange': v.get('pending')}
     if name == 'network_health':
         h = view.get('health') or {}
         return {k: h.get(k) for k in ('score', 'type', 'checks', 'spof', 'stats')}
