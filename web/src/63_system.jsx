@@ -144,7 +144,7 @@ function TerminalApp() {
   </div>;
 }
 
-function TerminalView({ onClose, extra = '' }) {            // extra: '&device=<id>&run=agent-setup' — a server added as a device
+function TerminalView({ onClose, extra = '', ssh = null, sshCmd = '' }) {            // extra: '&device=<id>&run=agent-setup' — a server added as a device; ssh: {user, host, port} for «Termius»
   const box = useRef(null); const ws = useRef(null); const term = useRef(null); const ctrl = useRef(false);
   const [state, setState] = useState('connecting'); const [ctrlOn, setCtrlOn] = useState(false); const [size, setSize] = useState(() => +lsGet('rl_term_font', 13)); const [again, setAgain] = useState(0); const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -188,6 +188,15 @@ function TerminalView({ onClose, extra = '' }) {            // extra: '&device=<
     setPick(out.join('\n'));
   };
   useEffect(() => { if (pick != null) { const el = document.querySelector('.term-pick'); if (el) el.scrollTop = el.scrollHeight; } }, [pick]);
+  // «paste»: xterm on a phone has no paste, and on http:// the page may not read the clipboard — then a plain field takes the system paste (long press → «Вставить»)
+  const toast = useToast();
+  const [paste, setPaste] = useState(null); const [pasteEnter, setPasteEnter] = useState(true);
+  const sendText = (s, enter) => { if (!ws.current || ws.current.readyState !== 1) { toast('Терминал не подключён', true); return false; } ws.current.send(new TextEncoder().encode(s.replace(/\r?\n/g, '\r') + (enter ? '\r' : ''))); if (term.current) term.current.focus(); return true; };
+  const doPaste = async () => {
+    try { if (window.isSecureContext && navigator.clipboard && navigator.clipboard.readText) { const t = await navigator.clipboard.readText(); if (t) { sendText(t, false); return; } } } catch (e) { }
+    setPaste('');
+  };
+  const termius = () => { if (sshCmd) { copyText(sshCmd); toast('Команда скопирована: вставьте её в Termius после входа'); } openInTermius(ssh, () => { }); };
   return <div style={{ marginTop: 10 }}>
     <div className="term-keys top">{TERM_KEYS.map(([l, v]) => <button type="button" key={l} className={'btn sm' + (v === 'CTRL' && ctrlOn ? ' primary' : '')} onClick={() => send(v)}>{l}</button>)}</div>
     <div className="term-bar"><span className={'dot ' + (state === 'open' ? 'online' : state === 'closed' ? 'offline' : '')} /><span className="dim" style={{ fontSize: 12.5 }}>{state === 'open' ? 'подключено' : state === 'closed' ? 'отключено' : 'подключаюсь…'}</span>
@@ -195,8 +204,18 @@ function TerminalView({ onClose, extra = '' }) {            // extra: '&device=<
       <Btn size="sm" onClick={() => setSize(s => Math.max(9, s - 1))}>A−</Btn><Btn size="sm" onClick={() => setSize(s => Math.min(24, s + 1))}>A+</Btn>
       <Btn size="sm" kind={pick != null ? 'primary' : undefined} onClick={() => (pick != null ? setPick(null) : startPick())}>{pick != null ? 'Готово' : 'Выделить текст'}</Btn>
       <Btn size="sm" onClick={() => { const t = term.current && term.current.getSelection(); if (t) { copyText(t); } }}>Копировать</Btn>
+      <Btn size="sm" kind={paste != null ? 'primary' : undefined} onClick={() => (paste != null ? setPaste(null) : doPaste())}>Вставить</Btn>
+      {ssh ? <Btn size="sm" onClick={termius}>Termius</Btn> : null}
       {state === 'closed' ? <Btn size="sm" kind="primary" icon="refresh" onClick={() => { setState('connecting'); setMsg(''); setAgain(a => a + 1); }}>Заново</Btn> : null}
       <Btn size="sm" onClick={onClose}>Закрыть</Btn></div>
+    {paste != null ? <div className="term-paste">
+      <textarea className="input mono" rows={3} autoFocus value={paste} onChange={e => setPaste(e.target.value)} placeholder="Нажмите и удерживайте здесь → «Вставить» (или наберите текст)" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+        <label className="row" style={{ gap: 6, fontSize: 13 }}><input type="checkbox" checked={pasteEnter} onChange={e => setPasteEnter(e.target.checked)} />и нажать Enter</label>
+        <div className="grow" />
+        <Btn size="sm" onClick={() => setPaste(null)}>Отмена</Btn>
+        <Btn size="sm" kind="primary" disabled={!paste} onClick={() => { if (sendText(paste, pasteEnter)) setPaste(null); }}>Отправить в терминал</Btn></div>
+    </div> : null}
     <div className="term-wrap">
       <div className="term-box" ref={box} />
       {pick != null ? <div className="term-pick-wrap">

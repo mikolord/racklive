@@ -121,7 +121,7 @@ function SshAccess({ device }) {
         <Btn size="sm" icon="copy" onClick={() => toast(copyText(cmd) ? 'Команда скопирована' : 'Не получилось скопировать — выделите вручную', false)}>Скопировать</Btn></div>
       <div className="row" style={{ gap: 8 }}><Btn size="sm" icon="terminal" onClick={() => setOpen(!open)}>{open ? 'Закрыть терминал' : 'Терминал здесь'}</Btn></div>
     </div>
-    {open ? <div style={{ marginTop: 10 }}><TerminalView extra={'&device=' + encodeURIComponent(device.id)} onClose={() => setOpen(false)} /></div> : null}
+    {open ? <div style={{ marginTop: 10 }}><TerminalView extra={'&device=' + encodeURIComponent(device.id)} ssh={t} onClose={() => setOpen(false)} /></div> : null}
     <div className="dim3" style={{ fontSize: 12.5, marginTop: 8 }}>«Termius» открывает ссылку ssh://{t.user}@{t.host}:{t.port} в программе, которая её обслуживает (Termius на телефоне и компьютере, PuTTY и др.). Пароль она спросит сама — Rack Live не кладёт его в ссылку.
       «Терминал здесь» входит сохранённым логином, пароль вводить не нужно; каждое открытие записывается в «События».</div>
   </Card>;

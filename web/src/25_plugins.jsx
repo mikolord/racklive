@@ -552,10 +552,11 @@ function AgentsPlugin({ p, device, reload }) {
         if (sel.size && !(await confirm(`Установить на «${device.name}»: ${[...sel].map(id => p.agents.find(a => a.id === id).title).join(', ')}? Rack Live по SSH поставит программы${claudeOn ? ', настроит автозапуск и команду racklive-agent' : ''}. Займёт несколько минут.`, { title: 'ИИ-агенты', ok: 'Установить' }))) return;
         start('install'); }}>{running ? 'Работаю…' : sel.size ? 'Установить' : 'Сохранить настройки'}</Btn>
       {needSetup ? <Btn icon="terminal" disabled={running} onClick={() => setTerm('&run=agent-setup')}>Войти и запустить</Btn> : null}
+      {needSetup && sshTarget(device) ? <Btn disabled={running} onClick={() => { copyText('racklive-agent setup'); toast('Команда «racklive-agent setup» скопирована — вставьте её в Termius после входа'); openInTermius(sshTarget(device), () => { }); }}>Войти через Termius</Btn> : null}
       {p.helper && claudeOn ? <Btn icon="refresh" disabled={running} onClick={() => quick({ op: 'restart' }, 'Перезапущено')}>Перезапустить сессии</Btn> : null}
     </div>
     {needSetup ? <div className="err-note" style={{ marginTop: 8 }}><b>Нужен один вход в аккаунт Claude.</b> Нажмите «Войти и запустить»: откроется терминал сервера, он покажет ссылку — откройте её на телефоне, войдите и вставьте код. Потом ответьте <code>y</code> на два вопроса.
-      Или вручную в любом SSH (Termius): <code>~/.racklive-agents/racklive-agent setup</code>. Это нужно один раз; дальше сессия сама поднимается после перезагрузки.</div> : null}
+      Код из браузера вставляется кнопкой «Вставить» в терминале. Или в Termius («Войти через Termius» — команда <code>racklive-agent setup</code> уже будет скопирована). Это нужно один раз; дальше сессия сама поднимается после перезагрузки.</div> : null}
     {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
       <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.max(0, Math.round(now / 1000 - job.t))} с · окно можно закрыть, работа продолжится</div></div></div> : null}
     {job && job.done ? (job.error ? <PluginResult r={{ error: job.error, kept: true, log: [] }} /> : <PluginResult r={{ ...job.result, kept: true, up: true }} />) : null}
@@ -570,7 +571,8 @@ function AgentsPlugin({ p, device, reload }) {
       <div className="dim3" style={{ fontSize: 12.5, marginTop: 4 }}>Новый чат наследует модель и Remote Control{auto ? ' и автозапуск' : ''}. С Remote Control он сразу виден в приложении Claude; «Открыть» показывает его здесь, в терминале.</div>
     </> : null}
     {term ? <Modal title="Терминал сервера" wide onClose={() => { setTerm(null); reload(); }} icon={<Icon name="terminal" size={20} color="var(--accent)" />}>
-      <TerminalView extra={`&device=${encodeURIComponent(device.id)}${term}`} onClose={() => { setTerm(null); reload(); }} /></Modal> : null}
+      <TerminalView extra={`&device=${encodeURIComponent(device.id)}${term}`} ssh={sshTarget(device)} sshCmd={term === '&run=agent-setup' ? 'racklive-agent setup' : term.startsWith('&run=agent-attach') ? 'racklive-agent attach ' + decodeURIComponent(term.split('session=')[1] || '') : ''}
+        onClose={() => { setTerm(null); reload(); }} /></Modal> : null}
   </>;
 }
 
