@@ -303,6 +303,7 @@ function SettingsView() {
         <span className="dim" style={{ fontSize: 13 }}>Frank и Тест скорости — отдельные приложения, раздел «Приложения»</span></div>
       <KV rows={[['Версия', 'Rack Live ' + data.version], ['Драйверы', data.drivers.length], ['Устройств', data.devices.length]]} />
       <div className="dim3" style={{ fontSize: 12.5, marginTop: 12 }}>Исходный код и инструкции: <a href="https://github.com/mikolord/racklive" target="_blank" rel="noreferrer">github.com/mikolord/racklive</a></div></Card> : null}
+    {cur.id === 'about' && data.authed !== false ? <UpdateCard /> : null}
     </div>
   </div>;
 }

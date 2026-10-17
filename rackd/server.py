@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, socke
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, updater, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.6.0'
+VERSION = '2.6.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -63,6 +63,7 @@ class App:
         self.hostnet = hostnet.HostNet(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
         self.community = community.Community(DATA)
+        self.updater = updater.Updater(self, VERSION, DEMO)
         for tid, name, why in self.themes.recheck():         # after an update: a look that no longer fits is switched off at once, the journal says why
             self.store.add_event(None, 'Оформление', 'warning', f'оформление «{name}» отключено — не подходит к этой версии Rack Live: {"; ".join(why)[:300]}')
         self.lock = threading.RLock()
@@ -862,6 +863,10 @@ class Handler(BaseHTTPRequestHandler):
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
                          'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list()]
                 return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG] + comm})
+            if path == '/api/update':                       # Settings → «О программе»: current / newest version, how it can be updated (admin only)
+                if not self.need_admin():
+                    return
+                return self.send(APP.updater.info())
             if path == '/api/community':                    # installed community plugins (admin only)
                 if not self.need_admin():
                     return
@@ -1288,6 +1293,28 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})
+            if path.startswith('/api/update/') and method in ('POST', 'PUT'):
+                if not self.need_admin():
+                    return
+                u = APP.updater
+                try:
+                    if path == '/api/update/check':
+                        u.latest(force=True)
+                    elif path == '/api/update/apply':
+                        lat = u.latest()
+                        if not lat or lat.get('tag') != body.get('tag'):
+                            return self.err('эта версия больше не последняя — обновите страницу')
+                        st.add_event(None, 'Обновление', 'warning', f"администратор запустил обновление до {lat['version']}")
+                        u.apply(lat['tag'])
+                    elif path == '/api/update/rollback':
+                        u.rollback()
+                    elif path == '/api/update/settings':
+                        u.set_mode(str(body.get('mode') or ''))
+                    else:
+                        return self.err('не найдено', 404)
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                return self.send(dict(u.info(), ok=True))
             if path == '/api/community/install' and method == 'POST':     # from the community catalog: the archive must match the sha256 in the index
                 if not self.need_admin():
                     return
@@ -1735,6 +1762,8 @@ def main():
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
         log('DEMO mode: made-up office network, login disabled')
     threading.Thread(target=APP.poller, daemon=True).start()
+    if not DEMO:
+        threading.Thread(target=APP.updater.loop, daemon=True).start()          # looks for a new release now and then (Settings → О программе)
     port = int(os.environ.get('RL_PORT', '8080'))
     log(f'Rack Live {VERSION}: http://0.0.0.0:{port}  data={DATA}  drivers={", ".join(REGISTRY)}')
     APP.store.add_event(None, 'Rack Live', 'info', f'сервер запущен (версия {VERSION})')

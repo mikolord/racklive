@@ -465,7 +465,7 @@ def main():
                  'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools',
                  'Камера — вход': '?tsec=catalog&tool=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
-                 'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
+                 'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · О программе': '?section=about#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
                  'Кросс': f'?unit={units["cross"]}#rack', 'ONT': f'?unit={units["modem"]}#rack',
                  'Юнит ONT — правка': f'?mode=edit&editunit={units["modem"]}#rack', 'Распиновка кросса': f'?mode=edit&editunit={units["cross"]}&pm=1#rack',
                  'Юнит ИБП — правка': f'?mode=edit&editunit={units["ups"]}#rack', 'Светлая тема': '?theme=light#plan',
@@ -604,6 +604,8 @@ def main():
                 check('доступность за 30 дней', 'up-bars' in out and 'сбо' in out)
             if name == 'Карта — камера в дереве':
                 check('карта: у камеры в дереве есть действия, а не только порт коммутатора', 'node-info' in out and 'Камеры: вход, пароль, адрес, кадр' in out, re.sub(r'<[^>]+>', ' ', out[out.find('node-info'): out.find('node-info') + 1500]) if 'node-info' in out else 'карточки узла нет')
+            if name == 'Настройки · О программе':
+                check('о программе: карточка обновлений (версия, проверка, режим)', 'Обновления' in out and 'Проверить' in out and 'Обновлять ночью' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Карта — ONT':
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':
