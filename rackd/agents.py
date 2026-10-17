@@ -126,10 +126,12 @@ HELPER = r'''#!/bin/bash
 export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.aider/bin:/usr/local/bin:$PATH"
 D="$HOME/.racklive-agents"; mkdir -p "$D"
 [ -f "$D/env" ] && . "$D/env"
-RC=0; AUTO=0; NAME="$(hostname)"; [ -f "$D/conf" ] && . "$D/conf"
+RC=0; AUTO=0; NAME="$(hostname)"; DIR="$HOME"; [ -f "$D/conf" ] && . "$D/conf"; [ -d "$DIR" ] || DIR="$HOME"
 slug() { echo "$(echo "$1" | tr -c 'A-Za-z0-9\n' '-' | sed 's/--*/-/g;s/^-//;s/-$//' | cut -c1-24)-$(printf %s "$1" | cksum | cut -d' ' -f1)"; }   # readable part + a hash: Cyrillic names stay distinct
+# the main chat CONTINUES the last conversation of its folder (after a reboot it is the same chat in the Claude app); a new one only when there is nothing to continue
 mainsess() { tmux has-session -t rl-main 2>/dev/null && return 0
-  if [ "$RC" = 1 ]; then tmux new-session -d -s rl-main -c "$HOME" "claude remote-control --name \"$NAME\""; else tmux new-session -d -s rl-main -c "$HOME" "claude"; fi; }
+  if [ "$RC" = 1 ]; then tmux new-session -d -s rl-main -c "$DIR" "claude --continue --remote-control \"$NAME\" || claude --remote-control \"$NAME\""
+  else tmux new-session -d -s rl-main -c "$DIR" "claude --continue || claude"; fi; }
 chat() { s="rl-c-$(slug "$1")"; tmux has-session -t "$s" 2>/dev/null && { echo "$s уже запущен"; return 0; }
   if [ "$RC" = 1 ]; then tmux new-session -d -s "$s" -c "$HOME" "claude --remote-control \"$1\""; else tmux new-session -d -s "$s" -c "$HOME" "claude"; fi; echo "$s"; }
 case "$1" in
@@ -146,7 +148,7 @@ case "$1" in
     if claude auth status >/dev/null 2>&1; then echo "Вход уже выполнен."; else claude auth login; fi
     echo; echo "── Шаг 2. Первый запуск Remote Control ──"
     echo "Ответьте y на вопросы «Enable Remote Control?» и «Trust ...?», дождитесь ссылки на сессию и нажмите Ctrl+C."
-    claude remote-control --name "$NAME"
+    cd "$DIR" && claude remote-control --name "$NAME"
     echo; echo "Готово. Запускаю сессию в фоне…"; "$0" restart; echo "Сессия «$NAME» ждёт вас в приложении Claude и на claude.ai/code." ;;
   *) echo "racklive-agent start-all | new [имя] | list | stop <имя|all> | restart | attach [сессия] | setup" ;;
 esac
@@ -164,7 +166,9 @@ def configure_script(rc, auto, name, model, auth, keys, strip=()):
     conf = f'RC={1 if rc else 0}\nAUTO={1 if auto else 0}\nNAME={shlex.quote(name)}\nMODEL={shlex.quote(model)}\nAUTH={shlex.quote(auth)}\n'
     return (PATHS + '\nD="$HOME/.racklive-agents"; mkdir -p "$D"; chmod 700 "$D"; touch "$D/env"; chmod 600 "$D/env"\n' + drop
             + f"cat >> \"$D/env\" <<'RL_ENV_EOF'\n{env}RL_ENV_EOF\nchmod 600 \"$D/env\"\n"
+            'ODIR=$(grep "^DIR=" "$D/conf" 2>/dev/null)\n'                                    # the chat's working folder survives «Сохранить настройки»
             f"cat > \"$D/conf\" <<'RL_CONF_EOF'\n{conf}RL_CONF_EOF\n"
+            '[ -n "$ODIR" ] && echo "$ODIR" >> "$D/conf"\n'
             f"cat > \"$D/racklive-agent\" <<'RL_HELPER_EOF'\n{HELPER}RL_HELPER_EOF\nchmod 755 \"$D/racklive-agent\"\n"
             'if [ "$(id -u)" = 0 ]; then ln -sf "$D/racklive-agent" /usr/local/bin/racklive-agent; else mkdir -p "$HOME/.local/bin"; ln -sf "$D/racklive-agent" "$HOME/.local/bin/racklive-agent"; fi\n'
             # keys also for hand-made sessions: a login shell reads them

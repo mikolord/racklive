@@ -40,6 +40,9 @@ for a in agents.AGENTS:
 cs = agents.configure_script(True, True, 'Мой сервер', 'opus', 'sub', {'OPENAI_API_KEY': 'sk-test_123'}, ['ANTHROPIC_API_KEY'])
 syntax('configure', cs)
 ok('в скрипте настройки нет ключа Anthropic', 'sk-ant' not in cs)
+ok('главная сессия продолжает прежний разговор (после перезагрузки — тот же чат), иначе новая', 'claude --continue --remote-control' in agents.HELPER and '|| claude --remote-control' in agents.HELPER)
+ok('главная сессия и первый вход — в одной рабочей папке', '-c "$DIR"' in agents.HELPER and 'cd "$DIR" && claude remote-control' in agents.HELPER)
+ok('«Сохранить настройки» не теряет рабочую папку', 'ODIR=$(grep "^DIR="' in cs and '"$ODIR" >> "$D/conf"' in cs)
 ok('ключ только в env-файле (heredoc)', cs.count('sk-test_123') == 1)
 
 s = agents.parse_status('@@os Debian GNU/Linux 12\n@@uid 0\n@@tmux tmux 3.3a\n@@bin claude 2.1.300_(Claude_Code)\n@@conf RC 1\n@@conf NAME "Мой сервер"\n'
