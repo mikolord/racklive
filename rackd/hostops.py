@@ -441,8 +441,27 @@ def local_ok():
             and not os.path.exists('/.dockerenv') and not os.path.exists('/run/.containerenv'))
 
 
+def local_env():
+    """a systemd service has no HOME (and a bare PATH): scripts that install into ~/.local or keep settings in ~ would write to «/» — give them a normal login environment"""
+    env = dict(os.environ)
+    try:
+        import pwd
+        pw = pwd.getpwuid(os.getuid())
+        env.setdefault('HOME', pw.pw_dir)
+        env.setdefault('USER', pw.pw_name)
+        env.setdefault('LOGNAME', pw.pw_name)
+        env.setdefault('SHELL', pw.pw_shell or '/bin/sh')
+    except (ImportError, KeyError, AttributeError):
+        env.setdefault('HOME', '/root')
+    if not env.get('HOME') or env['HOME'] == '/':
+        env['HOME'] = '/root' if getattr(os, 'getuid', lambda: 0)() == 0 else env.get('HOME') or '/tmp'
+    paths = env.get('PATH', '').split(':')
+    env['PATH'] = ':'.join(dict.fromkeys(paths + ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin']).keys()).strip(':')
+    return env
+
+
 def run_local(script, timeout=60, on_line=None):
-    p = subprocess.Popen(['sh', '-s'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p = subprocess.Popen(['sh', '-s'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=local_env(), cwd=local_env()['HOME'])
     out, lines = [], []
     timer = threading.Timer(timeout, p.kill)
     timer.start()

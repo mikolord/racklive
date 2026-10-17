@@ -65,7 +65,7 @@ class SSHHost(Driver):
     def interactive_args(self, cfg, remote=None):
         """the command line of an interactive `ssh -tt` (for the browser terminal): → (args, env, temp file to delete). Same ways of signing in as _run."""
         if cfg.get('local') and hostops.local_ok():         # «Эта машина»: a login shell right here, no SSH to itself
-            env = dict(os.environ, HOME='/root')
+            env = hostops.local_env()
             env.setdefault('TERM', 'xterm-256color')
             return [shutil.which('bash') or '/bin/sh', '-l'] + (['-c', remote] if remote else []), env, None
         host, port = cfg['host'].strip(), int(cfg.get('sshPort') or 22)

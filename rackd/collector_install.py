@@ -187,7 +187,7 @@ Description=Rack Live (collector)
 After=network-online.target
 Wants=network-online.target
 [Service]
-Environment=RL_DATA={DATA_DIR} RL_WEB={APP_DIR}/web RL_PORT=$RL_PORT PYTHONUNBUFFERED=1
+Environment=RL_DATA={DATA_DIR} RL_WEB={APP_DIR}/web RL_PORT=$RL_PORT PYTHONUNBUFFERED=1 HOME=/root
 WorkingDirectory={APP_DIR}
 ExecStart=$PY -m rackd
 Restart=always

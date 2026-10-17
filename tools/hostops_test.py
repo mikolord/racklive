@@ -171,6 +171,14 @@ try:
     ok('терминал «Этой машины» — оболочка здесь, без SSH и без временных файлов', args[-1] == '-l' and 'ssh' not in ' '.join(args) and kf is None, args)
 finally:
     h.local_ok, h.run_local = real_ok, real_run
+saved_home = os.environ.pop('HOME', None)
+try:
+    env = h.local_env()
+    ok('у локальных команд всегда есть HOME (служба systemd его не даёт) и обычный PATH', env.get('HOME') not in (None, '', '/') and '/usr/local/bin' in env['PATH'].split(':'), (env.get('HOME'), env.get('PATH')))
+finally:
+    if saved_home is not None:
+        os.environ['HOME'] = saved_home
+ok('служба сборщика получает HOME', 'HOME=/root' in __import__('rackd.collector_install', fromlist=['x']).install_script('http://x:1', 't' * 20, {'collector': {}}, 9998))
 ok('на обычном сервере локальный флаг без root/Linux не срабатывает (идёт SSH)', not h.local_ok() or sys.platform.startswith('linux'))
 
 print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
