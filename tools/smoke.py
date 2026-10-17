@@ -379,7 +379,46 @@ def main():
         OP({'plugin': 'modem', 'op': 'remove', 'profile': 'mm'})
         # VPS panels: DNS check, background install job with stages, credentials kept as a secret
         VP = lambda body: api(f"/api/devices/{vps['id']}/plugins", body, 'POST')
-        check('vps plugins: status', [p['id'] for p in VP({'op': 'status'})['plugins']] == ['3xui', 'remnawave', 'agents'])
+        check('vps plugins: status', [p['id'] for p in VP({'op': 'status'})['plugins']] == ['3xui', 'remnawave', 'agents', 'collector'])
+        # «Сборщик площадки»: the site is made before the job, the new machine downloads this code with the site key, the card shows the site, remove drops it on request
+        try:
+            VP({'plugin': 'collector', 'op': 'install', 'server': 'not-an-address'}); bad = False
+        except urllib.error.HTTPError as e:
+            bad = e.code == 400
+        check('collector: a bad address is refused before anything starts', bad)
+        n_sites = len(api('/api/sites')['sites'])
+        jid = VP({'plugin': 'collector', 'op': 'install', 'name': 'Квартира Теста', 'server': 'https://racklive.example.com', 'port': 9998, 'level': 'view'})['job']
+        for _ in range(40):
+            j = VP({'plugin': 'collector', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        cinfo = (j.get('result') or {}).get('info') or {}
+        check('collector: install job gives the panel address and a password', j.get('done') and not j.get('error') and cinfo.get('url') and cinfo.get('password') and cinfo.get('siteName') == 'Квартира Теста', json.dumps(j, ensure_ascii=False)[:300])
+        sj2 = api('/api/sites')['sites']
+        check('collector: the site was created', len(sj2) == n_sites + 1 and any(s['name'] == 'Квартира Теста' for s in sj2))
+        ccard = next(p for p in VP({'op': 'status'})['plugins'] if p['id'] == 'collector')
+        check('collector: the card shows the info and the site', ccard['installed'] and ccard['info']['password'] == cinfo['password'] and ccard['site'] and ccard['site']['name'] == 'Квартира Теста', json.dumps(ccard, ensure_ascii=False)[:300])
+        ctok = api(f"/api/sites/{ccard['site']['id']}/token", {}, 'POST')['token']
+        pk = urllib.request.urlopen(urllib.request.Request(base + '/api/site/pack', headers={'Authorization': 'Bearer ' + ctok}), timeout=60).read()
+        check('collector: the code is downloaded with the site key', pk[:2] == b'\x1f\x8b' and len(pk) > 100000, len(pk))
+        try:
+            urllib.request.urlopen(urllib.request.Request(base + '/api/site/pack', headers={'Authorization': 'Bearer nope'}), timeout=10); bad = False
+        except urllib.error.HTTPError as e:
+            bad = e.code == 401
+        check('collector: no key, no code', bad)
+        try:
+            urllib.request.urlopen(base + '/api/site/pack', timeout=10); bad = False
+        except urllib.error.HTTPError as e:
+            bad = e.code == 401
+        check('collector: no header, no code', bad)
+        jid = VP({'plugin': 'collector', 'op': 'remove', 'removeSite': True})['job']
+        for _ in range(40):
+            j = VP({'plugin': 'collector', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        check('collector: remove drops the site when asked', j.get('done') and not j.get('error') and not any(s['name'] == 'Квартира Теста' for s in api('/api/sites')['sites']), json.dumps(j, ensure_ascii=False)[:300])
         check('vps: DNS check', VP({'plugin': '3xui', 'op': 'dns', 'domain': 'vpn.example.com'})['match'] and
               not VP({'plugin': '3xui', 'op': 'dns', 'domain': 'other.org'})['match'])
         jid = VP({'plugin': '3xui', 'op': 'install', 'withDomain': True, 'domain': 'vpn.example.com', 'inbounds': True})['job']
@@ -515,6 +554,7 @@ def main():
                  'VPS · 3x-ui': f'?device={dev["demo_server"]}&tab=plugins&plugin=3xui',
                  'VPS · Remnawave': f'?device={dev["demo_server"]}&tab=plugins&plugin=remnawave',
                  'VPS · ИИ-агенты': f'?device={dev["demo_server"]}&tab=plugins&plugin=agents',
+                 'VPS · Сборщик площадки': f'?device={dev["demo_server"]}&tab=plugins&plugin=collector',
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
@@ -645,6 +685,8 @@ def main():
                 check('сцены: «Кампус», «Посмотреть в демо», «Применить к моему плану», инструкция для нейросети', 'Кампус' in out and 'Посмотреть в демо' in out and 'Применить к моему плану' in out and 'Как написать сцену' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Инструменты — площадки':
                 check('площадки: список, агенты, режим сборщика', 'Удалённые площадки' in out or 'Площадки' in out, '') ; check('площадки: видна демо-площадка и «Эта установка — сборщик»', 'Склад (филиал)' in out and 'Эта установка' in out and 'Добавить площадку' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
+            if name == 'VPS · Сборщик площадки':
+                check('плагин «Сборщик площадки»: название площадки, адрес панели, порт, управление, кнопка', 'Название площадки' in out and 'Адрес этой панели' in out and 'Порт панели на сервере' in out and 'Управление отсюда' in out and 'Установить сборщик' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Карта — ONT':
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':

@@ -49,6 +49,7 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.kind === 'modem' ? <ModemPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'panel' ? <PanelPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'agents' ? <AgentsPlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'collector' ? <CollectorPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'community' ? <CommunityPlugin p={p} device={device} reload={reload} /> : null}
     </div> : null}
   </div>;
@@ -358,6 +359,92 @@ function PanelPlugin({ p, device, reload }) {
     <div className="row wrap">
       {p.installed ? <Btn kind="danger" icon="trash" disabled={running} onClick={remove}>Удалить {p.title}</Btn> : null}
       {p.home ? <a className="btn" href={p.home} target="_blank" rel="noreferrer"><Icon name="link" size={16} />О проекте</a> : null}
+    </div>
+  </>;
+}
+
+/* «Сборщик площадки»: a whole Rack Live in collector mode on this server / mini PC, installed over SSH (rackd/collector_install.py) */
+const COLLECTOR_LEVELS = [['view', 'Только смотреть'], ['actions', 'Смотреть и нажимать кнопки устройств'], ['terminal', 'Смотреть, нажимать кнопки и открывать терминал']];
+function CollectorInfo({ info, site, title }) {
+  const level = (COLLECTOR_LEVELS.find(l => l[0] === info.level) || [])[1];
+  return <div className="plugin-result">
+    <div className="row" style={{ gap: 8, alignItems: 'flex-start', marginBottom: 8 }}><Icon name="check" size={18} /><b className="grow">{title}</b></div>
+    <div className="col" style={{ gap: 6 }}>
+      <div className="copy-row"><span className="dim">Панель там</span><a className="grow ellipsis" href={info.url} target="_blank" rel="noreferrer">{info.url}</a></div>
+      {info.password ? <CopyRow k="Пароль администратора" v={info.password} /> : <div className="dim3" style={{ fontSize: 12.5 }}>Пароль администратора задан при прошлой установке — здесь он не показывается.</div>}
+      <div className="copy-row"><span className="dim">Площадка</span><span className="grow">{info.siteName}{site ? <> · {site.alive ? <span style={{ color: 'var(--green)' }}>на связи</span> : <span className="dim3">{site.last ? 'давно не отвечает' : 'ждём первого сообщения (до минуты)'}</span>}{site.devices ? ` · устройств: ${site.devices}` : ''}</> : null}</span></div>
+      {info.version ? <div className="copy-row"><span className="dim">Версия</span><span className="grow">{info.version}</span></div> : null}
+      {level ? <div className="copy-row"><span className="dim">Управление отсюда</span><span className="grow">{level}</span></div> : null}
+      <div className="dim3" style={{ fontSize: 12.5 }}>Откройте панель по ссылке, войдите этим паролем — это обычный Rack Live: «Инструменты → Устройства → Сканировать сеть» найдёт всё в сети площадки, «Камеры» настроит камеры.
+        Все найденные устройства сами появятся на этой панели в «Инструменты → Удалённые площадки и агенты».</div>
+    </div></div>;
+}
+
+function CollectorPlugin({ p, device, reload }) {
+  const toast = useToast(); const confirm = useConfirm(); const { refresh } = useApp();
+  const [name, setName] = useState(device.name || '');
+  const [server, setServer] = useState(p.serverUrl || '');
+  const [port, setPort] = useState(String(p.defaultPort || 9998));
+  const [level, setLevel] = useState('view');
+  const [insecure, setInsecure] = useState(false);
+  const [dropSite, setDropSite] = useState(false);
+  const [job, setJob] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'collector', ...body } });
+  const start = async (op, extra) => {
+    try { const r = await call({ op, ...extra }); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000 }); }
+    catch (e) { toast(e.message, true); }
+  };
+  useEffect(() => {
+    if (!job || job.done) return;
+    const t = setInterval(async () => { setNow(Date.now());
+      try { const j = await call({ op: 'job', job: job.id }); setJob(x => ({ ...x, ...j }));
+        if (j.done) { toast(j.error ? 'Не получилось: ' + j.error : (j.result && j.result.message) || 'Готово', !!j.error); reload(); refresh(); } } catch (e) { }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [job && job.id, job && job.done]);
+  const required = (p.checks || []).filter(c => !c.optional);
+  const ready = required.every(c => c.ok) && server.trim() && name.trim() && /^\d+$/.test(port);
+  const running = job && !job.done;
+  const install = async () => {
+    const local = /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(server.trim());
+    if (!(await confirm(`Поставить Rack Live на «${device.name}» как сборщик площадки «${name.trim()}»? Rack Live по SSH установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели (${server.trim()}), `
+      + `создаст службу racklive на порту ${port} и площадку здесь, на главной панели. Займёт 1–4 минуты.`
+      + (local ? ' Адрес главной панели — из домашней сети: сервер сможет достучаться до него, только пока он в этой же сети.' : ''), { title: p.title, ok: 'Установить' }))) return;
+    start('install', { name: name.trim(), server: server.trim(), port: +port, level, insecure });
+  };
+  const remove = async () => {
+    if (!(await confirm(`Удалить сборщик с «${device.name}»? Служба и программа будут удалены с сервера, данные останутся в /var/lib/racklive.${dropSite && p.info ? ` Площадка «${p.info.siteName}» и её устройства исчезнут с этой панели.` : ''}`,
+      { title: p.title, ok: 'Удалить', danger: true }))) return;
+    start('remove', { removeSite: dropSite });
+  };
+  const info = (job && job.done && job.result && job.result.info) || p.info;
+  return <>
+    <Checks checks={p.checks || []} />
+    {info && p.installed ? <CollectorInfo info={info} site={p.site} title="Сборщик работает" />
+      : p.installed ? <div className="plugin-result"><Icon name="check" size={16} /> Rack Live уже стоит на этом сервере{p.version ? ' (' + p.version + ')' : ''} — не через плагин, поэтому данных для входа здесь нет.</div> : null}
+    {!p.installed ? <div className="awg-form">
+      <Field label="Название площадки" hint="Так она будет называться на этой панели: например «Квартира Ивановых» или «Офис».">
+        <input className="input" value={name} onChange={e => setName(e.target.value)} /></Field>
+      <Field label="Адрес этой панели" hint={p.serverUrl ? 'Взят из «Настройки → Приложения». Сервер скачает Rack Live и будет присылать данные по этому адресу.' : 'Адрес, по которому сервер достучится до этой панели: домен (https://racklive.example.com) или http://192.168.1.3:9998, если сервер в этой же сети. «Настройки → Приложения» создаст домен.'}>
+        <input className="input mono" value={server} placeholder="https://racklive.example.com" onChange={e => setServer(e.target.value)} /></Field>
+      <div className="row wrap" style={{ gap: 8 }}>
+        <Field label="Порт панели на сервере"><input className="input mono" style={{ maxWidth: 120 }} value={port} onChange={e => setPort(e.target.value.replace(/\D/g, ''))} /></Field>
+        <Field label="Управление отсюда"><select className="input" value={level} onChange={e => setLevel(e.target.value)}>
+          {COLLECTOR_LEVELS.map(l => <option key={l[0]} value={l[0]}>{l[1]}</option>)}</select></Field></div>
+      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={insecure} onChange={setInsecure} />
+        <div className="grow"><div>Не проверять сертификат этой панели</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Только если адрес выше — https с самоподписанным сертификатом. С обычным доменом оставьте выключенным.</div></div></div>
+      <Btn kind="primary" icon="download" busy={running} disabled={!ready || running} onClick={install} style={{ padding: 12 }}>{running ? 'Устанавливаю…' : 'Установить сборщик'}</Btn>
+      {!ready && !running ? <div className="dim3" style={{ fontSize: 12.5 }}>{!server.trim() ? 'Укажите адрес этой панели.' : 'Кнопка станет активной, когда все пункты выше будут отмечены зелёным.'}</div> : null}
+    </div> : null}
+    {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
+      <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.max(0, Math.round(now / 1000 - job.t))} с · окно можно закрыть, установка продолжится</div></div></div> : null}
+    {job && job.done ? (job.error ? <PluginResult r={{ error: job.error, kept: true, log: [] }} />
+      : (job.result && (job.result.log || []).length ? <PluginResult r={{ message: `Журнал (${Math.round(job.dur / 60)} мин)`, log: job.result.log, kept: true, up: true }} /> : null)) : null}
+    <div className="row wrap">
+      {p.installed ? <Btn kind="danger" icon="trash" disabled={running} onClick={remove}>Удалить сборщик</Btn> : null}
+      {p.installed && p.info ? <div className="row" style={{ gap: 8 }}><Switch on={dropSite} onChange={setDropSite} /><span className="dim" style={{ fontSize: 13 }}>вместе с площадкой на этой панели</span></div> : null}
     </div>
   </>;
 }

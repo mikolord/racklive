@@ -98,6 +98,34 @@ function WebAccess({ device }) {
   </Card>;
 }
 
+/* «Подключение по SSH»: where the saved login leads (the same rules as the server's hostnet.ssh_target) — Termius via ssh://, the command to copy, or the terminal right here */
+function sshTarget(d) {
+  const host = String(d.host || '').replace(/^\w+:\/\//, '').replace(/[:/].*$/, '');
+  if (!host) return null;
+  if (d.driver === 'ssh' || d.driver === 'windows' || d.driver === 'openwrt') return { host, user: d.username || 'root', port: +d.sshPort || 22 };
+  if (d.driver === 'synology') return d.username ? { host, user: d.username, port: +d.sshPort || 22 } : null;
+  if (d.driver === 'keenetic') return d.entwarePasswordSet ? { host, user: d.entwareUser || 'root', port: +d.entwarePort || 222 } : null;
+  return null;
+}
+function SshAccess({ device }) {
+  const toast = useToast(); const [open, setOpen] = useState(false);
+  const t = sshTarget(device);
+  if (!t) return null;
+  const cmd = `ssh ${t.port !== 22 ? '-p ' + t.port + ' ' : ''}${t.user}@${t.host}`;
+  return <Card title="Подключение по SSH">
+    <div className="web-acc">
+      <div className="web-row"><Icon name="terminal" size={16} color="var(--text3)" /><span className="mono grow ellipsis">{t.user}@{t.host}:{t.port}</span>
+        <Btn size="sm" kind="primary" onClick={() => openInTermius(t, isPhone() ? () => setOpen(true) : () => { })}>Termius</Btn></div>
+      <div className="web-row"><span className="web-k">Команда</span><span className="mono grow ellipsis">{cmd}</span>
+        <Btn size="sm" icon="copy" onClick={() => toast(copyText(cmd) ? 'Команда скопирована' : 'Не получилось скопировать — выделите вручную', false)}>Скопировать</Btn></div>
+      <div className="row" style={{ gap: 8 }}><Btn size="sm" icon="terminal" onClick={() => setOpen(!open)}>{open ? 'Закрыть терминал' : 'Терминал здесь'}</Btn></div>
+    </div>
+    {open ? <div style={{ marginTop: 10 }}><TerminalView extra={'&device=' + encodeURIComponent(device.id)} onClose={() => setOpen(false)} /></div> : null}
+    <div className="dim3" style={{ fontSize: 12.5, marginTop: 8 }}>«Termius» открывает ссылку ssh://{t.user}@{t.host}:{t.port} в программе, которая её обслуживает (Termius на телефоне и компьютере, PuTTY и др.). Пароль она спросит сама — Rack Live не кладёт его в ссылку.
+      «Терминал здесь» входит сохранённым логином, пароль вводить не нужно; каждое открытие записывается в «События».</div>
+  </Card>;
+}
+
 function Overview({ device, drv }) {
   const { admin, data } = useApp();
   const st = device.state || {}; const s = st.summary || {};
@@ -119,6 +147,7 @@ function Overview({ device, drv }) {
     {st.ups ? <UpsCard ups={st.ups} /> : null}
     {(st.loopGuard && st.loopGuard.supported) || (st.loops && (st.loops.active || st.loops.recent)) ? <LoopGuardCard device={device} drv={drv} /> : null}
     {admin ? <WebAccess device={device} /> : null}
+    {admin ? <SshAccess device={device} /> : null}
     <Card title="Сведения">
       <KV rows={[['Модель', s.model], ['Прошивка', s.fw], ['IP-адрес', s.ip ? <span className="mono">{s.ip}</span> : null],
         ['MAC', s.mac ? <span className="mono">{s.mac}</span> : null], ['Тип подключения', drv?.title],

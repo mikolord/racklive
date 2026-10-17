@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, queue, re, secrets, select
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, community, updater, sites as sites_mod, collector as collector_mod, sitelink, scenes as scenes_mod, sandbox as sandbox_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, scenes as scenes_mod, sandbox as sandbox_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.8.0'
+VERSION = '2.9.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -371,6 +371,8 @@ class App:
                     d.setdefault('panelInfo', {})[pid] = res['info']
                 if res.get('removed'):
                     (d.get('panelInfo') or {}).pop(pid, None)
+                if res.get('removeSite') and self.sites.get(res['removeSite']):         # «Сборщик площадки» removed: its site goes too, if the administrator asked
+                    self.sites.remove(res['removeSite'])
                 self.store.save()
                 self.store.add_event(d['id'], d.get('name'), 'info', res.get('message') or f'{pid}: {op}')
                 job['result'] = res
@@ -382,6 +384,30 @@ class App:
         threading.Thread(target=run, daemon=True).start()
         self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: {'установка' if op == 'install' else 'удаление'} начата")
         return job
+
+    def collector_prepare(self, d, body, op):
+        """plugin «Сборщик площадки»: before the SSH job starts — the site (reused on a repeat install), the address the new installation will call,
+        its one-time admin password and config. → body for the driver (it only runs the script and never sees anything it did not get here)."""
+        info = (d.get('panelInfo') or {}).get('collector') or {}
+        if op == 'remove':
+            site = self.sites.get(info.get('siteId') or '')
+            return dict(body, _site=site['id'] if site and body.get('removeSite') else None)
+        url = cinstall.clean_url(body.get('server') or (self.store.cfg.get('apps') or {}).get('url') or '')
+        try:
+            port = int(body.get('port') or cinstall.DEFAULT_PORT)
+        except (TypeError, ValueError):
+            port = 0
+        if not 1024 <= port <= 65535:
+            raise ValueError('порт панели на сервере: число от 1024 до 65535')
+        site = self.sites.get(info.get('siteId') or '')
+        if not site:
+            site = self.sites.create(body.get('name') or d.get('name') or 'Новая площадка')
+            self.store.add_event(d['id'], d.get('name'), 'info', f"плагин collector: создана площадка «{site['name']}»")
+        pw = secrets.token_urlsafe(12)
+        level = str(body.get('level') or 'view')
+        cfg = cinstall.make_config(site['name'], url, site['token'], pw, level, bool(body.get('insecure')))
+        return dict(body, _collector={'url': url, 'token': site['token'], 'cfg': cfg, 'port': port, 'password': pw, 'siteId': site['id'], 'siteName': site['name'],
+                                      'level': level, 'insecure': bool(body.get('insecure'))})
 
     # ───────── view model ─────────
     def peer_index(self):
@@ -906,6 +932,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.terminal()
             if path == '/api/site/link':                   # the control channel of a site collector (key auth; the collector dials out)
                 return self.site_link()
+            if path == '/api/site/pack':                   # a collector being installed over SSH (plugin «Сборщик площадки») downloads this installation's own code; the site key is the pass
+                tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
+                if not tok or not any(secrets.compare_digest(s['token'], tok) for s in APP.sites.items):
+                    return self.err('неверный ключ площадки', 401)
+                b = cinstall.pack()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/gzip')
+                self.send_header('Content-Length', str(len(b)))
+                self.end_headers()
+                return self.wfile.write(b)
             if path == '/api/term/info':                   # Settings → «Терминал»: which machine, and whether it can be opened
                 if not self.need_admin():
                     return
@@ -984,7 +1020,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
                          'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list() if (m.get('kind') or 'plugin') == 'plugin']
-                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG] + comm})
+                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG + [cinstall.CARD]] + comm})
             if path == '/api/sites':                        # Инструменты → Удалённые площадки: the sites that report here, agents, and this installation's own collector mode
                 if not self.need_admin():
                     return
@@ -1702,6 +1738,12 @@ class Handler(BaseHTTPRequestHandler):
                         return self.err('у этого устройства нет плагинов')
                     if body.get('op') == 'status':
                         res = dict(drv.plugins(d), ok=True) if hasattr(drv, 'plugins') else {'ok': True, 'plugins': []}
+                        for card in res['plugins']:
+                            if card.get('id') == 'collector':                  # what the card needs from this installation: the address to call, the site and its live state
+                                ci = (d.get('panelInfo') or {}).get('collector') or {}
+                                card['serverUrl'] = (st.cfg.get('apps') or {}).get('url') or ''
+                                card['info'] = ci or None
+                                card['site'] = next((s for s in APP.sites.public() if s['id'] == ci.get('siteId')), None)
                         if comm:                                 # community plugins (rackd/community.py): their status is read by their own read-only script
                             res['plugins'] = res['plugins'] + APP.community.cards(d, drv)
                         return self.send(res)
@@ -1716,6 +1758,11 @@ class Handler(BaseHTTPRequestHandler):
                             return self.err('в демо-режиме плагины сообщества не запускаются', 400)
                         APP.store.add_event(did, d.get('name'), 'warning', f'{"инструмент" if op == "run" else "плагин"} сообщества {pid[2:]}: ' + {'install': 'установка', 'remove': 'удаление', 'run': 'запуск'}[op] + ' подтверждены администратором')
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, community.Shim(APP.community, drv), pid, op, body)['id']})
+                    if pid == 'collector' and op in ('install', 'remove'):
+                        try:
+                            body = APP.collector_prepare(d, body, op)
+                        except ValueError as e:
+                            return self.err(str(e))
                     if op in getattr(drv, 'async_ops', ()):
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     try:

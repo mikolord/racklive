@@ -452,6 +452,7 @@ class DemoServer(DemoBase):
     # VPS panels, simulated: the same stages as the real installer
     async_ops = ('install', 'remove')
     _panels = {}
+    _coll = {}                                           # the «Сборщик площадки» plugin is not a panel: it does not conflict with 3x-ui / Remnawave
 
     def plugins(self, cfg):
         out = []
@@ -470,10 +471,28 @@ class DemoServer(DemoBase):
                  checks=[{'label': 'Linux (у вас Ubuntu 24.04 LTS)', 'ok': True}, {'label': 'Вход под root (или sudo без пароля — для tmux и Node.js)', 'ok': True, 'optional': True},
                          {'label': 'tmux: tmux 3.4', 'ok': True, 'optional': True}, {'label': 'Node.js 18+ для Codex и Gemini CLI: будет установлен', 'ok': False, 'optional': True}])
         out.append(a)
+        from .. import collector_install
+        installed = bool(self._coll)
+        out.append(dict(collector_install.CARD, installed=installed, version='2.9.0' if installed else None, active=installed, defaultPort=collector_install.DEFAULT_PORT, ip='198.51.100.40', host='vps-frankfurt',
+                        checks=[{'label': 'Debian, Ubuntu, Raspberry Pi OS или другой Linux с systemd (у вас Ubuntu 24.04 LTS)', 'ok': True}, {'label': 'Вход под root', 'ok': True},
+                                {'label': 'Память от 512 МБ (у вас 1987 МБ)', 'ok': True}, {'label': 'Свободно от 300 МБ (у вас 38400 МБ)', 'ok': True},
+                                {'label': 'Пакеты (python3, ssh, ping, curl) поставятся сами через apt', 'ok': True, 'optional': False}]))
         return {'os': 'Ubuntu 24.04 LTS', 'ip': '198.51.100.40', 'plugins': out}
 
     def plugin(self, cfg, pid, op, params):
         progress = params.get('_progress') or (lambda s: None)
+        if pid == 'collector':
+            if op == 'remove':
+                progress('Удаляю (демо)'); time.sleep(.5)
+                self._coll.clear()
+                return {'ok': True, 'log': [], 'removed': 'collector', 'removeSite': params.get('_site'), 'message': 'Сборщик удалён (демо)'}
+            c = params.get('_collector') or {}
+            for s in ('Пакеты: python3, openssh-client, ping, curl', 'Скачиваю Rack Live с главной панели', 'Проверяю, что код запускается', 'Записываю настройки и ключ площадки', 'Запускаю службу'):
+                progress(s + ' (демо)'); time.sleep(.5)
+            self._coll['v'] = '2.9.0'
+            info = {'url': f"http://198.51.100.40:{c.get('port') or 9998}", 'port': c.get('port') or 9998, 'siteId': c.get('siteId'), 'siteName': c.get('siteName'), 'server': c.get('url'),
+                    'version': '2.9.0', 'level': c.get('level') or 'view', 'password': c.get('password'), 't': int(time.time())}
+            return {'ok': True, 'log': [{'cmd': '— демо-установка', 'ok': True, 'msg': ''}], 'info': info, 'message': 'Сборщик установлен (демо)'}
         if pid == 'agents':
             progress('Демо: установка агентов'); time.sleep(.6)
             return {'ok': True, 'log': [{'cmd': '— демо', 'ok': True, 'msg': ''}], 'message': 'Готово (демо)', 'needSetup': False}

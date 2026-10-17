@@ -7,7 +7,7 @@ Transport: paramiko when it is installed (dev machines), otherwise the system ss
 import json, os, random, re, secrets, shlex, shutil, subprocess, tempfile, time
 
 from . import Driver, FIELD_PASS
-from .. import agents, speedtest, vps
+from .. import agents, collector_install, speedtest, vps
 from ..util import DriverError
 
 SCRIPT = r'''
@@ -321,7 +321,61 @@ done; wait; echo @@end'''
             out.append(self._agents_card(cfg))
         except DriverError:
             pass
+        try:
+            out.append(self._collector_card(cfg))
+        except DriverError:
+            pass
         return {'os': st.get('os'), 'ip': st.get('ip'), 'plugins': out}
+
+    # ───────── plugin «Сборщик площадки» (rackd/collector_install.py): a whole Rack Live in collector mode on this server ─────────
+    def _collector_card(self, cfg):
+        s = collector_install.parse_status(self._run(cfg, collector_install.STATUS, 40))
+        mem, free = int(s.get('mem') or 0), int(s.get('free') or 0)
+        have = 'apt' in s or 'python' in s
+        p = dict(collector_install.CARD, installed=bool(s.get('ver')), version=s.get('ver') or None, active=s.get('active') == 'active', defaultPort=collector_install.DEFAULT_PORT,
+                 ip=s.get('ip'), host=s.get('host'))
+        p['checks'] = [{'label': f"Debian, Ubuntu, Raspberry Pi OS или другой Linux с systemd (у вас {s.get('os') or '?'})", 'ok': 'systemd' in s},
+                       {'label': 'Вход под root', 'ok': s.get('uid') == '0'},
+                       {'label': f'Память от 512 МБ (у вас {mem} МБ)', 'ok': mem >= 512},
+                       {'label': f'Свободно от 300 МБ (у вас {free} МБ)', 'ok': free >= 300 or p['installed']},
+                       {'label': 'Пакеты (python3, ssh, ping, curl) поставятся сами через apt' if 'apt' in s else 'Нет apt: python3, ssh, ping и curl нужно поставить заранее',
+                        'ok': have or p['installed'], 'optional': 'apt' not in s}]
+        return p
+
+    def _collector(self, cfg, op, params):
+        progress = params.get('_progress') or (lambda s: None)
+        log = []
+
+        def run(script, timeout):
+            body = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', self._run(cfg, script, timeout=timeout))
+            for l in (x.strip() for x in body.splitlines()):
+                if l and not l.startswith('@@'):
+                    log.append({'cmd': l[:220], 'ok': True, 'msg': ''})
+            if '@@fail' in body:
+                raise DriverError(body.split('@@fail', 1)[1].splitlines()[0].strip())
+            return body
+
+        if op == 'remove':
+            progress('Удаляю службу и программу с сервера')
+            run(collector_install.remove_script(bool(params.get('purge'))), 120)
+            return {'ok': True, 'log': log, 'removed': 'collector', 'removeSite': params.get('_site'), 'message': 'Сборщик удалён с сервера' + (' вместе с площадкой' if params.get('_site') else '')}
+        if op != 'install':
+            raise DriverError('неизвестное действие')
+        c = params.get('_collector')
+        if not c:
+            raise DriverError('нет данных для установки')
+        progress('Ставлю Rack Live на сервер: пакеты, скачивание, запуск (1–4 минуты)')
+        body = run(collector_install.install_script(c['url'], c['token'], c['cfg'], c['port'], c.get('insecure')), 900)
+        if '@@ok' not in body:
+            raise DriverError('установка не завершилась: нет подтверждения от сервера')
+        ver = next((l[6:].strip() for l in body.splitlines() if l.startswith('@@ver ')), '')
+        ip = next((l[5:].strip() for l in body.splitlines() if l.startswith('@@ip ')), '')
+        prev = (cfg.get('panelInfo') or {}).get('collector') or {}
+        host = (cfg.get('host') or ip or '').strip()
+        info = {'url': f"http://{host}:{c['port']}", 'port': c['port'], 'siteId': c['siteId'], 'siteName': c['siteName'], 'server': c['url'], 'version': ver, 'level': c['level'],
+                'password': c['password'] if '@@created 1' in body else prev.get('password'), 't': int(time.time())}
+        return {'ok': True, 'log': log, 'info': info,
+                'message': f"Сборщик установлен: версия {ver}, панель {info['url']}" + ('' if '@@created 1' in body else ' (администратор остался прежним)')}
 
     # ───────── plugin «ИИ-агенты» (rackd/agents.py) ─────────
     def _agents_card(self, cfg):
@@ -434,6 +488,8 @@ done; wait; echo @@end'''
     def plugin(self, cfg, pid, op, params):
         if pid == 'agents':
             return self._agents(cfg, op, params)
+        if pid == 'collector':
+            return self._collector(cfg, op, params)
         meta = next((p for p in vps.CATALOG if p['id'] == pid), None)
         if not meta:
             raise DriverError('неизвестный плагин')
