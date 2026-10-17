@@ -3,12 +3,12 @@ import concurrent.futures, gzip, json, mimetypes, os, queue, re, secrets, select
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cameras, hostnet, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, scenes as scenes_mod, sandbox as sandbox_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, scenes as scenes_mod, sandbox as sandbox_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.9.0'
+VERSION = '2.10.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -61,6 +61,7 @@ class App:
         self.netscan = netscan.NetScan(self, DEMO)
         self.cameras = cameras.Cameras(self, DEMO)
         self.hostnet = hostnet.HostNet(self, DEMO)
+        self.host = hostops.Host(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
         self.community = community.Community(DATA)
         self.updater = updater.Updater(self, VERSION, DEMO)
@@ -388,7 +389,8 @@ class App:
     def collector_prepare(self, d, body, op):
         """plugin «Сборщик площадки»: before the SSH job starts — the site (reused on a repeat install), the address the new installation will call,
         its one-time admin password and config. → body for the driver (it only runs the script and never sees anything it did not get here)."""
-        info = (d.get('panelInfo') or {}).get('collector') or {}
+        pid = 'rcos' if body.get('plugin') == 'rcos' else 'collector'
+        info = (d.get('panelInfo') or {}).get(pid) or {}
         if op == 'remove':
             site = self.sites.get(info.get('siteId') or '')
             return dict(body, _site=site['id'] if site and body.get('removeSite') else None)
@@ -405,9 +407,187 @@ class App:
             self.store.add_event(d['id'], d.get('name'), 'info', f"плагин collector: создана площадка «{site['name']}»")
         pw = secrets.token_urlsafe(12)
         level = str(body.get('level') or 'view')
-        cfg = cinstall.make_config(site['name'], url, site['token'], pw, level, bool(body.get('insecure')))
-        return dict(body, _collector={'url': url, 'token': site['token'], 'cfg': cfg, 'port': port, 'password': pw, 'siteId': site['id'], 'siteName': site['name'],
-                                      'level': level, 'insecure': bool(body.get('insecure'))})
+        cfg = cinstall.make_config(site['name'], url, site['token'], pw, level, bool(body.get('insecure')), dev=pid == 'rcos')
+        out = dict(body, _collector={'url': url, 'token': site['token'], 'cfg': cfg, 'port': port, 'password': pw, 'siteId': site['id'], 'siteName': site['name'],
+                                     'level': level, 'insecure': bool(body.get('insecure'))})
+        if pid == 'rcos':                                  # ReckController OS: time zone, our own access point (the password is made here and shown once the install is done)
+            ap = body.get('ap') is not False
+            out['_rcos'] = {'tz': hostops.check_tz(body['tz']) if body.get('tz') else '', 'ap': ap, 'band': 'a' if body.get('band') == 'a' else 'bg',
+                            'ssid': hostops.check_ssid(body.get('ssid') or hostops.DEFAULT_SSID) if ap else '',
+                            'password': hostops.check_psk(body.get('apPassword') or ''.join(secrets.choice('abcdefghjkmnpqrstuvwxyz23456789') for _ in range(10))) if ap else '',
+                            'address': hostops.check_address(body['address']) if body.get('address') else ''}
+        return out
+
+    # ───────── «Режим разработчика» (rackd/hostops.py): the system of the machine Rack Live runs on ─────────
+    def start_host_job(self, title, fn):
+        """one long operation on the machine at a time (apt does not like two); progress is polled with /api/dev/job"""
+        with self.lock:
+            cur = next((j for j in self.jobs.values() if j.get('device') == '*' and not j['done']), None)
+            if cur:
+                raise ValueError(f"сейчас уже идёт: «{cur['op']}» — дождитесь окончания")
+            job = {'id': secrets.token_hex(6), 'device': '*', 'plugin': 'host', 'op': title, 't': time.time(), 'stage': 'Запуск…', 'done': False}
+            self.jobs = {k: v for k, v in self.jobs.items() if time.time() - v['t'] < 6 * 3600}
+            self.jobs[job['id']] = job
+
+        def run():
+            try:
+                job['result'] = fn(lambda s: job.update(stage=s))
+                self.store.add_event(None, 'Режим разработчика', 'info', f'{title}: готово')
+            except Exception as e:
+                job['error'] = str(e)
+                self.store.add_event(None, 'Режим разработчика', 'warning', f'{title}: {e}'[:300])
+            finally:
+                job['done'], job['dur'] = True, round(time.time() - job['t'])
+        threading.Thread(target=run, daemon=True).start()
+        return job
+
+    def _host_exec(self, script, timeout, progress=None):
+        out = self.host.run(script, timeout, on_line=(lambda l: progress(l[:140]) if progress and l and not l.startswith('@@') else None))
+        ok, why, lines = hostops._result(out)
+        if not ok:
+            raise RuntimeError(why or 'команда не подтвердила выполнение')
+        return out, lines
+
+    def _wifi_guard(self, iface, force):
+        """an adapter that carries the machine's own connection must not be reconfigured by mistake: the panel (and SSH) would vanish with it"""
+        w = self.host.wifi()
+        if not w.get('ok'):
+            raise ValueError(w.get('why') or 'не удалось прочитать Wi-Fi')
+        names = [i['name'] for i in w['interfaces']]
+        if iface not in names:
+            raise ValueError(f'адаптера {iface} нет' + (f'; есть: {", ".join(names)}' if names else ': Wi-Fi-адаптер не найден — сначала «Поставить драйверы»'))
+        if w.get('defaultDev') == iface and not force:
+            raise ValueError('Через этот адаптер идёт связь машины с сетью: если его перенастроить, пропадёт и эта панель. Подключите кабель (Ethernet) или подтвердите, что понимаете риск.')
+        return w
+
+    def dev_op(self, body):
+        """one operation of «Режим разработчика». Quick ones answer at once, long ones return {'job': id}. Raises ValueError (a readable reason) or PermissionError."""
+        if not self.store.cfg['settings'].get('devMode'):
+            raise PermissionError('включите «Режим разработчика» в Настройки → Основные')
+        op = str(body.get('op') or '')
+        kind, why = self.host.target()
+        if kind is None:
+            raise ValueError(why)
+        demo = kind == 'demo'
+        ev = lambda text, lvl='info': self.store.add_event(None, 'Режим разработчика', lvl, text)
+
+        def job(title, fn):
+            if demo:
+                def sim(progress):
+                    for s in ('Проверяю', 'Выполняю', 'Заканчиваю'):
+                        progress(s + ' (демо)')
+                        time.sleep(.5)
+                    return {'ok': True, 'message': title + ' — готово (демо)', 'count': 7, 'packages': ['curl', 'openssl', 'tzdata'], 'reboot': False}
+                return {'ok': True, 'job': self.start_host_job(title, sim)['id']}
+            return {'ok': True, 'job': self.start_host_job(title, fn)['id']}
+
+        if op == 'timezone':
+            tz = hostops.check_tz(body.get('tz'))
+            if demo:
+                return {'ok': True, 'message': f'Часовой пояс: {tz} (демо)', 'tz': tz}
+            _, lines = self._host_exec(hostops.tz_script(tz), 30)
+            ev(f'часовой пояс машины: {tz}')
+            return {'ok': True, 'message': lines[-1] if lines else f'Часовой пояс: {tz}', 'tz': tz}
+        if op == 'ntp':
+            if demo:
+                return {'ok': True, 'message': 'Автосинхронизация времени включена (демо)'}
+            _, lines = self._host_exec(hostops.NTP_SCRIPT, 30)
+            return {'ok': True, 'message': lines[-1] if lines else 'Готово'}
+        if op == 'check':
+            def run(progress):
+                out, _ = self._host_exec(hostops.CHECK_SCRIPT, 300, progress)
+                m = hostops.parse_marks(out)
+                n = int(m.get('count') or 0)
+                return {'ok': True, 'count': n, 'packages': m['pkgs'], 'message': f'Можно обновить пакетов: {n}' if n else 'Всё свежее: обновлять нечего'}
+            return job('Проверка обновлений', run)
+        if op == 'upgrade':
+            def run(progress):
+                out, lines = self._host_exec(hostops.UPGRADE_SCRIPT, 3600, progress)
+                m = hostops.parse_marks(out)
+                return {'ok': True, 'reboot': 'reboot' in m, 'left': int(m.get('left') or 0), 'message': 'Система обновлена' + ('; нужна перезагрузка' if 'reboot' in m else '')}
+            return job('Обновление системы', run)
+        if op == 'docker':
+            def run(progress):
+                out, _ = self._host_exec(hostops.DOCKER_SCRIPT, 1800, progress)
+                m = hostops.parse_marks(out)
+                return {'ok': True, 'version': m.get('docker'), 'message': f"Docker: версия {m.get('docker')}"}
+            return job('Docker', run)
+        if op == 'reboot':
+            if str(body.get('confirm') or '').strip().upper() != 'ПЕРЕЗАГРУЗИТЬ':
+                raise ValueError('чтобы продолжить, впишите слово ПЕРЕЗАГРУЗИТЬ')
+            if demo:
+                return {'ok': True, 'message': 'Перезагрузка (демо): ничего не произошло'}
+            ev('перезагрузка машины по просьбе администратора', 'warning')
+            self._host_exec(hostops.REBOOT_SCRIPT, 20)
+            return {'ok': True, 'message': 'Машина перезагружается: панель вернётся через 1–2 минуты'}
+        if op == 'drivers':
+            def run(progress):
+                w, s = self.host.wifi(), self.host.status()
+                pk = hostops.firmware_packages(w.get('chips') or [], s.get('id') or 'debian')
+                self._host_exec(hostops.drivers_script(pk), 1500, progress)
+                w2 = self.host.wifi()
+                names = [i['name'] for i in w2.get('interfaces', [])]
+                return {'ok': True, 'interfaces': names, 'message': 'NetworkManager и прошивки установлены. ' + (f'Wi-Fi-адаптер: {", ".join(names)}' if names else 'Wi-Fi-адаптер пока не виден — возможно, нужна перезагрузка.')}
+            return job('Драйверы Wi-Fi и NetworkManager', run)
+        if op == 'scan':
+            iface = hostops.check_iface(body.get('iface'))
+            if demo:
+                return {'ok': True, 'networks': hostops.DEMO_NETS}
+            out = self.host.run(hostops.scan_script(iface), 60)
+            text = '\n'.join(l[6:] for l in out.splitlines() if l.startswith('@@net '))
+            nets = hostops.parse_scan(text)
+            if not nets and re.search(r'error|ошибк', text, re.I):
+                raise ValueError(text.strip().splitlines()[0][:200])
+            return {'ok': True, 'networks': nets}
+        if op == 'connect':
+            iface, ssid = hostops.check_iface(body.get('iface')), hostops.check_ssid(body.get('ssid'))
+            psk = hostops.check_psk(body.get('password'), allow_empty=True)
+            if not demo:
+                self._wifi_guard(iface, bool(body.get('force')))
+
+            def run(progress):
+                out, lines = self._host_exec(hostops.connect_script(iface, ssid, psk, bool(body.get('hidden'))), 150, progress)
+                ip = hostops.parse_marks(out).get('ip', '')
+                ev(f'машина подключена к Wi-Fi «{ssid}»: {ip}')
+                return {'ok': True, 'ip': ip, 'message': f'Подключено к «{ssid}»' + (f', адрес {ip}' if ip else '')}
+            return job('Подключение к Wi-Fi', run)
+        if op == 'forget':
+            if demo:
+                return {'ok': True, 'message': 'Сеть забыта (демо)'}
+            self._host_exec(hostops.forget_script(body.get('profile')), 30)
+            return {'ok': True, 'message': 'Сохранённая сеть удалена'}
+        if op == 'ap_on':
+            iface, ssid = hostops.check_iface(body.get('iface')), hostops.check_ssid(body.get('ssid') or hostops.DEFAULT_SSID)
+            psk = hostops.check_psk(body.get('password') or ''.join(secrets.choice('abcdefghjkmnpqrstuvwxyz23456789') for _ in range(10)))
+            band = 'a' if body.get('band') == 'a' else 'bg'
+            if demo:
+                address = hostops.check_address(body.get('address') or hostops.DEFAULT_ADDRESS)
+            else:
+                w = self._wifi_guard(iface, bool(body.get('force')))
+                address = hostops.check_address(body.get('address') or w['suggestAddress'], hostops.nets_of(w['routes'], iface))
+                if not w.get('apCapable') and 'iw' in w and w['iw']:
+                    raise ValueError('Этот Wi-Fi-адаптер не умеет работать точкой доступа (нет режима AP). Нужен другой адаптер, например USB-ключ с поддержкой AP.')
+
+            def run(progress):
+                out, _ = self._host_exec(hostops.ap_on_script(iface, ssid, psk, address, band), 120, progress)
+                ip = hostops.parse_marks(out).get('ip', address)
+                self.store.cfg.setdefault('dev', {})['ap'] = {'iface': iface, 'ssid': ssid, 'password': psk, 'address': address, 'band': band}
+                self.store.save()
+                ev(f'включена Wi-Fi-точка «{ssid}» ({address})')
+                host = ip.split('/')[0]
+                port = os.environ.get('RL_PORT', '8080')
+                return {'ok': True, 'ssid': ssid, 'password': psk, 'address': address, 'url': f'http://{host}:{port}', 'message': f'Точка «{ssid}» работает. С телефона: http://{host}:{port}'}
+            return job('Wi-Fi-точка', run)
+        if op in ('ap_off', 'ap_forget'):
+            if demo:
+                return {'ok': True, 'message': 'Точка выключена (демо)'}
+            _, lines = self._host_exec(hostops.AP_OFF_SCRIPT if op == 'ap_off' else hostops.AP_FORGET_SCRIPT, 40)
+            if op == 'ap_forget':
+                (self.store.cfg.get('dev') or {}).pop('ap', None)
+                self.store.save()
+            ev('Wi-Fi-точка выключена' if op == 'ap_off' else 'настройки Wi-Fi-точки удалены')
+            return {'ok': True, 'message': lines[-1] if lines else 'Готово'}
+        raise ValueError('неизвестная операция')
 
     # ───────── view model ─────────
     def peer_index(self):
@@ -475,7 +655,7 @@ class App:
                 'notifyStatus': self.alerter.status if authed else None,
                 'tgBot': {'username': self.tgbot.username, 'error': self.tgbot.error} if authed else None,
                 'tgLogin': self.tgbot.login_available(), 'loginCodes': self.mfa.login_methods(),
-                'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO,
+                'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO, 'devMode': bool(authed and cfg['settings'].get('devMode')),
                 'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
@@ -1002,6 +1182,21 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(APP.hostnet.view())
+            if path in ('/api/dev/status', '/api/dev/wifi', '/api/dev/zones'):        # «Режим разработчика»: the system of the machine (admin only, and only when the mode is on)
+                if not self.need_admin():
+                    return
+                if not APP.store.cfg['settings'].get('devMode'):
+                    return self.err('включите «Режим разработчика» в Настройки → Основные', 403)
+                try:
+                    if path == '/api/dev/zones':
+                        return self.send({'ok': True, 'zones': APP.host.zones()})
+                    res = APP.host.status() if path == '/api/dev/status' else APP.host.wifi()
+                    if path == '/api/dev/wifi' and res.get('ok'):
+                        res['apConfig'] = (APP.store.cfg.get('dev') or {}).get('ap')    # the password of OUR access point: the administrator types it on the phone
+                        res['port'] = os.environ.get('RL_PORT', '8080')
+                    return self.send(res)
+                except Exception as e:
+                    return self.err(str(e), 502)
             if path == '/api/cameras/recorders':           # Synology Surveillance Station and the like: recorders that live on added devices
                 if not self.need_admin():
                     return
@@ -1020,7 +1215,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
                          'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list() if (m.get('kind') or 'plugin') == 'plugin']
-                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG + [cinstall.CARD]] + comm})
+                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG + [cinstall.RCOS_CARD, cinstall.CARD]] + comm})
             if path == '/api/sites':                        # Инструменты → Удалённые площадки: the sites that report here, agents, and this installation's own collector mode
                 if not self.need_admin():
                     return
@@ -1314,7 +1509,7 @@ class Handler(BaseHTTPRequestHandler):
             # ── admin API ──
             if path == '/api/settings' and method == 'PUT':
                 s = st.cfg['settings']
-                for k in ('title', 'poll', 'publicView', 'showClients', 'hints', 'vlans'):
+                for k in ('title', 'poll', 'publicView', 'showClients', 'hints', 'vlans', 'devMode'):
                     if k in body:
                         s[k] = body[k]
                 if body.get('newPassword'):
@@ -1739,8 +1934,8 @@ class Handler(BaseHTTPRequestHandler):
                     if body.get('op') == 'status':
                         res = dict(drv.plugins(d), ok=True) if hasattr(drv, 'plugins') else {'ok': True, 'plugins': []}
                         for card in res['plugins']:
-                            if card.get('id') == 'collector':                  # what the card needs from this installation: the address to call, the site and its live state
-                                ci = (d.get('panelInfo') or {}).get('collector') or {}
+                            if card.get('id') in ('collector', 'rcos'):         # what the card needs from this installation: the address to call, the site and its live state
+                                ci = (d.get('panelInfo') or {}).get(card['id']) or {}
                                 card['serverUrl'] = (st.cfg.get('apps') or {}).get('url') or ''
                                 card['info'] = ci or None
                                 card['site'] = next((s for s in APP.sites.public() if s['id'] == ci.get('siteId')), None)
@@ -1758,7 +1953,7 @@ class Handler(BaseHTTPRequestHandler):
                             return self.err('в демо-режиме плагины сообщества не запускаются', 400)
                         APP.store.add_event(did, d.get('name'), 'warning', f'{"инструмент" if op == "run" else "плагин"} сообщества {pid[2:]}: ' + {'install': 'установка', 'remove': 'удаление', 'run': 'запуск'}[op] + ' подтверждены администратором')
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, community.Shim(APP.community, drv), pid, op, body)['id']})
-                    if pid == 'collector' and op in ('install', 'remove'):
+                    if pid in ('collector', 'rcos') and op in ('install', 'remove'):
                         try:
                             body = APP.collector_prepare(d, body, op)
                         except ValueError as e:
@@ -1843,6 +2038,20 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path in ('/api/dev/op', '/api/dev/job') and method == 'POST':
+                if not self.need_admin():
+                    return
+                if path == '/api/dev/job':
+                    j = APP.jobs.get(str(body.get('job') or ''))
+                    return self.send({k: v for k, v in j.items() if k != 'device'} if j and j.get('device') == '*' else {'done': True, 'error': 'задача не найдена'})
+                try:
+                    return self.send(APP.dev_op(body))
+                except PermissionError as e:
+                    return self.err(str(e), 403)
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                except Exception as e:
+                    return self.err(str(e), 502)
             if path in ('/api/network/apply', '/api/network/confirm', '/api/network/revert') and method == 'POST':
                 if not self.need_admin():
                     return

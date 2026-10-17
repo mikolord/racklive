@@ -20,7 +20,7 @@ CARD = {'id': 'collector', 'drivers': ['ssh'], 'title': 'Сборщик площ
         'description': 'Ставит на сервер или мини-ПК полный Rack Live в режиме сборщика: он сам сканирует свою сеть, настраивает камеры и присылает всё на эту панель. Открывать порты не нужно.',
         'author': 'Rack Live', 'home': 'https://github.com/mikolord/racklive'}
 
-STATUS = r'''. /etc/os-release 2>/dev/null; echo "@@os $PRETTY_NAME"; echo "@@id $ID"; echo "@@uid $(id -u)"; echo "@@arch $(uname -m)"
+STATUS = r'''. /etc/os-release 2>/dev/null; echo "@@os $PRETTY_NAME"; echo "@@id $ID"; [ -f /etc/racklive/rcos ] && echo "@@rcos 1"; echo "@@uid $(id -u)"; echo "@@arch $(uname -m)"
 echo "@@mem $(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)"
 echo "@@free $(df -Pm /opt 2>/dev/null | awk 'NR==2{print $4}')"
 [ -d /run/systemd/system ] && echo "@@systemd"
@@ -86,12 +86,20 @@ def clean_url(u):
     return u
 
 
-def make_config(name, url, token, password, level, insecure):
+def make_config(name, url, token, password, level, insecure, dev=False):
     """what is written to /var/lib/racklive/config.json of the new installation: the admin password (hash only), the title and the site key"""
     if level not in LEVELS:
         raise ValueError('уровень управления: view, actions или terminal')
-    return {'settings': {'title': name}, 'auth': auth.hash_password(password),
+    return {'settings': dict({'title': name}, **({'devMode': True} if dev else {})), 'auth': auth.hash_password(password),
             'collector': {'url': url, 'token': token, 'enabled': True, 'level': level, 'insecure': bool(insecure)}}
+
+
+RCOS_CARD = {'id': 'rcos', 'drivers': ['ssh'], 'title': 'ReckController OS', 'icon': 'rack', 'kind': 'collector', 'rcos': True,
+             'description': 'ReckController OS — мини-ПК как переносной контроллер для диагностики сетей клиентов: сборщик Rack Live, режим разработчика (время, обновления, Docker), драйверы Wi-Fi и своя точка доступа «ReckController» с постоянным адресом, чтобы зайти на панель с телефона.',
+             'author': 'Rack Live', 'home': 'https://github.com/mikolord/racklive'}
+RCOS_MARK = '/etc/racklive/rcos'
+RCOS_MARK_SCRIPT = f'mkdir -p /etc/racklive && date > {RCOS_MARK} && echo @@ok\n'
+RCOS_UNMARK_SCRIPT = f'rm -f {RCOS_MARK}; rmdir /etc/racklive 2>/dev/null; echo @@ok\n'
 
 
 def install_script(url, token, cfg, port, insecure=False):
@@ -150,6 +158,10 @@ if cur is None:
     cur = new
 else:                                  # a repeat install keeps the administrator and everything else: only the site key is renewed
     cur['collector'] = new['collector']
+    if new.get('settings', {{}}).get('devMode'):                   # ReckController OS: the developer mode and the access point it was installed with
+        cur.setdefault('settings', {{}})['devMode'] = True
+    if (new.get('dev') or {{}}).get('ap'):
+        cur.setdefault('dev', {{}})['ap'] = new['dev']['ap']
 json.dump(cur, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 os.chmod(p, 0o600)
 PYEOF

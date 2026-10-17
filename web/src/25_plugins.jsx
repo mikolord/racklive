@@ -375,6 +375,15 @@ function CollectorInfo({ info, site, title }) {
       <div className="copy-row"><span className="dim">Площадка</span><span className="grow">{info.siteName}{site ? <> · {site.alive ? <span style={{ color: 'var(--green)' }}>на связи</span> : <span className="dim3">{site.last ? 'давно не отвечает' : 'ждём первого сообщения (до минуты)'}</span>}{site.devices ? ` · устройств: ${site.devices}` : ''}</> : null}</span></div>
       {info.version ? <div className="copy-row"><span className="dim">Версия</span><span className="grow">{info.version}</span></div> : null}
       {level ? <div className="copy-row"><span className="dim">Управление отсюда</span><span className="grow">{level}</span></div> : null}
+      {info.tz ? <div className="copy-row"><span className="dim">Часовой пояс</span><span className="grow">{info.tz}</span></div> : null}
+      {info.ap ? <><div className="card-title" style={{ marginTop: 6 }}>Wi-Fi-точка для телефона</div>
+        <div className="row wrap" style={{ gap: 14, alignItems: 'flex-start' }}>
+          <div className="col grow" style={{ gap: 6, minWidth: 220 }}>
+            <CopyRow k="Сеть" v={info.ap.ssid} mono={false} /><CopyRow k="Пароль Wi-Fi" v={info.ap.password} />
+            <div className="copy-row"><span className="dim">Панель</span><span className="grow mono ellipsis">{info.ap.url}</span></div>
+            <div className="dim3" style={{ fontSize: 12.5 }}>Подключите телефон к этой сети (или наведите камеру на QR) и откройте адрес панели в браузере — он постоянный и не зависит от сетей клиентов.</div></div>
+          <div className="col" style={{ alignItems: 'center', gap: 4 }}><QrCode text={`WIFI:T:WPA;S:${wifiEsc(info.ap.ssid)};P:${wifiEsc(info.ap.password)};;`} size={130} /><span className="dim3" style={{ fontSize: 11.5 }}>QR: подключиться к сети</span></div></div></> : null}
+      {(info.warnings || []).length ? <div className="cam-warn">{info.warnings.join('. ')}</div> : null}
       <div className="dim3" style={{ fontSize: 12.5 }}>Откройте панель по ссылке, войдите этим паролем — это обычный Rack Live: «Инструменты → Устройства → Сканировать сеть» найдёт всё в сети площадки, «Камеры» настроит камеры.
         Все найденные устройства сами появятся на этой панели в «Инструменты → Удалённые площадки и агенты».</div>
     </div></div>;
@@ -388,9 +397,11 @@ function CollectorPlugin({ p, device, reload }) {
   const [level, setLevel] = useState('view');
   const [insecure, setInsecure] = useState(false);
   const [dropSite, setDropSite] = useState(false);
+  const [tz, setTz] = useState(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow'; } catch (e) { return 'Europe/Moscow'; } });
+  const [ap, setAp] = useState(true); const [apSsid, setApSsid] = useState('ReckController'); const [apPw, setApPw] = useState('');
   const [job, setJob] = useState(null);
   const [now, setNow] = useState(Date.now());
-  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'collector', ...body } });
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: p.id, ...body } });
   const start = async (op, extra) => {
     try { const r = await call({ op, ...extra }); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000 }); }
     catch (e) { toast(e.message, true); }
@@ -408,20 +419,22 @@ function CollectorPlugin({ p, device, reload }) {
   const running = job && !job.done;
   const install = async () => {
     const local = /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(server.trim());
-    if (!(await confirm(`Поставить Rack Live на «${device.name}» как сборщик площадки «${name.trim()}»? Rack Live по SSH установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели (${server.trim()}), `
-      + `создаст службу racklive на порту ${port} и площадку здесь, на главной панели. Займёт 1–4 минуты.`
+    if (!(await confirm(`Поставить ${p.rcos ? 'ReckController OS' : 'Rack Live'} на «${device.name}» как сборщик площадки «${name.trim()}»? Rack Live по SSH установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели (${server.trim()}), `
+      + `создаст службу racklive на порту ${port} и площадку здесь, на главной панели.`
+      + (p.rcos ? ` Дополнительно: часовой пояс ${tz || 'без изменений'}, драйверы Wi-Fi и NetworkManager${ap ? `, Wi-Fi-точка «${apSsid}» с постоянным адресом` : ''}; включится режим разработчика на самой машине. Кабельная сеть и этот сеанс не затрагиваются.` : '')
+      + ` Займёт ${p.rcos ? '3–8' : '1–4'} минут.`
       + (local ? ' Адрес главной панели — из домашней сети: сервер сможет достучаться до него, только пока он в этой же сети.' : ''), { title: p.title, ok: 'Установить' }))) return;
-    start('install', { name: name.trim(), server: server.trim(), port: +port, level, insecure });
+    start('install', { name: name.trim(), server: server.trim(), port: +port, level, insecure, ...(p.rcos ? { tz: tz.trim(), ap, ssid: apSsid.trim(), apPassword: apPw } : {}) });
   };
   const remove = async () => {
-    if (!(await confirm(`Удалить сборщик с «${device.name}»? Служба и программа будут удалены с сервера, данные останутся в /var/lib/racklive.${dropSite && p.info ? ` Площадка «${p.info.siteName}» и её устройства исчезнут с этой панели.` : ''}`,
+    if (!(await confirm(`Удалить ${p.rcos ? 'ReckController OS (вместе с Wi-Fi-точкой)' : 'сборщик'} с «${device.name}»? Служба и программа будут удалены с сервера, данные останутся в /var/lib/racklive.${dropSite && p.info ? ` Площадка «${p.info.siteName}» и её устройства исчезнут с этой панели.` : ''}`,
       { title: p.title, ok: 'Удалить', danger: true }))) return;
     start('remove', { removeSite: dropSite });
   };
   const info = (job && job.done && job.result && job.result.info) || p.info;
   return <>
     <Checks checks={p.checks || []} />
-    {info && p.installed ? <CollectorInfo info={info} site={p.site} title="Сборщик работает" />
+    {info && p.installed ? <CollectorInfo info={info} site={p.site} title={p.rcos ? 'ReckController OS работает' : 'Сборщик работает'} />
       : p.installed ? <div className="plugin-result"><Icon name="check" size={16} /> Rack Live уже стоит на этом сервере{p.version ? ' (' + p.version + ')' : ''} — не через плагин, поэтому данных для входа здесь нет.</div> : null}
     {!p.installed ? <div className="awg-form">
       <Field label="Название площадки" hint="Так она будет называться на этой панели: например «Квартира Ивановых» или «Офис».">
@@ -432,10 +445,18 @@ function CollectorPlugin({ p, device, reload }) {
         <Field label="Порт панели на сервере"><input className="input mono" style={{ maxWidth: 120 }} value={port} onChange={e => setPort(e.target.value.replace(/\D/g, ''))} /></Field>
         <Field label="Управление отсюда"><select className="input" value={level} onChange={e => setLevel(e.target.value)}>
           {COLLECTOR_LEVELS.map(l => <option key={l[0]} value={l[0]}>{l[1]}</option>)}</select></Field></div>
+      {p.rcos ? <>
+        <Field label="Часовой пояс машины" hint="Например Europe/Moscow, Asia/Tbilisi. Подставлен часовой пояс вашего браузера."><input className="input mono" value={tz} onChange={e => setTz(e.target.value)} /></Field>
+        <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={ap} onChange={setAp} />
+          <div className="grow"><div>Своя Wi-Fi-точка для телефона</div>
+            <div className="dim3" style={{ fontSize: 12.5 }}>Машина раздаёт сеть с постоянным адресом (не пересекается с сетями клиентов): подключаетесь телефоном и открываете её панель. Нужен Wi-Fi-адаптер с режимом точки доступа.</div></div></div>
+        {ap ? <div className="row wrap" style={{ gap: 8 }}>
+          <Field label="Название сети"><input className="input" value={apSsid} onChange={e => setApSsid(e.target.value)} /></Field>
+          <Field label="Пароль Wi-Fi" hint="Пусто — придумается сам и будет показан после установки."><input className="input mono" value={apPw} onChange={e => setApPw(e.target.value)} placeholder="придумается сам" /></Field></div> : null}</> : null}
       <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={insecure} onChange={setInsecure} />
         <div className="grow"><div>Не проверять сертификат этой панели</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Только если адрес выше — https с самоподписанным сертификатом. С обычным доменом оставьте выключенным.</div></div></div>
-      <Btn kind="primary" icon="download" busy={running} disabled={!ready || running} onClick={install} style={{ padding: 12 }}>{running ? 'Устанавливаю…' : 'Установить сборщик'}</Btn>
+      <Btn kind="primary" icon="download" busy={running} disabled={!ready || running} onClick={install} style={{ padding: 12 }}>{running ? 'Устанавливаю…' : p.rcos ? 'Установить ReckController OS' : 'Установить сборщик'}</Btn>
       {!ready && !running ? <div className="dim3" style={{ fontSize: 12.5 }}>{!server.trim() ? 'Укажите адрес этой панели.' : 'Кнопка станет активной, когда все пункты выше будут отмечены зелёным.'}</div> : null}
     </div> : null}
     {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
@@ -443,7 +464,7 @@ function CollectorPlugin({ p, device, reload }) {
     {job && job.done ? (job.error ? <PluginResult r={{ error: job.error, kept: true, log: [] }} />
       : (job.result && (job.result.log || []).length ? <PluginResult r={{ message: `Журнал (${Math.round(job.dur / 60)} мин)`, log: job.result.log, kept: true, up: true }} /> : null)) : null}
     <div className="row wrap">
-      {p.installed ? <Btn kind="danger" icon="trash" disabled={running} onClick={remove}>Удалить сборщик</Btn> : null}
+      {p.installed ? <Btn kind="danger" icon="trash" disabled={running} onClick={remove}>{p.rcos ? 'Удалить ReckController OS' : 'Удалить сборщик'}</Btn> : null}
       {p.installed && p.info ? <div className="row" style={{ gap: 8 }}><Switch on={dropSite} onChange={setDropSite} /><span className="dim" style={{ fontSize: 13 }}>вместе с площадкой на этой панели</span></div> : null}
     </div>
   </>;

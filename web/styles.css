@@ -1401,3 +1401,8 @@ html.app-touch .term-pick, html.app-touch .term-pick * { -webkit-user-select: te
 .term-app .term-box { height: calc(100dvh - 200px); min-height: 240px; }
 html.term-mode, html.term-mode body { height: 100%; overflow: hidden; overscroll-behavior: none; touch-action: manipulation; }
 html.term-mode input, html.term-mode select { font-size: 16px; }
+
+/* «Режим разработчика»: a Wi-Fi network in the list of found ones */
+.li.wifi-net { width: 100%; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; border-radius: 10px; padding: 8px 6px; }
+.li.wifi-net:hover { background: var(--fill, rgba(120,120,128,.12)); }
+.li.wifi-net.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }

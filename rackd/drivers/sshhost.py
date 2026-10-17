@@ -7,7 +7,7 @@ Transport: paramiko when it is installed (dev machines), otherwise the system ss
 import json, os, random, re, secrets, shlex, shutil, subprocess, tempfile, time
 
 from . import Driver, FIELD_PASS
-from .. import agents, collector_install, speedtest, vps
+from .. import agents, collector_install, hostops, speedtest, vps
 from ..util import DriverError
 
 SCRIPT = r'''
@@ -322,17 +322,20 @@ done; wait; echo @@end'''
         except DriverError:
             pass
         try:
-            out.append(self._collector_card(cfg))
+            s = collector_install.parse_status(self._run(cfg, collector_install.STATUS, 40))
+            out.append(self._collector_card(cfg, True, s))
+            if 'rcos' not in s:                                             # a machine turned into ReckController OS has no use for the plain collector card
+                out.append(self._collector_card(cfg, False, s))
         except DriverError:
             pass
         return {'os': st.get('os'), 'ip': st.get('ip'), 'plugins': out}
 
     # ───────── plugin «Сборщик площадки» (rackd/collector_install.py): a whole Rack Live in collector mode on this server ─────────
-    def _collector_card(self, cfg):
-        s = collector_install.parse_status(self._run(cfg, collector_install.STATUS, 40))
+    def _collector_card(self, cfg, rcos=False, s=None):
+        s = s if s is not None else collector_install.parse_status(self._run(cfg, collector_install.STATUS, 40))
         mem, free = int(s.get('mem') or 0), int(s.get('free') or 0)
         have = 'apt' in s or 'python' in s
-        p = dict(collector_install.CARD, installed=bool(s.get('ver')), version=s.get('ver') or None, active=s.get('active') == 'active', defaultPort=collector_install.DEFAULT_PORT,
+        p = dict(collector_install.RCOS_CARD if rcos else collector_install.CARD, installed=bool(s.get('ver')) and (not rcos or 'rcos' in s), version=s.get('ver') or None, active=s.get('active') == 'active', defaultPort=collector_install.DEFAULT_PORT,
                  ip=s.get('ip'), host=s.get('host'))
         p['checks'] = [{'label': f"Debian, Ubuntu, Raspberry Pi OS или другой Linux с systemd (у вас {s.get('os') or '?'})", 'ok': 'systemd' in s},
                        {'label': 'Вход под root', 'ok': s.get('uid') == '0'},
@@ -340,9 +343,11 @@ done; wait; echo @@end'''
                        {'label': f'Свободно от 300 МБ (у вас {free} МБ)', 'ok': free >= 300 or p['installed']},
                        {'label': 'Пакеты (python3, ssh, ping, curl) поставятся сами через apt' if 'apt' in s else 'Нет apt: python3, ssh, ping и curl нужно поставить заранее',
                         'ok': have or p['installed'], 'optional': 'apt' not in s}]
+        if rcos:
+            p['checks'].append({'label': ('Wi-Fi-адаптер виден: ' + s['wifi']) if s.get('wifi') else 'Wi-Fi-адаптер пока не виден — драйверы поставятся при установке; нужен адаптер с режимом точки доступа (AP)', 'ok': bool(s.get('wifi')), 'optional': True})
         return p
 
-    def _collector(self, cfg, op, params):
+    def _collector(self, cfg, op, params, pid='collector'):
         progress = params.get('_progress') or (lambda s: None)
         log = []
 
@@ -357,25 +362,70 @@ done; wait; echo @@end'''
 
         if op == 'remove':
             progress('Удаляю службу и программу с сервера')
+            if pid == 'rcos':
+                try:
+                    run(hostops.AP_FORGET_SCRIPT, 40)
+                except DriverError:
+                    pass
             run(collector_install.remove_script(bool(params.get('purge'))), 120)
-            return {'ok': True, 'log': log, 'removed': 'collector', 'removeSite': params.get('_site'), 'message': 'Сборщик удалён с сервера' + (' вместе с площадкой' if params.get('_site') else '')}
+            if pid == 'rcos':
+                run(collector_install.RCOS_UNMARK_SCRIPT, 20)
+            return {'ok': True, 'log': log, 'removed': pid, 'removeSite': params.get('_site'), 'message': ('ReckController OS' if pid == 'rcos' else 'Сборщик') + ' удалён с сервера' + (' вместе с площадкой' if params.get('_site') else '')}
         if op != 'install':
             raise DriverError('неизвестное действие')
         c = params.get('_collector')
         if not c:
             raise DriverError('нет данных для установки')
+        rc, warnings, ap_info = (params.get('_rcos') if pid == 'rcos' else None), [], None
+        if rc:                                                              # ReckController OS: time zone, Wi-Fi drivers, our own access point — before the collector, whose config remembers the point
+            if rc.get('tz'):
+                progress(f"Часовой пояс: {rc['tz']}")
+                try:
+                    run(hostops.tz_script(rc['tz']), 40)
+                except (DriverError, ValueError) as e:
+                    warnings.append(f'часовой пояс: {e}')
+            progress('Драйверы Wi-Fi и NetworkManager (2–5 минут)')
+            try:
+                w = hostops.parse_wifi(self._run(cfg, hostops.WIFI_STATUS, 40))
+                osid = collector_install.parse_status(self._run(cfg, collector_install.STATUS, 40)).get('id') or 'debian'
+                run(hostops.drivers_script(hostops.firmware_packages(w['chips'], osid)), 1500)
+                w = hostops.parse_wifi(self._run(cfg, hostops.WIFI_STATUS, 40))
+                if rc.get('ap'):
+                    ifaces = [i['name'] for i in w['interfaces']]
+                    if not ifaces:
+                        warnings.append('Wi-Fi-адаптер не виден системе: точка не создана (после перезагрузки её можно создать в Настройки → Сеть → Wi-Fi)')
+                    elif w.get('defaultDev') == ifaces[0]:
+                        warnings.append(f'через Wi-Fi-адаптер {ifaces[0]} идёт связь машины — точка не создана, чтобы не отрезать её от сети')
+                    elif w.get('iw') and not w.get('apCapable'):
+                        warnings.append('Wi-Fi-адаптер не умеет работать точкой доступа (нет режима AP) — нужен другой адаптер')
+                    else:
+                        nets = hostops.nets_of(w['routes'], ifaces[0])
+                        address = hostops.check_address(rc.get('address') or hostops.suggest_address(nets), nets)
+                        progress(f"Wi-Fi-точка «{rc['ssid']}» ({address})")
+                        run(hostops.ap_on_script(ifaces[0], rc['ssid'], rc['password'], address, rc.get('band') or 'bg'), 150)
+                        ap_info = {'iface': ifaces[0], 'ssid': rc['ssid'], 'password': rc['password'], 'address': address, 'band': rc.get('band') or 'bg'}
+                        c['cfg'].setdefault('dev', {})['ap'] = ap_info
+            except (DriverError, ValueError) as e:
+                warnings.append(f'Wi-Fi: {e}')
         progress('Ставлю Rack Live на сервер: пакеты, скачивание, запуск (1–4 минуты)')
         body = run(collector_install.install_script(c['url'], c['token'], c['cfg'], c['port'], c.get('insecure')), 900)
         if '@@ok' not in body:
             raise DriverError('установка не завершилась: нет подтверждения от сервера')
         ver = next((l[6:].strip() for l in body.splitlines() if l.startswith('@@ver ')), '')
         ip = next((l[5:].strip() for l in body.splitlines() if l.startswith('@@ip ')), '')
-        prev = (cfg.get('panelInfo') or {}).get('collector') or {}
+        if rc:
+            run(collector_install.RCOS_MARK_SCRIPT, 20)
+        prev = (cfg.get('panelInfo') or {}).get(pid) or {}
         host = (cfg.get('host') or ip or '').strip()
         info = {'url': f"http://{host}:{c['port']}", 'port': c['port'], 'siteId': c['siteId'], 'siteName': c['siteName'], 'server': c['url'], 'version': ver, 'level': c['level'],
                 'password': c['password'] if '@@created 1' in body else prev.get('password'), 't': int(time.time())}
+        if rc:
+            info.update(rcos=True, warnings=warnings, tz=rc.get('tz') or None)
+            if ap_info:
+                info['ap'] = dict(ap_info, url=f"http://{ap_info['address'].split('/')[0]}:{c['port']}")
         return {'ok': True, 'log': log, 'info': info,
-                'message': f"Сборщик установлен: версия {ver}, панель {info['url']}" + ('' if '@@created 1' in body else ' (администратор остался прежним)')}
+                'message': (f"ReckController OS готов: панель {info['url']}" + (f", точка «{ap_info['ssid']}», панель в ней {info['ap']['url']}" if ap_info else '') if rc else f"Сборщик установлен: версия {ver}, панель {info['url']}")
+                + ('' if '@@created 1' in body else ' (администратор остался прежним)') + (f". Замечания: {'; '.join(warnings)}" if warnings else '')}
 
     # ───────── plugin «ИИ-агенты» (rackd/agents.py) ─────────
     def _agents_card(self, cfg):
@@ -488,8 +538,8 @@ done; wait; echo @@end'''
     def plugin(self, cfg, pid, op, params):
         if pid == 'agents':
             return self._agents(cfg, op, params)
-        if pid == 'collector':
-            return self._collector(cfg, op, params)
+        if pid in ('collector', 'rcos'):
+            return self._collector(cfg, op, params, pid)
         meta = next((p for p in vps.CATALOG if p['id'] == pid), None)
         if not meta:
             raise DriverError('неизвестный плагин')

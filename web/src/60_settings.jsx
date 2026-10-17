@@ -158,6 +158,7 @@ const SET_SECTIONS = [
   { id: 'apps', label: 'Приложения', icon: 'phone', color: '#007aff', desc: 'Frank и тест скорости на экран телефона, доменное имя',
     state: d => (d.apps || {}).url ? d.apps.url.replace(/^https:\/\//, '') : 'установка на телефон' },
   { id: 'network', label: 'Сеть', icon: 'globe', color: '#30b0c7', desc: 'Сеть машины, где работает Rack Live: адреса, DHCP или постоянный адрес', state: () => location.hostname },
+  { id: 'system', label: 'Система', icon: 'server', color: '#636366', need: 'devMode', desc: 'Режим разработчика: время, обновления, Docker, перезагрузка машины', state: () => 'режим разработчика' },
   { id: 'terminal', label: 'Терминал', icon: 'terminal', color: '#3a3a3c', desc: 'Командная строка машины, где работает Rack Live' , state: () => '' },
   { id: 'access', label: 'Доступ', icon: 'lock', color: '#34c759', desc: 'Пароль, второй фактор, устройства с доступом' },
   { id: 'backup', label: 'Резервная копия', icon: 'download', color: '#ff9500', desc: 'Скачать все настройки или восстановить из файла' },
@@ -171,7 +172,7 @@ function useMedia(q) {
 }
 
 /* the phone list: grouped cells like iOS Settings — a coloured icon, the name, a short status, a chevron */
-const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps', 'network', 'terminal'], ['access', 'backup'], ['about']];
+const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps', 'network', 'system', 'terminal'], ['access', 'backup'], ['about']];
 function IosSettingsList({ secs, data, onPick }) {
   return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
     return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
@@ -187,6 +188,7 @@ function SettingsView() {
   const fileRef = useRef(null);
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
   const save = async () => { try { await api('/api/settings', { method: 'PUT', body: { title: s.title, poll: +s.poll, publicView: s.publicView, showClients: s.showClients, hints: s.hints !== false, vlans: s.vlans } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
+  const toggleDev = async v => { try { await api('/api/settings', { method: 'PUT', body: { devMode: v } }); toast(v ? 'Режим разработчика включён: появились «Система» и Wi-Fi в «Сеть»' : 'Режим разработчика выключен'); refresh(); } catch (e) { toast(e.message, true); } };
   const [hiddenN, setHiddenN] = useState(() => hiddenHints().length);
   const [vlanOpen, setVlanOpen] = useState(() => lsGet('rl_vlan_open', '') === '1');      // collapsed by default
   const toggleVlan = v => { setVlanOpen(v); lsSet('rl_vlan_open', v ? '1' : ''); };
@@ -248,6 +250,11 @@ function SettingsView() {
         <Btn kind="primary" onClick={save}>Сохранить</Btn>
       </div>
     </Card>
+    <Card title="Режим разработчика">
+      <div className="row"><Switch on={!!data.devMode} onChange={toggleDev} /><div className="grow"><div>Режим разработчика</div>
+        <div className="dim3" style={{ fontSize: 12.5, lineHeight: 1.45 }}>Открывает раздел «Система» (часовой пояс, обновление пакетов и Docker, перезагрузка) и вкладку Wi-Fi в «Сеть»: драйверы, подключение к сети и своя точка доступа с постоянным адресом.
+          Всё это меняет настоящую систему машины, где работает Rack Live, — включайте, если он стоит на мини-ПК с Linux (Debian, Ubuntu, Raspberry Pi OS), например как «ReckController OS». Включается сразу, сохранять не нужно.</div></div></div>
+    </Card>
     <Card title="Приветственное обучение">
       <div className="row" style={{ gap: 14, alignItems: 'center' }}>
         <div className="tour-card-eye"><FrankHero size={64} still /></div>
@@ -285,7 +292,8 @@ function SettingsView() {
     <SessionPolicyCard />
     <Card title="Сеанс"><div className="dim" style={{ fontSize: 13.5, marginBottom: 12 }}>Выйти из Rack Live в этом браузере. Вход — по паролю (и второму фактору) или через Telegram.</div>
       <Btn icon="logout" onClick={logout}>Выйти</Btn></Card></> : null}
-    {cur.id === 'network' ? <NetworkCard /> : null}
+    {cur.id === 'network' ? <NetworkTabs /> : null}
+    {cur.id === 'system' ? <DevSystem /> : null}
     {cur.id === 'terminal' ? <TerminalCard /> : null}
     {cur.id === 'backup' ? <Card title="Резервная копия и импорт">
       <div className="col" style={{ gap: 12 }}>

@@ -165,5 +165,63 @@ ok('карточка: проверки зелёные, не установлен
 card = Fake('@@os Alpine\n@@uid 1000\n@@mem 200\n@@free 10\n@@end\n')._collector_card({})
 ok('карточка: не root, мало памяти, нет systemd — красные пункты', [x['ok'] for x in card['checks'][:4]] == [False, False, False, False], card['checks'])
 
+# ReckController OS: time zone → Wi-Fi drivers → our access point → the collector (whose config remembers the point) → the marker
+from rackd import hostops
+import base64
+
+
+def wifi_reply(ifaces=True, default='enp2s0', ap=True):
+    return ((f'@@nm active\n@@if wlp3s0|aa:bb:cc:dd:ee:ff|iwlwifi|up\n' if ifaces else '@@nm none\n') + f'@@apmodes {2 if ap else 0}\n@@iw 1\n@@pci 8086 24fb 0000:03:00.0\n@@defdev {default}\n'
+            '@@route 192.168.1.0/24 enp2s0\n@@end\n')
+
+
+class FakeR(SSHHost):
+    def __init__(self, **kw):
+        self.ran, self.kw = [], kw
+
+    def _run(self, cfg, script, timeout=30, remote='sh -s'):
+        self.ran.append(script)
+        if script is hostops.WIFI_STATUS:
+            return wifi_reply(**self.kw)
+        if script is ci.STATUS:
+            return '@@id debian\n@@end\n'
+        return '@@created 1\n@@ver 2.9.0\n@@ip 192.168.1.50\n@@ok\n'
+
+
+def rc_params(**over):
+    cfg = ci.make_config('Мини-ПК', URL, TOKEN, 'pw-Secret-123', 'view', False, dev=True)
+    p = {'_collector': {'url': URL, 'token': TOKEN, 'cfg': cfg, 'port': 9998, 'password': 'pw-Secret-123', 'siteId': 's1', 'siteName': 'Мини-ПК', 'level': 'view', 'insecure': False},
+         '_rcos': dict({'tz': 'Europe/Moscow', 'ap': True, 'band': 'bg', 'ssid': 'ReckController', 'password': 'wifi-pass-12', 'address': ''}, **over), '_progress': lambda s: None}
+    return p
+
+
+fr = FakeR()
+res = fr.plugin({'host': '192.168.1.50'}, 'rcos', 'install', rc_params())
+joined = '\n'.join(fr.ran)
+ok('ReckController OS: готово, есть панель и точка с постоянным адресом', res['ok'] and res['info']['rcos'] and res['info']['ap']['ssid'] == 'ReckController' and res['info']['ap']['url'] == 'http://10.77.0.1:9998' and not res['info']['warnings'], res)
+ok('порядок: часовой пояс → драйверы → точка → сборщик → метка', [i for i, k in enumerate(('timedatectl set-timezone', 'network-manager', 'mode=ap' if False else 'rl-hotspot.nmconnection', 'racklive-installer', 'date > /etc/racklive/rcos')) if k in joined] == [0, 1, 2, 3, 4]
+   and joined.index('timedatectl set-timezone') < joined.index('network-manager') < joined.index('rl-hotspot.nmconnection') < joined.index('racklive-installer') < joined.index('date > /etc/racklive/rcos'))
+inst = next(s for s in fr.ran if 'racklive-installer' in s)
+sent = json.loads(base64.b64decode(re.search(r"RL_CFG='?([A-Za-z0-9+/=]+)'?;", inst).group(1)))
+ok('в конфиг новой машины ушли режим разработчика и точка (пароль точки там нужен, чтобы показать его в панели)', sent['settings'].get('devMode') is True and sent['dev']['ap']['ssid'] == 'ReckController' and sent['dev']['ap']['address'] == '10.77.0.1/24', sent)
+ok('пароль точки не в тексте скриптов', 'wifi-pass-12' not in joined)
+ok('прошивка под Intel-чип выбрана', 'firmware-iwlwifi' in joined)
+
+res = FakeR(ifaces=False).plugin({'host': 'h'}, 'rcos', 'install', rc_params())
+ok('нет Wi-Fi-адаптера: установка идёт дальше, точки нет, причина названа', res['ok'] and 'ap' not in res['info'] and any('адаптер' in w for w in res['info']['warnings']), res['info'])
+res = FakeR(default='wlp3s0').plugin({'host': 'h'}, 'rcos', 'install', rc_params())
+ok('связь машины идёт по Wi-Fi: точку не создаём, чтобы не отрезать её', res['ok'] and 'ap' not in res['info'] and any('связь' in w for w in res['info']['warnings']), res['info'])
+res = FakeR(ap=False).plugin({'host': 'h'}, 'rcos', 'install', rc_params())
+ok('адаптер без режима точки: честное замечание', res['ok'] and 'ap' not in res['info'] and any('AP' in w for w in res['info']['warnings']), res['info'])
+res = FakeR().plugin({'host': 'h'}, 'rcos', 'install', rc_params(ap=False, tz=''))
+ok('без точки и часового пояса: только драйверы и сборщик', res['ok'] and 'ap' not in res['info'] and not res['info']['warnings'], res['info'])
+fr = FakeR()
+fr.plugin({'host': 'h'}, 'rcos', 'remove', {'_site': 's1', '_progress': lambda s: None})
+ok('удаление ReckController OS: точка, сборщик, метка', '\n'.join(fr.ran).index('rl-hotspot') < '\n'.join(fr.ran).index('systemctl disable') < '\n'.join(fr.ran).index('rm -f /etc/racklive/rcos'))
+card = FakeR()._collector_card({}, True, ci.parse_status('@@os Debian\n@@uid 0\n@@mem 3800\n@@free 51000\n@@systemd\n@@python 3.13\n@@apt\n@@ver 2.9.0\n@@rcos 1\n@@wifi wlp3s0\n@@end\n'))
+ok('карточка ReckController OS: установлена по метке, Wi-Fi-адаптер виден', card['id'] == 'rcos' and card['installed'] and card['checks'][-1]['ok'], card)
+card = FakeR()._collector_card({}, True, ci.parse_status('@@os Debian\n@@uid 0\n@@mem 3800\n@@free 51000\n@@systemd\n@@apt\n@@ver 2.9.0\n@@end\n'))
+ok('Rack Live стоит, но не как ReckController OS: карточка «не установлена»', card['id'] == 'rcos' and not card['installed'])
+
 print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

@@ -473,7 +473,12 @@ class DemoServer(DemoBase):
         out.append(a)
         from .. import collector_install
         installed = bool(self._coll)
-        out.append(dict(collector_install.CARD, installed=installed, version='2.9.0' if installed else None, active=installed, defaultPort=collector_install.DEFAULT_PORT, ip='198.51.100.40', host='vps-frankfurt',
+        out.append(dict(collector_install.RCOS_CARD, installed=installed and bool(self._coll.get('rcos')), version='2.9.0' if installed else None, active=installed, defaultPort=collector_install.DEFAULT_PORT, ip='198.51.100.40', host='vps-frankfurt',
+                        checks=[{'label': 'Debian, Ubuntu, Raspberry Pi OS или другой Linux с systemd (у вас Ubuntu 24.04 LTS)', 'ok': True}, {'label': 'Вход под root', 'ok': True},
+                                {'label': 'Память от 512 МБ (у вас 1987 МБ)', 'ok': True}, {'label': 'Свободно от 300 МБ (у вас 38400 МБ)', 'ok': True},
+                                {'label': 'Пакеты (python3, ssh, ping, curl) поставятся сами через apt', 'ok': True, 'optional': False},
+                                {'label': 'Wi-Fi-адаптер виден: wlp3s0', 'ok': True, 'optional': True}]))
+        out.append(dict(collector_install.CARD, installed=installed and not self._coll.get('rcos'), version='2.9.0' if installed else None, active=installed, defaultPort=collector_install.DEFAULT_PORT, ip='198.51.100.40', host='vps-frankfurt',
                         checks=[{'label': 'Debian, Ubuntu, Raspberry Pi OS или другой Linux с systemd (у вас Ubuntu 24.04 LTS)', 'ok': True}, {'label': 'Вход под root', 'ok': True},
                                 {'label': 'Память от 512 МБ (у вас 1987 МБ)', 'ok': True}, {'label': 'Свободно от 300 МБ (у вас 38400 МБ)', 'ok': True},
                                 {'label': 'Пакеты (python3, ssh, ping, curl) поставятся сами через apt', 'ok': True, 'optional': False}]))
@@ -481,7 +486,7 @@ class DemoServer(DemoBase):
 
     def plugin(self, cfg, pid, op, params):
         progress = params.get('_progress') or (lambda s: None)
-        if pid == 'collector':
+        if pid in ('collector', 'rcos'):
             if op == 'remove':
                 progress('Удаляю (демо)'); time.sleep(.5)
                 self._coll.clear()
@@ -490,9 +495,15 @@ class DemoServer(DemoBase):
             for s in ('Пакеты: python3, openssh-client, ping, curl', 'Скачиваю Rack Live с главной панели', 'Проверяю, что код запускается', 'Записываю настройки и ключ площадки', 'Запускаю службу'):
                 progress(s + ' (демо)'); time.sleep(.5)
             self._coll['v'] = '2.9.0'
+            self._coll['rcos'] = pid == 'rcos'
             info = {'url': f"http://198.51.100.40:{c.get('port') or 9998}", 'port': c.get('port') or 9998, 'siteId': c.get('siteId'), 'siteName': c.get('siteName'), 'server': c.get('url'),
                     'version': '2.9.0', 'level': c.get('level') or 'view', 'password': c.get('password'), 't': int(time.time())}
-            return {'ok': True, 'log': [{'cmd': '— демо-установка', 'ok': True, 'msg': ''}], 'info': info, 'message': 'Сборщик установлен (демо)'}
+            rc = params.get('_rcos')
+            if pid == 'rcos' and rc:
+                info.update(rcos=True, warnings=[], tz=rc.get('tz') or None)
+                if rc.get('ap'):
+                    info['ap'] = {'ssid': rc['ssid'], 'password': rc['password'], 'address': '10.77.0.1/24', 'url': f"http://10.77.0.1:{info['port']}"}
+            return {'ok': True, 'log': [{'cmd': '— демо-установка', 'ok': True, 'msg': ''}], 'info': info, 'message': ('ReckController OS установлен (демо)' if pid == 'rcos' else 'Сборщик установлен (демо)')}
         if pid == 'agents':
             progress('Демо: установка агентов'); time.sleep(.6)
             return {'ok': True, 'log': [{'cmd': '— демо', 'ok': True, 'msg': ''}], 'message': 'Готово (демо)', 'needSetup': False}

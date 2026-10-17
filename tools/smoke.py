@@ -379,7 +379,7 @@ def main():
         OP({'plugin': 'modem', 'op': 'remove', 'profile': 'mm'})
         # VPS panels: DNS check, background install job with stages, credentials kept as a secret
         VP = lambda body: api(f"/api/devices/{vps['id']}/plugins", body, 'POST')
-        check('vps plugins: status', [p['id'] for p in VP({'op': 'status'})['plugins']] == ['3xui', 'remnawave', 'agents', 'collector'])
+        check('vps plugins: status', [p['id'] for p in VP({'op': 'status'})['plugins']] == ['3xui', 'remnawave', 'agents', 'rcos', 'collector'])
         # «Сборщик площадки»: the site is made before the job, the new machine downloads this code with the site key, the card shows the site, remove drops it on request
         try:
             VP({'plugin': 'collector', 'op': 'install', 'server': 'not-an-address'}); bad = False
@@ -431,7 +431,61 @@ def main():
         dv = next(d for d in api('/api/state')['devices'] if d['id'] == vps['id'])
         check('vps: credentials not exposed in /api/state', 'panelInfo' not in dv and dv.get('panelInfoSet'))
         check('vps: credentials shown in plugin status', (next(p for p in VP({'op': 'status'})['plugins'] if p['id'] == '3xui').get('info') or {}).get('password'))
-        # security advisor: findings, a fix, «это нормально»
+        # «Режим разработчика» (rackd/hostops.py): closed until the switch is on, then the system of the machine (simulated in the demo)
+        def HTTP(path, body=None, method=None):
+            try:
+                return 200, api(path, body, method) if body is not None or method else api(path)
+            except urllib.error.HTTPError as e:
+                return e.code, {}
+        check('devmode: closed while the switch is off', HTTP('/api/dev/status')[0] == 403 and HTTP('/api/dev/op', {'op': 'timezone', 'tz': 'Europe/Berlin'}, 'POST')[0] == 403)
+        api('/api/settings', {'devMode': True}, 'PUT')
+        check('devmode: the switch shows in the state', api('/api/state').get('devMode') is True)
+        dv = api('/api/dev/status')
+        check('devmode: system status (demo)', dv['ok'] and dv['supported'] and dv['tz'] and dv['docker']['version'] and dv['upgradable'] is not None, json.dumps(dv, ensure_ascii=False)[:300])
+        dw = api('/api/dev/wifi')
+        check('devmode: wifi status, adapter, our access point', dw['ok'] and dw['interfaces'] and dw['hotspot']['on'] and dw['suggestAddress'], json.dumps(dw, ensure_ascii=False)[:300])
+        check('devmode: time zones list', 'Europe/Moscow' in api('/api/dev/zones')['zones'])
+        DV = lambda body: api('/api/dev/op', body, 'POST')
+        check('devmode: time zone changes', 'Europe/Berlin' in DV({'op': 'timezone', 'tz': 'Europe/Berlin'})['message'])
+        check('devmode: a bad time zone is refused', HTTP('/api/dev/op', {'op': 'timezone', 'tz': 'Europe/Moscow; reboot'}, 'POST')[0] == 400)
+        check('devmode: reboot needs the word', HTTP('/api/dev/op', {'op': 'reboot'}, 'POST')[0] == 400 and 'демо' in DV({'op': 'reboot', 'confirm': 'перезагрузить'})['message'])
+
+        def dev_job(body):
+            jid = DV(body)['job']
+            for _ in range(40):
+                j = api('/api/dev/job', {'job': jid}, 'POST')
+                if j.get('done'):
+                    return j
+                time.sleep(.3)
+            return j
+        j = dev_job({'op': 'check'})
+        check('devmode: update check is a job with a result', j.get('done') and not j.get('error') and j['result']['count'] is not None, json.dumps(j, ensure_ascii=False)[:300])
+        j = dev_job({'op': 'ap_on', 'iface': 'wlp3s0', 'ssid': 'ReckController', 'password': 'pass-12345', 'address': '10.77.0.1/24'})
+        check('devmode: access point job', j.get('done') and not j.get('error'), json.dumps(j, ensure_ascii=False)[:300])
+        check('devmode: a public address for the access point is refused', HTTP('/api/dev/op', {'op': 'ap_on', 'iface': 'wlp3s0', 'ssid': 'X', 'address': '8.8.8.1/24'}, 'POST')[0] == 400)
+        check('devmode: a bad adapter name is refused', HTTP('/api/dev/op', {'op': 'scan', 'iface': 'wlan0; id'}, 'POST')[0] == 400)
+        check('devmode: scan finds networks', len(DV({'op': 'scan', 'iface': 'wlp3s0'})['networks']) >= 2)
+        # ReckController OS = collector + developer mode + Wi-Fi access point, in one plugin
+        n_sites = len(api('/api/sites')['sites'])
+        jid = VP({'plugin': 'rcos', 'op': 'install', 'name': 'Мини-ПК Теста', 'server': 'https://racklive.example.com', 'port': 9998, 'level': 'view', 'tz': 'Europe/Moscow', 'ap': True, 'ssid': 'ReckController', 'apPassword': 'pass-12345'})['job']
+        for _ in range(40):
+            j = VP({'plugin': 'rcos', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        rinfo = (j.get('result') or {}).get('info') or {}
+        check('rcos: install gives the panel, the password and the access point', j.get('done') and not j.get('error') and rinfo.get('rcos') and rinfo.get('password') and (rinfo.get('ap') or {}).get('ssid') == 'ReckController' and (rinfo['ap'].get('url') or '').startswith('http://10.'), json.dumps(j, ensure_ascii=False)[:300])
+        check('rcos: the site was created', len(api('/api/sites')['sites']) == n_sites + 1)
+        rcard = next(p for p in VP({'op': 'status'})['plugins'] if p['id'] == 'rcos')
+        check('rcos: the card is installed and shows the site; the plain collector card is not', rcard['installed'] and rcard['site'] and not next(p for p in VP({'op': 'status'})['plugins'] if p['id'] == 'collector')['installed'])
+        check('rcos: a bad password for the point is refused', HTTP(f"/api/devices/{vps['id']}/plugins", {'plugin': 'rcos', 'op': 'install', 'server': 'https://racklive.example.com', 'apPassword': 'short'}, 'POST')[0] == 400)
+        jid = VP({'plugin': 'rcos', 'op': 'remove', 'removeSite': True})['job']
+        for _ in range(40):
+            j = VP({'plugin': 'rcos', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        check('rcos: remove drops the site when asked', j.get('done') and not j.get('error') and len(api('/api/sites')['sites']) == n_sites, json.dumps(j, ensure_ascii=False)[:300])        # security advisor: findings, a fix, «это нормально»
         sec = api('/api/state')['security']
         rdp = next((f for f in sec['findings'] if f['id'].endswith(':tcp:3389')), None)
         check('security: findings and score', rdp and rdp['level'] == 'bad' and rdp['fix'] and sec['score'] < 100, json.dumps(sec, ensure_ascii=False)[:300])
@@ -555,6 +609,8 @@ def main():
                  'VPS · Remnawave': f'?device={dev["demo_server"]}&tab=plugins&plugin=remnawave',
                  'VPS · ИИ-агенты': f'?device={dev["demo_server"]}&tab=plugins&plugin=agents',
                  'VPS · Сборщик площадки': f'?device={dev["demo_server"]}&tab=plugins&plugin=collector',
+                 'VPS · ReckController OS': f'?device={dev["demo_server"]}&tab=plugins&plugin=rcos',
+                 'Настройки · Система': '?section=system#settings', 'Настройки · Wi-Fi': '?section=network&nettab=wifi#settings', 'Настройки · режим разработчика': '?section=general#settings',
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
@@ -687,6 +743,14 @@ def main():
                 check('площадки: список, агенты, режим сборщика', 'Удалённые площадки' in out or 'Площадки' in out, '') ; check('площадки: видна демо-площадка и «Эта установка — сборщик»', 'Склад (филиал)' in out and 'Эта установка' in out and 'Добавить площадку' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'VPS · Сборщик площадки':
                 check('плагин «Сборщик площадки»: название площадки, адрес панели, порт, управление, кнопка', 'Название площадки' in out and 'Адрес этой панели' in out and 'Порт панели на сервере' in out and 'Управление отсюда' in out and 'Установить сборщик' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+            if name == 'VPS · ReckController OS':
+                check('плагин ReckController OS: часовой пояс, точка, название и пароль Wi-Fi, кнопка', 'ReckController OS' in out and 'Часовой пояс машины' in out and 'Своя Wi-Fi-точка для телефона' in out and 'Пароль Wi-Fi' in out and 'Установить ReckController OS' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+            if name == 'Настройки · Система':
+                check('раздел «Система»: время, обновления, Docker', 'Время и часовой пояс' in out and 'Обновления системы' in out and 'Docker' in out and 'Проверить обновления' in out and 'Перезагрузить машину' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+            if name == 'Настройки · Wi-Fi':
+                check('«Сеть → Wi-Fi»: адаптеры, своя точка, подключение к сети', 'Адаптеры' in out and 'Своя Wi-Fi-точка' in out and 'Подключение к Wi-Fi' in out and 'Искать сети' in out and 'ReckController' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+            if name == 'Настройки · режим разработчика':
+                check('тумблер «Режим разработчика» в основных настройках', 'Режим разработчика' in out and 'Система' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Карта — ONT':
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':
