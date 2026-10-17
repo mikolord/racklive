@@ -1,5 +1,5 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, threading, time, traceback, urllib.parse, urllib.request
+import concurrent.futures, gzip, json, mimetypes, os, re, secrets, signal, socket, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -40,6 +40,7 @@ class App:
         self.running = set()
         self.last_start = {}
         self.retried = set()
+        self.fails = {}                # device id → polls in a row that got no answer (one lost reply is not an outage)
         self._view_cache = {}
         self.alerter = alerts.Alerter(self.store)
         self.speed = speedtest.SpeedTests(self.store)
@@ -85,13 +86,52 @@ class App:
                 traceback.print_exc()
         st['updated'] = time.time()
         st['durationMs'] = round((time.time() - t) * 1000)
+        if st.get('status') == 'offline':
+            st = self._judge_silence(d, st)
+            if st is None:                                 # not yet: keep what was known, the next poll decides
+                return self.states.get(d['id']) or {}
+        else:
+            self.fails.pop(d['id'], None)
         self.apply_state(d, st)
+        return st
+
+    @staticmethod
+    def _alive(d):
+        """does the device answer on any usual port at all? (a refused connection is an answer too)"""
+        host = re.sub(r'^\w+://|[:/].*$', '', str(d.get('host') or ''))
+        if not host:
+            return False
+        for p in (80, 443, 22, 222, 23, 53, 8080, 5000, 8123):
+            try:
+                with socket.create_connection((host, p), 1.2):
+                    return True
+            except ConnectionRefusedError:
+                return True
+            except OSError:
+                continue
+        return False
+
+    def _judge_silence(self, d, st):
+        """A poll got no answer. Three things keep the panel honest:
+        1. one lost reply is not an outage — the status flips only after 3 polls in a row (a wrong password is judged at once);
+        2. a device that still answers on other ports is NOT «нет связи»: it is on, but does not let Rack Live in (a router may block an address for some minutes after a port scan) → «требует внимания» with the reason;
+        3. only a device that is silent everywhere is shown as offline."""
+        err = st.get('error') or ''
+        n = self.fails[d['id']] = self.fails.get(d['id'], 0) + 1
+        transient = not re.search(r'логин|парол|auth|401|403|не Keenetic|не отвечает по http|облак', err, re.I)
+        old = self.states.get(d['id']) or {}
+        if transient and n < 3 and old.get('status') in ('online', 'warning'):
+            return None
+        if transient and self._alive(d):
+            short = re.sub(r'<urlopen error (.*)>', r'\1', err)[:90]
+            st = dict(st, status='warning', stale=True,
+                      error='устройство включено и отвечает, но не принимает запросы Rack Live (' + short + '). Обычно это временно: роутер может на несколько минут закрыть доступ с адреса Rack Live после большого сканирования сети.')
         return st
 
     def apply_state(self, d, st):
         with self.lock:
             old = self.states.get(d['id']) or {}
-            if st.get('status') == 'offline' and old.get('status') not in (None, 'offline') and old.get('summary'):
+            if (st.get('status') == 'offline' or st.get('stale')) and old.get('status') not in (None, 'offline') and old.get('summary'):
                 keep = {k: old[k] for k in ('summary', 'ports', 'children', 'storage', 'sections') if k in old}
                 st = dict(keep, **st)              # keep the last known data, but show the device as offline
             # per-port throughput from octet counters, error counters → errors in the last hour / day
@@ -134,7 +174,7 @@ class App:
                 self.store.add_event(d['id'], d.get('name'), 'offline', 'нет связи' + (f": {st.get('error')}" if st.get('error') else ''))
             if prev and prev != cur:
                 text = {'offline': 'нет связи' + (f": {st.get('error')}" if st.get('error') else ''), 'online': 'снова в сети',
-                        'warning': 'требует внимания'}.get(cur, cur)
+                        'warning': ('не пускает Rack Live: ' + (st.get('error') or '')[:150]) if st.get('stale') else 'требует внимания'}.get(cur, cur)
                 self.store.add_event(d['id'], d.get('name'), cur, text)
             s = st.get('summary') or {}
             point = {'t': int(st['updated'])}

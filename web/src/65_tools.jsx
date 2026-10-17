@@ -160,7 +160,7 @@ function CameraTool({ onBack }) {
       {info.running ? <div style={{ marginTop: 10 }}><div className="row between" style={{ fontSize: 13, marginBottom: 6 }}><span>Ищу камеры{info.cidr ? ' · ' + info.cidr : ''}…</span><span className="dim3">{info.done} из {info.total}</span></div>
         <div className="gauge-bar" style={{ maxWidth: 'none' }}><i style={{ width: pct + '%' }} /></div></div> : null}
       {info.error ? <div style={{ color: 'var(--orange)', fontSize: 13, marginTop: 8 }}>{info.error}</div> : null}
-      {!info.running && info.finished && info.cidr ? <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Искали в: {info.cidr}</div> : null}
+      {!info.running && info.finished && info.cidr ? <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Искали в: {info.cidr}{info.skipped && info.skipped.length ? '. Адреса роутеров (' + info.skipped.join(', ') + ') не проверяем: роутер принимает это за сканирование и на несколько минут закрывает доступ.' : ''}</div> : null}
     </Card>
     <div className="row between" style={{ margin: '16px 0 8px', gap: 8 }}>
       <div className="card-title" style={{ margin: 0 }}><Icon name="camera" size={14} />Найдено · {items.length}</div>

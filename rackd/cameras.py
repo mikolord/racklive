@@ -521,7 +521,7 @@ class Cameras:
         subs = self.app.netscan.subnets()
         s = self.s
         return {'running': s.get('running', False), 'done': s.get('done', 0), 'total': s.get('total', 0), 'cidr': s.get('cidr'), 'finished': s.get('finished'),
-                'error': s.get('error'), 'items': s.get('items', []), 'subnets': subs, 'creds': self.creds_public(), 'brands': brands.public()}
+                'error': s.get('error'), 'skipped': s.get('skipped') or [], 'items': s.get('items', []), 'subnets': subs, 'creds': self.creds_public(), 'brands': brands.public()}
 
     # ───────── search ─────────
     def start(self, arg):
@@ -560,14 +560,16 @@ class Cameras:
 
     def _run(self, nets):
         try:
-            hosts = [str(h) for n in nets for h in n.hosts()]
+            skip = netscan.infra_ips(self.app)                 # never the routers' own addresses: a burst of connections there is a port scan for the router and it shuts Rack Live out for ~15 min
+            hosts = [str(h) for n in nets for h in n.hosts() if str(h) not in skip]
+            self.s['skipped'] = sorted(skip & {str(h) for n in nets for h in n.hosts()})
             tasks = [(ip, p) for ip in hosts for p in PORTS]
             found, done = {}, [0]
 
             def probe(t):
                 done[0] += 1
                 return t, _open(t[0], t[1], .5)
-            with concurrent.futures.ThreadPoolExecutor(200) as pool:
+            with concurrent.futures.ThreadPoolExecutor(96) as pool:
                 for (ip, p), ok in pool.map(probe, tasks):
                     if ok:
                         found.setdefault(ip, set()).add(p)

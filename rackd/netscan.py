@@ -76,6 +76,30 @@ def local_ips():
     return out
 
 
+def infra_ips(app):
+    """addresses a scan must not knock on: the routers' own addresses (every network's gateway), the default gateway, the routers / switches already added, this machine.
+    A router takes a burst of connections to its own closed ports for a port scan and shuts its web interface to the scanner for ~15 minutes — Rack Live then «loses» it."""
+    out = set(local_ips())
+    for st in list(app.states.values()):
+        for n in st.get('networks') or []:
+            if n.get('ip'):
+                out.add(n['ip'])
+    for d in app.store.cfg['devices']:
+        h = re.sub(r'^\w+://|[:/].*$', '', d.get('host') or '')
+        if re.match(r'^\d+\.\d+\.\d+\.\d+$', h) and (d.get('kind') in ('router', 'switch', 'ap') or d.get('driver') in ('keenetic', 'openwrt', 'tplink_jetstream', 'unmanaged')):
+            out.add(h)
+    try:
+        with open('/proc/net/route') as f:
+            next(f, None)
+            for line in f:
+                p = line.split()
+                if len(p) > 3 and p[1] == '00000000' and int(p[3], 16) & 2:
+                    out.add(socket.inet_ntoa(bytes.fromhex(p[2])[::-1]))
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 def touch(ip, timeout=.35):
     """a connect attempt: True = answered (open or refused — the host is there), False = silence"""
     try:
@@ -130,7 +154,7 @@ class NetScan:
         s = self.s
         return {'running': s.get('running', False), 'phase': s.get('phase'), 'done': s.get('done', 0), 'total': s.get('total', 0), 'cidr': s.get('cidr'),
                 'started': s.get('started'), 'finished': s.get('finished'), 'error': s.get('error'), 'items': s.get('items', []), 'subnets': self.subnets(),
-                'arp': s.get('arp', True)}
+                'arp': s.get('arp', True), 'skipped': s.get('skipped') or []}
 
     # ── run ──
     def start(self, arg):
@@ -177,7 +201,9 @@ class NetScan:
 
     def run(self, nets):
         try:
-            hosts = [str(h) for n in nets for h in n.hosts()]
+            skip = infra_ips(self.app)
+            hosts = [str(h) for n in nets for h in n.hosts() if str(h) not in skip]
+            self.s['skipped'] = sorted(skip & {str(h) for n in nets for h in n.hosts()})
             # 1. who is alive
             alive = {}
             with concurrent.futures.ThreadPoolExecutor(128) as pool:

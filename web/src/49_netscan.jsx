@@ -46,7 +46,7 @@ function NetScanModal({ onClose }) {
       {info.running ? <Btn onClick={stop}>Остановить</Btn> : <Btn kind="primary" icon="search" onClick={start}>{info.finished ? 'Сканировать снова' : 'Сканировать'}</Btn>}
       <WhereToSearch subnets={info.subnets} value={where} onChange={setWhere} disabled={info.running} />
     </div>
-    {info.cidr && (info.running || info.finished) ? <div className="dim3" style={{ fontSize: 12 }}>Сканировали: {info.cidr}</div> : null}
+    {info.cidr && (info.running || info.finished) ? <div className="dim3" style={{ fontSize: 12 }}>Сканировали: {info.cidr}{info.skipped && info.skipped.length ? '. Адреса роутеров (' + info.skipped.join(', ') + ') не трогаем: роутер принимает это за сканирование и на несколько минут закрывает доступ.' : ''}</div> : null}
     {info.running ? <div><div className="row between" style={{ fontSize: 13, marginBottom: 6 }}><span>{PHASE_TEXT[info.phase] || 'Работаю'}…</span><span className="dim3">{info.done} из {info.total}</span></div>
       <div className="gauge-bar" style={{ maxWidth: 'none' }}><i style={{ width: pct + '%' }} /></div></div> : null}
     {info.error ? <div style={{ color: 'var(--orange)', fontSize: 13 }}>{info.error}</div> : null}
