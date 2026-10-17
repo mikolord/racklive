@@ -154,5 +154,49 @@ with tempfile.TemporaryDirectory() as td:
     com.remove('demo-plug')
     ok('удаление из хранилища', com.get('demo-plug') is None)
 
+# ── tools (kind: tool) ──
+files, err = C.read_zip(C.template_zip('tool'))
+e, w, m = C.check(files)
+ok('шаблон инструмента проходит проверку', not e and m['kind'] == 'tool' and len(m['run']) == 1 and not m['install'], e)
+
+
+def tool_verdict(**over):
+    mm = {'plugin_api': 1, 'kind': 'tool', 'id': 'my-tool', 'title': 'T', 'description': 'd', 'version': '1.0.0', 'targets': ['ssh'], 'permissions': [], 'network': [], 'run': [{'title': 'x', 'script': 'echo "@@ok готово"'}]}
+    mm.update(over)
+    ff, _ = C.read_zip(pack(mm))
+    return C.check(ff)
+
+
+ok('инструмент без run отклонён', bool(tool_verdict(run=[])[0]))
+ok('у инструмента нет install', any('install' in x for x in tool_verdict(install=[{'title': 'a', 'script': 'echo'}])[0]))
+ok('у плагина нет run', any('run' in x for x in verdict(run=[{'title': 'a', 'script': 'echo'}])[0]))
+ok('неизвестный kind отклонён', bool(tool_verdict(kind='widget')[0]))
+ok('запреты действуют и для инструмента', bool(tool_verdict(run=[{'title': 'x', 'script': 'mkfs.ext4 /dev/sda'}])[0]))
+ok('необъявленное в инструменте — отказ', any('docker' in x for x in tool_verdict(run=[{'title': 'x', 'script': 'docker ps'}])[0]))
+o = C.parse_output('@@kv Имя|значение\n@@head A|B\n@@row 1|2\n@@row 3|4\nстрока вывода\n@@ok итог\n@@unknown x')
+ok('вывод инструмента разобран: таблица, пары, текст, итог', o['kv'] == [{'label': 'Имя', 'value': 'значение'}] and o['head'] == ['A', 'B'] and o['rows'] == [['1', '2'], ['3', '4']] and o['text'] == ['строка вывода'] and o['ok'] == 'итог', o)
+with tempfile.TemporaryDirectory() as td2:
+    com2 = C.Community(td2)
+    ff, _ = C.read_zip(pack(dict(BASE, id='demo-plug')))
+    com2.install_zip(pack(dict(BASE, id='demo-plug')))
+    com2.install_zip(C.template_zip('tool'))
+    ok('инструмент в списке инструментов, плагина среди них нет', [x['id'] for x in com2.tools()] == ['disk-usage'])
+    ok('для устройства — только плагины', [x['id'] for x in com2.for_device({'driver': 'ssh'})] == ['demo-plug'])
+    tl = com2.get('disk-usage')
+
+    class Drv2:
+        def command(self, cfg, cmd):
+            return '@@kv Хост|nas1\n@@head Раздел|Занято\n@@row /|40%\nлишняя строка пароль p-s3\n@@ok два раздела'
+    dev2 = {'driver': 'synology', 'name': 'NAS'}
+    res = com2.run(dev2, Drv2(), 'disk-usage', 'run', {'digest': tl['digest'], 'values': {'limit': 10}})
+    ok('запуск инструмента: результат разобран', res['ok'] and res['output']['kv'][0]['value'] == 'nas1' and res['output']['rows'] == [['/', '40%']] and res['message'] == 'два раздела', res)
+    try:
+        com2.run(dev2, Drv2(), 'disk-usage', 'install', {'digest': tl['digest']}); ok('у инструмента нельзя «установить»', False)
+    except ValueError:
+        ok('у инструмента нельзя «установить»', True)
+    try:
+        com2.run(dev2, Drv2(), 'demo-plug', 'run', {'digest': com2.get('demo-plug')['digest']}); ok('у плагина нельзя «запустить»', False)
+    except ValueError:
+        ok('у плагина нельзя «запустить»', True)
 print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

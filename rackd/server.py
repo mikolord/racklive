@@ -8,7 +8,7 @@ from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.7.0'
+VERSION = '2.7.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -960,7 +960,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
-                         'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list()]
+                         'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list() if m.get('kind') != 'tool']
                 return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG] + comm})
             if path == '/api/sites':                        # Инструменты → Удалённые площадки: the sites that report here, agents, and this installation's own collector mode
                 if not self.need_admin():
@@ -984,10 +984,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 zip_ = path.endswith('.zip')
-                b = community.template_zip() if zip_ else community.guide_text().encode('utf-8')
+                tool = self.query().get('kind') == 'tool'
+                b = community.template_zip('tool' if tool else 'plugin') if zip_ else community.guide_text().encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/zip' if zip_ else 'text/plain; charset=utf-8')
-                self.send_header('Content-Disposition', 'attachment; filename="' + ('racklive-plugin-template.zip' if zip_ else 'racklive-plugin-guide.txt') + '"')
+                self.send_header('Content-Disposition', 'attachment; filename="' + (('racklive-tool-template.zip' if tool else 'racklive-plugin-template.zip') if zip_ else 'racklive-plugin-guide.txt') + '"')
                 self.send_header('Content-Length', str(len(b)))
                 self.end_headers()
                 self.wfile.write(b)
@@ -1650,11 +1651,11 @@ class Handler(BaseHTTPRequestHandler):
                         j = APP.jobs.get(str(body.get('job') or ''))
                         return self.send({k: v for k, v in j.items() if k != 'device'} if j and j['device'] == did else {'done': True, 'error': 'задача не найдена'})
                     if pid.startswith('x-'):                    # a community plugin: only install / remove, as a background job, after the administrator confirmed the exact commands (digest)
-                        if not comm or op not in ('install', 'remove'):
+                        if not comm or op not in ('install', 'remove', 'run'):
                             return self.err('неверный запрос плагина')
                         if DEMO:
                             return self.err('в демо-режиме плагины сообщества не запускаются', 400)
-                        APP.store.add_event(did, d.get('name'), 'warning', f'плагин сообщества {pid[2:]}: {"установка" if op == "install" else "удаление"} подтверждена администратором')
+                        APP.store.add_event(did, d.get('name'), 'warning', f'{"инструмент" if op == "run" else "плагин"} сообщества {pid[2:]}: ' + {'install': 'установка', 'remove': 'удаление', 'run': 'запуск'}[op] + ' подтверждены администратором')
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, community.Shim(APP.community, drv), pid, op, body)['id']})
                     if op in getattr(drv, 'async_ops', ()):
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})

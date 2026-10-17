@@ -58,7 +58,7 @@ def vtuple(v):
 
 def digest(m):
     """a fingerprint of everything that will run: the page shows it, and the run must carry the same one"""
-    h = hashlib.sha256(json.dumps({k: m.get(k) for k in ('id', 'version', 'targets', 'fields', 'status', 'install', 'remove')}, sort_keys=True, ensure_ascii=False).encode())
+    h = hashlib.sha256(json.dumps({k: m.get(k) for k in ('id', 'version', 'kind', 'targets', 'fields', 'status', 'install', 'remove', 'run')}, sort_keys=True, ensure_ascii=False).encode())
     return h.hexdigest()[:16]
 
 
@@ -66,9 +66,9 @@ def _scripts(m):
     out = []
     if m.get('status'):
         out.append(('status', m['status']))
-    for kind in ('install', 'remove'):
-        for i, s in enumerate(m.get(kind) or []):
-            out.append((f'{kind} {i + 1}', s['script']))
+    for sec in ('install', 'remove', 'run'):
+        for i, s in enumerate(m.get(sec) or []):
+            out.append((f'{sec} {i + 1}', s['script']))
     return out
 
 
@@ -158,24 +158,34 @@ def check(files):
             return None
         return {'title': str(entry.get('title') or where)[:80], 'script': txt.replace('\r\n', '\n')}
 
-    m = {'plugin_api': PLUGIN_API, 'id': pid, 'title': title, 'description': desc, 'version': str(raw.get('version') or ''), 'author': str(raw.get('author') or '')[:60],
+    kind = raw.get('kind') or 'plugin'
+    if kind not in ('plugin', 'tool'):
+        errors.append('kind: plugin (устанавливается на устройство) или tool (запускается по кнопке и показывает результат)')
+        kind = 'plugin'
+    m = {'plugin_api': PLUGIN_API, 'kind': kind, 'id': pid, 'title': title, 'description': desc, 'version': str(raw.get('version') or ''), 'author': str(raw.get('author') or '')[:60],
          'home': home, 'icon': raw.get('icon') if raw.get('icon') in ('box', 'server', 'shield', 'terminal', 'download', 'globe2', 'router', 'wrench', 'camera', 'refresh') else 'box',
-         'targets': targets, 'permissions': perms, 'network': hosts, 'fields': clean_fields, 'status': None, 'install': [], 'remove': []}
-    if raw.get('status') is not None:
+         'targets': targets, 'permissions': perms, 'network': hosts, 'fields': clean_fields, 'status': None, 'install': [], 'remove': [], 'run': []}
+    if kind == 'tool' and any(raw.get(x) for x in ('install', 'remove', 'status')):
+        errors.append('у инструмента нет install / remove / status: только run (шаги, которые выполняются по кнопке)')
+    if kind == 'plugin' and raw.get('run'):
+        errors.append('run бывает только у инструмента (kind: "tool"); у плагина — install / remove')
+    if kind == 'plugin' and raw.get('status') is not None:
         st = load(raw['status'] if isinstance(raw['status'], dict) else {'script': raw['status']}, 'status')
         m['status'] = st['script'] if st else None
-    for kind in ('install', 'remove'):
-        steps = raw.get(kind) or []
+    for sec in (('run',) if kind == 'tool' else ('install', 'remove')):
+        steps = raw.get(sec) or []
         if not isinstance(steps, list) or len(steps) > MAX_STEPS:
-            errors.append(f'{kind}: список шагов, не больше {MAX_STEPS}')
+            errors.append(f'{sec}: список шагов, не больше {MAX_STEPS}')
             continue
         for i, e in enumerate(steps):
-            s = load(e, f'{kind}[{i + 1}]')
+            s = load(e, f'{sec}[{i + 1}]')
             if s:
-                m[kind].append(s)
-    if not m['install']:
+                m[sec].append(s)
+    if kind == 'tool' and not m['run']:
+        errors.append('run: нужен хотя бы один шаг')
+    if kind == 'plugin' and not m['install']:
         errors.append('install: нужен хотя бы один шаг установки')
-    if not m['status']:
+    if kind == 'plugin' and not m['status']:
         warnings.append('нет status: Rack Live не узнает, установлен ли плагин (добавьте скрипт со строкой @@installed 0|1)')
 
     risk, field_ids = 'low', {f['id'].upper() for f in clean_fields}
@@ -309,6 +319,28 @@ def parse_status(out):
     return s
 
 
+def parse_output(text):
+    """what a TOOL printed → {text: [lines], kv: [{label, value}], head: [cols] | None, rows: [[cells]], ok: str | None}"""
+    out = {'text': [], 'kv': [], 'head': None, 'rows': [], 'ok': None}
+    for l in text.splitlines():
+        if l.startswith('@@kv ') and '|' in l:
+            a, _, b = l[5:].partition('|')
+            if len(out['kv']) < 200:
+                out['kv'].append({'label': a.strip()[:60], 'value': b.strip()[:300]})
+        elif l.startswith('@@head '):
+            out['head'] = [c.strip()[:40] for c in l[7:].split('|')][:12]
+        elif l.startswith('@@row '):
+            if len(out['rows']) < 300:
+                out['rows'].append([c.strip()[:120] for c in l[6:].split('|')][:12])
+        elif l.startswith('@@ok'):
+            out['ok'] = l[4:].strip()[:200] or None
+        elif l.startswith('@@'):
+            continue
+        elif l.strip() and len(out['text']) < 400:
+            out['text'].append(l[:300])
+    return out
+
+
 class Community:
     def __init__(self, data_dir):
         self.dir = os.path.join(data_dir, 'community')
@@ -335,14 +367,15 @@ class Community:
 
     def public(self, m):
         return {k: m.get(k) for k in ('id', 'title', 'description', 'version', 'author', 'home', 'icon', 'targets', 'permissions', 'network', 'risk', 'digest', 'source', 'installedAt')} \
-            | {'fields': m.get('fields', []), 'steps': {'install': [s['title'] for s in m.get('install', [])], 'remove': [s['title'] for s in m.get('remove', [])]}}
+            | {'kind': m.get('kind') or 'plugin', 'fields': m.get('fields', []),
+               'steps': {'install': [s['title'] for s in m.get('install', [])], 'remove': [s['title'] for s in m.get('remove', [])], 'run': [s['title'] for s in m.get('run', [])]}}
 
     def detail(self, pid):
         """for the «what will run» preview: everything, including the scripts"""
         m = self.get(pid)
         if not m:
             return None
-        return self.public(m) | {'status': m.get('status'), 'install': m.get('install'), 'remove': m.get('remove')}
+        return self.public(m) | {'status': m.get('status'), 'install': m.get('install'), 'remove': m.get('remove'), 'run': m.get('run')}
 
     def install_zip(self, blob, source='own', expect_sha=None):
         files, err = read_zip(blob)
@@ -380,7 +413,7 @@ class Community:
             req = urllib.request.Request(url, headers={'User-Agent': 'RackLive-community'})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read(400_000).decode('utf-8'))
-            items = [{k: p.get(k) for k in ('id', 'title', 'description', 'author', 'version', 'targets', 'risk', 'zip', 'sha256')} for p in data.get('plugins', [])
+            items = [{k: p.get(k) for k in ('id', 'title', 'description', 'author', 'version', 'kind', 'targets', 'risk', 'zip', 'sha256')} for p in data.get('plugins', [])
                      if isinstance(p, dict) and ID_RE.match(str(p.get('id') or '')) and re.match(r'^[0-9a-f]{64}$', str(p.get('sha256') or ''))]
             res = {'ok': True, 'plugins': items[:200]}
         except Exception as e:
@@ -413,7 +446,15 @@ class Community:
 
     def for_device(self, d):
         t = self.target_of(d.get('driver'))
-        return [m for m in self.list() if t and t in m['targets']] if t else []
+        return [m for m in self.list() if t and t in m['targets'] and (m.get('kind') or 'plugin') == 'plugin'] if t else []
+
+    def tools(self):
+        """community TOOLS: they live in Инструменты (a form, one button, a result), not on a device's plugin tab"""
+        return [m for m in self.list() if m.get('kind') == 'tool']
+
+    def devices_for(self, m, devices):
+        names = {n for t in m['targets'] for n in TARGETS[t]}
+        return [d for d in devices if d.get('driver') in names and d.get('enabled', True)]
 
     def card(self, m, st=None):
         c = dict(self.public(m), kind='community', installed=bool(st and st.get('installed')), version=(st or {}).get('version') or None,
@@ -445,7 +486,8 @@ class Community:
         m = self.get(pid)
         if not m or self.target_of(d.get('driver')) not in m['targets']:
             raise ValueError('плагин не подходит для этого устройства')
-        if op not in ('install', 'remove'):
+        tool = m.get('kind') == 'tool'
+        if op not in (('run',) if tool else ('install', 'remove')):
             raise ValueError('неизвестное действие')
         if params.get('digest') != m['digest']:
             raise ValueError('плагин изменился после того, как вы просмотрели команды. Откройте плагин заново и проверьте')
@@ -455,17 +497,21 @@ class Community:
         vals = clean_values(m, params.get('values'))
         secrets_ = [vals['RL_P_' + f['id'].upper()] for f in m['fields'] if f.get('type') == 'password' and vals.get('RL_P_' + f['id'].upper())]
         progress = params.get('_progress') or (lambda s: None)
-        log = []
+        log, bodies = [], []
         for i, s in enumerate(steps):
             progress(f'{i + 1}/{len(steps)}: {s["title"]}')
             out = drv.command(d, self._env(vals, m) + s['script'])
             body = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', out)
             for sec in secrets_:
                 body = body.replace(sec, '***')
+            bodies.append(body)
             log.append({'cmd': '— ' + s['title'], 'ok': True, 'msg': ''})
-            log.extend([{'cmd': l[:220], 'ok': '@@fail' not in l, 'msg': ''} for l in body.splitlines() if l.strip() and not l.startswith(('@@installed', '@@version', '@@info', '@@check'))][:80])
+            log.extend([{'cmd': l[:220], 'ok': '@@fail' not in l, 'msg': ''} for l in body.splitlines() if l.strip() and not l.startswith(('@@installed', '@@version', '@@info', '@@check', '@@kv', '@@head', '@@row'))][:80])
             if '@@fail' in body:
                 raise RuntimeError(f"{s['title']}: " + body.split('@@fail', 1)[1].splitlines()[0].strip())
+        if tool:
+            res = parse_output('\n'.join(bodies))
+            return {'ok': True, 'log': log, 'output': res, 'message': res.get('ok') or f"{m['title']}: готово"}
         return {'ok': True, 'log': log, 'message': f"{m['title']}: {'установлено' if op == 'install' else 'удалено'}"}
 
 
@@ -473,7 +519,7 @@ class Shim:
     """what start_plugin_job expects of a driver: .plugin(cfg, pid, op, params) — here it runs a community plugin"""
     def __init__(self, community, drv):
         self.community, self.drv = community, drv
-        self.async_ops = ('install', 'remove')
+        self.async_ops = ('install', 'remove', 'run')
 
     def plugin(self, cfg, pid, op, params):
         try:
@@ -482,8 +528,30 @@ class Shim:
             raise RuntimeError(str(e))
 
 
-def template_zip():
-    """a starter plugin for authors (what the «Скачать шаблон» button gives)"""
+TOOL_TEMPLATE = """#!/bin/sh
+# Инструмент «Свободное место»: показывает разделы устройства таблицей. Значения полей приходят переменными RL_P_<ID>.
+echo "@@kv Устройство|$(hostname)"
+echo "@@kv Время работы|$(uptime | sed 's/^.*up //;s/,.*//')"
+echo "@@head Раздел|Размер|Занято|Куда подключён"
+df -P -h 2>/dev/null | tail -n +2 | awk -v lim="$RL_P_LIMIT" '{ use=$5; sub(/%/,"",use); if (use+0 >= lim+0) print "@@row "$1"|"$2"|"$5"|"$6 }'
+echo "@@ok Показаны разделы, занятые не меньше $RL_P_LIMIT %"
+"""
+
+
+def template_zip(kind='plugin'):
+    """a starter plugin or tool for authors (what the «Скачать шаблон» buttons give)"""
+    if kind == 'tool':
+        manifest = {'plugin_api': PLUGIN_API, 'kind': 'tool', 'id': 'disk-usage', 'title': 'Свободное место', 'version': '1.0.0', 'author': 'Ваше имя', 'icon': 'wrench',
+                    'description': 'Учебный инструмент: показывает разделы выбранного устройства, занятые больше заданного процента. Замените на свою задачу.',
+                    'targets': ['ssh', 'openwrt', 'synology'], 'permissions': [], 'network': [],
+                    'fields': [{'id': 'limit', 'label': 'Показывать разделы, занятые не меньше (%)', 'type': 'number', 'default': 0, 'min': 0, 'max': 100}],
+                    'run': [{'title': 'Прочитать разделы', 'file': 'scripts/run.sh'}]}
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+            z.writestr('plugin.json', json.dumps(manifest, ensure_ascii=False, indent=2))
+            z.writestr('scripts/run.sh', TOOL_TEMPLATE)
+            z.writestr('README.md', '# Свободное место\n\nУчебный инструмент для Rack Live. Что делает и зачем — опишите здесь.\n')
+        return buf.getvalue()
     manifest = {
         'plugin_api': PLUGIN_API, 'id': 'hello-uptime', 'title': 'Привет, аптайм', 'version': '1.0.0', 'author': 'Ваше имя', 'icon': 'box',
         'description': 'Учебный плагин: «устанавливает» файл-заметку на устройство и показывает время работы. Замените на свою задачу.',
@@ -549,7 +617,19 @@ plugin.json:
 
 РИСК считается сам: low (ничего опасного) · medium (пакеты / службы / Docker) · high (перезагрузка или «curl | sh»). Пишите минимально необходимое.
 
+ИНСТРУМЕНТ (kind: "tool") вместо плагина. Если человеку нужна не установка чего-то на устройство, а «кнопка, которая что-то посчитает / проверит и покажет результат», делайте инструмент:
+  "kind": "tool" и вместо install / remove / status — "run": [{{"title": "…", "file": "scripts/run.sh"}}]  (один или несколько шагов по порядку).
+  Остальное — как у плагина: targets, permissions, network, fields, те же правила и проверка. Инструмент появится в «Инструменты» (а не в «Плагинах»), там выбирают устройство, заполняют поля и нажимают «Запустить».
+  Результат рисует Rack Live по строкам вывода:
+    "@@kv Подпись|значение"            — строка «подпись — значение» (можно много)
+    "@@head Колонка 1|Колонка 2|…"    — заголовок таблицы, затем строки  "@@row яч1|яч2|…"
+    обычные строки без @@             — просто текст (журнал, вывод команды)
+    "@@ok Итог одной строкой"         — зелёный итог наверху;   "@@fail причина" — ошибка, шаги останавливаются.
+  Инструмент ничего не устанавливает: делайте его только читающим, а если он что-то меняет — пишите это в description и объявляйте permissions.
+
 КАК ПРОВЕРИТЬ: Инструменты → Плагины → «Свои плагины» → «Загрузить .zip». Если отчёт покажет ошибки — исправьте их и соберите архив заново. Готовый плагин можно предложить в каталог сообщества (репозиторий racklive-plugins на GitHub: pull request с папкой плагина).
+
+Плагины и инструменты загружаются одним и тем же окном «Плагины сообщества» (его можно открыть и из «Плагинов», и из «Инструментов»), каждый сам встаёт на своё место.
 
 Когда отдаёте результат человеку: приложите zip, коротко опишите, что плагин делает на устройстве, какие поля заполнить и как его удалить.
 '''

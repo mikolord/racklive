@@ -118,6 +118,10 @@ def main():
         check('community: the catalog answers even when GitHub does not', 'plugins' in api('/api/community/index'))
         api('/api/community/hello-uptime', None, 'DELETE')
         check('community: a plugin can be removed again', not api('/api/community')['plugins'])
+        ttpl = raw('/api/community/template.zip?kind=tool')[0]
+        tup = json.loads(raw('/api/community/upload', ttpl, headers={'Content-Type': 'application/zip'})[0])
+        check('community: the tool template uploads, is a tool, and lands in the tools list (not in plugins)', tup.get('ok') and tup['plugin']['kind'] == 'tool' and tup['plugin']['id'] == 'disk-usage', json.dumps(tup)[:200])
+        check('community: a tool never appears among the plugins of a device', all(p['id'] != 'x-disk-usage' for p in api('/api/plugins/catalog')['plugins']))
         badup = json.loads(raw('/api/themes/upload', b'not a zip at all', headers={'Content-Type': 'application/zip'})[0])
         check('looks: garbage is refused with a reason, not an error page', badup.get('ok') is False and badup.get('errors'), json.dumps(badup)[:160])
         try:
@@ -473,7 +477,7 @@ def main():
                                + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
-                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools', 'Инструменты — площадки': '?tsec=catalog&tool=sites#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
+                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools', 'Инструменты — площадки': '?tsec=catalog&tool=sites#tools', 'Инструменты — каталог с инструментом': '?tsec=catalog#tools', 'Инструмент сообщества': '?tsec=catalog&tool=x-disk-usage#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
                  'Камера — вход': '?tsec=catalog&tool=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
                  'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · О программе': '?section=about#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
@@ -621,6 +625,10 @@ def main():
                 check('о программе: карточка обновлений (версия, проверка, режим)', 'Обновления' in out and 'Проверить' in out and 'Обновлять ночью' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Устройство площадки':
                 check('устройство площадки: вкладка «На площадке» честно говорит, что канал не открыт', 'На площадке' in out and 'Нет связи с площадкой' in out and 'Повторить' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
+            if name == 'Инструменты — каталог с инструментом':
+                check('инструменты: свой инструмент стоит в каталоге инструментов, рядом кнопка загрузки', 'Свободное место' in out and 'Свой инструмент или из каталога' in out and 'Камеры и видеорегистраторы' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
+            if name == 'Инструмент сообщества':
+                check('инструмент сообщества: описание, форма, «Где запустить», «Запустить»', 'Свободное место' in out and 'Где запустить' in out and 'Запустить' in out and 'риск' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Инструменты — площадки':
                 check('площадки: список, агенты, режим сборщика', 'Удалённые площадки' in out or 'Площадки' in out, '') ; check('площадки: видна демо-площадка и «Эта установка — сборщик»', 'Склад (филиал)' in out and 'Эта установка' in out and 'Добавить площадку' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Карта — ONT':

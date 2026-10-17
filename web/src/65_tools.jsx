@@ -29,7 +29,7 @@ function ToolsView() {
   return <>
     <div className="view-switch"><Seg value={sec} onChange={s => { setSec(s); setTool(null); }}
       options={[{ value: 'devices', label: T('tab.devices', 'Устройства'), icon: 'list' }, { value: 'plugins', label: 'Плагины', icon: 'box' }, { value: 'catalog', label: 'Инструменты', icon: 'wrench' }]} /></div>
-    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
+    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : String(tool).startsWith('x-') ? <CommunityTool id={tool.slice(2)} onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
   </>;
 }
 
@@ -142,15 +142,26 @@ function MissingGroup({ g, list }) {
 
 /* ───────── catalog of tools ───────── */
 function ToolsCatalog({ onOpen }) {
+  const toast = useToast();
+  const [mine, setMine] = useState([]); const [mgr, setMgr] = useState(false);
+  const loadMine = () => api('/api/community').then(r => setMine(r.plugins.filter(p => p.kind === 'tool'))).catch(() => { });
+  useEffect(() => { loadMine(); }, []);
+  const ICON_COLORS = ['#0a84ff', '#30b0c7', '#34c759', '#ff9f0a', '#bf5af2', '#ff375f'];
   return <>
-    <Hint id="tools-catalog">Инструменты — готовые помощники для администратора. Они работают с вашей сетью по запросу и сами ничего не меняют.</Hint>
+    <Hint id="tools-catalog">Инструменты — помощники для администратора. Встроенные только смотрят и сами ничего не меняют. Инструменты сообщества (свои или из каталога) перед запуском показывают, что именно будут делать.</Hint>
     <div className="plug-grid">{TOOLS.map(t => <button type="button" key={t.id} className="card tool-card" onClick={() => onOpen(t.id)}>
       <div className="tool-ic" style={{ background: t.color }}><Icon name={t.icon} size={24} color="#fff" stroke={2} /></div>
       <div className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{t.title}</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 3 }}>{t.text}</div></div>
       <Icon name="chevron" size={16} /></button>)}
-      <div className="card tool-card soon"><div className="tool-ic" style={{ background: 'var(--fill)' }}><Icon name="plus" size={22} /></div>
-        <div className="grow dim" style={{ fontSize: 13 }}>Здесь появятся новые инструменты. Скажите, какой нужен.</div></div>
+      {mine.map((t, i) => <button type="button" key={t.id} className="card tool-card" onClick={() => onOpen('x-' + t.id)}>
+        <div className="tool-ic" style={{ background: ICON_COLORS[i % ICON_COLORS.length] }}><Icon name={t.icon || 'wrench'} size={24} color="#fff" stroke={2} /></div>
+        <div className="grow" style={{ textAlign: 'left', minWidth: 0 }}><div className="row" style={{ gap: 6 }}><b>{t.title}</b><span className="badge">{t.source === 'community' ? 'сообщество' : 'своё'}</span></div>
+          <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 3 }}>{t.description}</div></div>
+        <Icon name="chevron" size={16} /></button>)}
+      <button type="button" className="card tool-card soon" onClick={() => setMgr(true)}><div className="tool-ic" style={{ background: 'var(--fill)' }}><Icon name="plus" size={22} /></div>
+        <div className="grow" style={{ textAlign: 'left' }}><b>Свой инструмент или из каталога</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 3 }}>Загрузите .zip или выберите готовый в каталоге сообщества. Плагины и инструменты добавляются в одном окне, каждый появляется на своём месте.</div></div></button>
     </div>
+    {mgr ? <CommunityManager onClose={() => { setMgr(false); loadMine(); }} /> : null}
   </>;
 }
 
