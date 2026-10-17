@@ -128,10 +128,14 @@ D="$HOME/.racklive-agents"; mkdir -p "$D"
 [ -f "$D/env" ] && . "$D/env"
 RC=0; AUTO=0; NAME="$(hostname)"; DIR="$HOME"; [ -f "$D/conf" ] && . "$D/conf"; [ -d "$DIR" ] || DIR="$HOME"
 slug() { echo "$(echo "$1" | tr -c 'A-Za-z0-9\n' '-' | sed 's/--*/-/g;s/^-//;s/-$//' | cut -c1-24)-$(printf %s "$1" | cksum | cut -d' ' -f1)"; }   # readable part + a hash: Cyrillic names stay distinct
-# the main chat CONTINUES the last conversation of its folder (after a reboot it is the same chat in the Claude app); a new one only when there is nothing to continue
+# the main chat RESUMES the last real conversation of its folder (one where Claude already answered — empty sessions are skipped, and a chat started
+# by «claude remote-control» counts too, which --continue misses): after a reboot it is the same chat. A new one only when there is nothing yet.
+lastconv() { P="$HOME/.claude/projects/$(printf %s "$DIR" | sed 's#[^A-Za-z0-9]#-#g')"
+  for f in $(ls -t "$P"/*.jsonl 2>/dev/null); do grep -q '"type":"assistant"' "$f" && { basename "$f" .jsonl; return 0; }; done; }
 mainsess() { tmux has-session -t rl-main 2>/dev/null && return 0
-  if [ "$RC" = 1 ]; then tmux new-session -d -s rl-main -c "$DIR" "claude --continue --remote-control \"$NAME\" || claude --remote-control \"$NAME\""
-  else tmux new-session -d -s rl-main -c "$DIR" "claude --continue || claude"; fi; }
+  C="$(lastconv)"; R=""; [ -n "$C" ] && R="--resume $C"
+  if [ "$RC" = 1 ]; then tmux new-session -d -s rl-main -c "$DIR" "claude $R --remote-control \"$NAME\" || claude --remote-control \"$NAME\""
+  else tmux new-session -d -s rl-main -c "$DIR" "claude $R || claude"; fi; }
 chat() { s="rl-c-$(slug "$1")"; tmux has-session -t "$s" 2>/dev/null && { echo "$s уже запущен"; return 0; }
   if [ "$RC" = 1 ]; then tmux new-session -d -s "$s" -c "$HOME" "claude --remote-control \"$1\""; else tmux new-session -d -s "$s" -c "$HOME" "claude"; fi; echo "$s"; }
 case "$1" in
