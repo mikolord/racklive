@@ -41,7 +41,7 @@ cs = agents.configure_script(True, True, 'Мой сервер', 'opus', 'sub', {
 syntax('configure', cs)
 ok('в скрипте настройки нет ключа Anthropic', 'sk-ant' not in cs)
 ok('главная сессия продолжает прежний разговор (после перезагрузки — тот же чат), иначе новая', 'claude --continue --remote-control' in agents.HELPER and '|| claude --remote-control' in agents.HELPER)
-ok('главная сессия и первый вход — в одной рабочей папке', '-c "$DIR"' in agents.HELPER and 'cd "$DIR" && claude remote-control' in agents.HELPER)
+ok('главная сессия и первый вход — в одной рабочей папке', '-c "$DIR"' in agents.HELPER and 'cd "$DIR" && claude --remote-control' in agents.HELPER)
 ok('«Сохранить настройки» не теряет рабочую папку', 'ODIR=$(grep "^DIR="' in cs and '"$ODIR" >> "$D/conf"' in cs)
 ok('ключ только в env-файле (heredoc)', cs.count('sk-test_123') == 1)
 

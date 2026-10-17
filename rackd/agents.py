@@ -147,8 +147,9 @@ case "$1" in
     echo "── Шаг 1. Вход в аккаунт Claude (нужна подписка Pro / Max / Team) ──"
     if claude auth status >/dev/null 2>&1; then echo "Вход уже выполнен."; else claude auth login; fi
     echo; echo "── Шаг 2. Первый запуск Remote Control ──"
-    echo "Ответьте y на вопросы «Enable Remote Control?» и «Trust ...?», дождитесь ссылки на сессию и нажмите Ctrl+C."
-    cd "$DIR" && claude remote-control --name "$NAME"
+    echo "Пройдите первые вопросы Claude Code (оформление — Enter), ответьте «да» на «Trust …?» и «Enable Remote Control?»."
+    echo "Когда сессия появится в приложении Claude, наберите /exit — она продолжится в фоне и после перезагрузки."
+    cd "$DIR" && claude --remote-control "$NAME"
     echo; echo "Готово. Запускаю сессию в фоне…"; "$0" restart; echo "Сессия «$NAME» ждёт вас в приложении Claude и на claude.ai/code." ;;
   *) echo "racklive-agent start-all | new [имя] | list | stop <имя|all> | restart | attach [сессия] | setup" ;;
 esac

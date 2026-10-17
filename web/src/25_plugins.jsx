@@ -555,7 +555,7 @@ function AgentsPlugin({ p, device, reload }) {
       {needSetup && sshTarget(device) ? <Btn disabled={running} onClick={() => { copyText('racklive-agent setup'); toast('Команда «racklive-agent setup» скопирована — вставьте её в Termius после входа'); openInTermius(sshTarget(device), () => { }); }}>Войти через Termius</Btn> : null}
       {p.helper && claudeOn ? <Btn icon="refresh" disabled={running} onClick={() => quick({ op: 'restart' }, 'Перезапущено')}>Перезапустить сессии</Btn> : null}
     </div>
-    {needSetup ? <div className="err-note" style={{ marginTop: 8 }}><b>Нужен один вход в аккаунт Claude.</b> Нажмите «Войти и запустить»: откроется терминал сервера, он покажет ссылку — откройте её на телефоне, войдите и вставьте код. Потом ответьте <code>y</code> на два вопроса.
+    {needSetup ? <div className="err-note" style={{ marginTop: 8 }}><b>Нужен один вход в аккаунт Claude.</b> Нажмите «Войти и запустить»: откроется терминал сервера, он покажет ссылку — откройте её на телефоне, войдите и вставьте код. Потом пройдите первые вопросы Claude Code (Enter), ответьте «да» на доверие к папке и Remote Control и наберите <code>/exit</code> — чат продолжится в фоне и после перезагрузки.
       Код из браузера вставляется кнопкой «Вставить» в терминале. Или в Termius («Войти через Termius» — команда <code>racklive-agent setup</code> уже будет скопирована). Это нужно один раз; дальше сессия сама поднимается после перезагрузки.</div> : null}
     {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
       <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.max(0, Math.round(now / 1000 - job.t))} с · окно можно закрыть, работа продолжится</div></div></div> : null}
