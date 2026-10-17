@@ -147,5 +147,31 @@ ok('машина не добавлена — подсказка, что сдел
 ok('демо: ничего настоящего', h.Host(app, demo=True).target()[0] == 'demo' and h.Host(app, demo=True).status()['mode'] == 'demo' and h.Host(app, demo=True).wifi()['hotspot']['on'])
 ok('локальный запуск возможен только на Linux под root без контейнера', h.local_ok() is False or sys.platform.startswith('linux'))
 
+# «Эта машина»: Rack Live on a Linux box as root adds that box itself, and its commands run here (no SSH to itself)
+from rackd import server
+from rackd.store import Store
+from rackd.drivers.sshhost import SSHHost
+real_ok, real_run = h.local_ok, h.run_local
+try:
+    h.local_ok = lambda: True
+    ran = []
+    h.run_local = lambda script, timeout=60, on_line=None: ran.append(script) or '@@ok\n'
+    a = types.SimpleNamespace(store=Store(tempfile.mkdtemp()), hostnet=FakeNet(None))
+    server.App.ensure_local_device(a)
+    devs = a.store.cfg['devices']
+    ok('«Эта машина» добавлена сама: сервер по SSH-драйверу, локальный, с именем машины', len(devs) == 1 and devs[0]['local'] and devs[0]['driver'] == 'ssh' and devs[0]['host'] == '127.0.0.1' and devs[0]['name'], devs)
+    server.App.ensure_local_device(a)
+    ok('второй раз не добавляется', len(a.store.cfg['devices']) == 1)
+    b = types.SimpleNamespace(store=Store(tempfile.mkdtemp()), hostnet=FakeNet({'id': 'nas', 'driver': 'ssh'}))
+    server.App.ensure_local_device(b)
+    ok('если машина уже добавлена по своему адресу — дубля нет', b.store.cfg['devices'] == [])
+    out = SSHHost()._run({'host': '127.0.0.1', 'local': True}, 'echo hi\n')
+    ok('команды «Этой машины» идут здесь, без SSH', out == '@@ok\n' and ran == ['echo hi\n'])
+    args, env, kf = SSHHost().interactive_args({'host': '127.0.0.1', 'local': True})
+    ok('терминал «Этой машины» — оболочка здесь, без SSH и без временных файлов', args[-1] == '-l' and 'ssh' not in ' '.join(args) and kf is None, args)
+finally:
+    h.local_ok, h.run_local = real_ok, real_run
+ok('на обычном сервере локальный флаг без root/Linux не срабатывает (идёт SSH)', not h.local_ok() or sys.platform.startswith('linux'))
+
 print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

@@ -758,7 +758,7 @@ def main():
             if name == 'Настройки · Система':
                 check('раздел «Система»: время, обновления, Docker', 'Время и часовой пояс' in out and 'Обновления системы' in out and 'Docker' in out and 'Проверить обновления' in out and 'Перезагрузить машину' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · Wi-Fi':
-                check('«Сеть → Wi-Fi»: адаптеры, своя точка, подключение к сети', 'Адаптеры' in out and 'Своя Wi-Fi-точка' in out and 'Подключение к Wi-Fi' in out and 'Искать сети' in out and 'ReckController' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+                check('«Сеть → Wi-Fi»: адаптеры, своя точка, подключение к сети', 'Адаптеры' in out and 'Своя Wi-Fi-точка' in out and 'Подключение к Wi-Fi' in out and 'Искать сети' in out and 'ReckController' in out and 'Изменить название или пароль' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · режим разработчика':
                 check('тумблер «Режим разработчика» в основных настройках', 'Режим разработчика' in out and 'Система' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Карта — ONT':

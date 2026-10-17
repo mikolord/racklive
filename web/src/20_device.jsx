@@ -102,6 +102,7 @@ function WebAccess({ device }) {
 function sshTarget(d) {
   const host = String(d.host || '').replace(/^\w+:\/\//, '').replace(/[:/].*$/, '');
   if (!host) return null;
+  if (d.local) return { host: location.hostname, user: d.username || 'root', port: +d.sshPort || 22 };      // «Эта машина»: Termius goes to the address the panel was opened by
   if (d.driver === 'ssh' || d.driver === 'windows' || d.driver === 'openwrt') return { host, user: d.username || 'root', port: +d.sshPort || 22 };
   if (d.driver === 'synology') return d.username ? { host, user: d.username, port: +d.sshPort || 22 } : null;
   if (d.driver === 'keenetic') return d.entwarePasswordSet ? { host, user: d.entwareUser || 'root', port: +d.entwarePort || 222 } : null;

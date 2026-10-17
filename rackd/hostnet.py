@@ -322,7 +322,8 @@ class HostNet:
         if drv == 'openwrt':
             return d, {'host': host, 'sshPort': d.get('sshPort') or 22, 'username': d.get('username') or 'root', 'password': d.get('password') or ''}, ''
         if drv in ('ssh', 'windows'):
-            return d, {'host': host, 'sshPort': d.get('sshPort') or 22, 'username': d.get('username') or 'root', 'password': d.get('password') or '', 'privateKey': d.get('privateKey') or ''}, ''
+            return d, {'host': host, 'sshPort': d.get('sshPort') or 22, 'username': d.get('username') or 'root', 'password': d.get('password') or '', 'privateKey': d.get('privateKey') or '',
+                       'local': bool(d.get('local'))}, ''
         if drv == 'keenetic':
             if not d.get('entwarePassword'):
                 return None, None, 'Rack Live стоит на роутере Keenetic: терминал открывается через Entware — введите пароль Entware в плагинах роутера (вкладка «Плагины» → Entware).'

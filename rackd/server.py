@@ -8,7 +8,7 @@ from .drivers import REGISTRY, load_all
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.10.1'
+VERSION = '2.10.2'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -87,6 +87,20 @@ class App:
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
+        self.ensure_local_device()
+
+    def ensure_local_device(self):
+        """Rack Live running right on a Linux machine as root (a collector, ReckController OS): that machine is a device too — added once, by itself.
+        Its commands run here directly (sshhost._run with `local`), so it gets the overview, disks, Docker, plugins and the terminal with no SSH to itself."""
+        if DEMO or not hostops.local_ok():
+            return
+        devs = self.store.cfg['devices']
+        if any(d.get('local') for d in devs) or self.hostnet.find_host():
+            return
+        name = (socket.gethostname() or 'Эта машина')[:60]
+        self.store.upsert_device({'name': name, 'driver': 'ssh', 'kind': 'server', 'host': '127.0.0.1', 'username': 'root', 'local': True, 'location': 'local',
+                                  'notes': 'Машина, на которой работает этот Rack Live (добавлена сама)'})
+        self.store.add_event(None, name, 'info', 'добавлено устройство «Эта машина»: здесь работает Rack Live — обзор, диски, Docker, плагины и терминал без SSH')
 
     # ───────── polling ─────────
     def poll_device(self, d):
@@ -486,7 +500,7 @@ class App:
             raise ValueError('Через этот адаптер идёт связь машины с сетью: если его перенастроить, пропадёт и эта панель. Подключите кабель (Ethernet) или подтвердите, что понимаете риск.')
         return w
 
-    def dev_op(self, body):
+    def dev_op(self, body, client_ip=None):
         """one operation of «Режим разработчика». Quick ones answer at once, long ones return {'job': id}. Raises ValueError (a readable reason) or PermissionError."""
         if not self.store.cfg['settings'].get('devMode'):
             raise PermissionError('включите «Режим разработчика» в Настройки → Основные')
@@ -569,7 +583,16 @@ class App:
             iface, ssid = hostops.check_iface(body.get('iface')), hostops.check_ssid(body.get('ssid'))
             psk = hostops.check_psk(body.get('password'), allow_empty=True)
             if not demo:
-                self._wifi_guard(iface, bool(body.get('force')))
+                w = self._wifi_guard(iface, bool(body.get('force')))
+                hs = w.get('hotspot') or {}
+                if hs.get('on') and hs.get('iface') == iface and client_ip and not body.get('force'):      # the person is on OUR point: this would cut them off
+                    import ipaddress
+                    try:
+                        inside = ipaddress.ip_address(client_ip) in ipaddress.ip_interface(hs.get('address') or '').network
+                    except ValueError:
+                        inside = False
+                    if inside:
+                        raise ValueError('Вы подключены через точку этой машины на этом же адаптере: подключение к другой сети выключит точку и оборвёт связь. Подтвердите или используйте второй Wi-Fi-адаптер.')
 
             def run(progress):
                 out, lines = self._host_exec(hostops.connect_script(iface, ssid, psk, bool(body.get('hidden'))), 150, progress)
@@ -2072,7 +2095,7 @@ class Handler(BaseHTTPRequestHandler):
                     j = APP.jobs.get(str(body.get('job') or ''))
                     return self.send({k: v for k, v in j.items() if k != 'device'} if j and j.get('device') == '*' else {'done': True, 'error': 'задача не найдена'})
                 try:
-                    return self.send(APP.dev_op(body))
+                    return self.send(APP.dev_op(body, self.client_ip()))
                 except PermissionError as e:
                     return self.err(str(e), 403)
                 except ValueError as e:

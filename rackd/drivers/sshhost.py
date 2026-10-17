@@ -64,6 +64,10 @@ class SSHHost(Driver):
 
     def interactive_args(self, cfg, remote=None):
         """the command line of an interactive `ssh -tt` (for the browser terminal): → (args, env, temp file to delete). Same ways of signing in as _run."""
+        if cfg.get('local') and hostops.local_ok():         # «Эта машина»: a login shell right here, no SSH to itself
+            env = dict(os.environ, HOME='/root')
+            env.setdefault('TERM', 'xterm-256color')
+            return [shutil.which('bash') or '/bin/sh', '-l'] + (['-c', remote] if remote else []), env, None
         host, port = cfg['host'].strip(), int(cfg.get('sshPort') or 22)
         user = cfg.get('username') or 'root'
         key, pw = (cfg.get('privateKey') or '').strip(), cfg.get('password') or ''
@@ -115,6 +119,11 @@ class SSHHost(Driver):
         return dockerinfo.parse(self._run(cfg, dockerinfo.SCRIPT, timeout=90), cfg['host'].strip(), notes)
 
     def _run(self, cfg, script, timeout=30, remote='sh -s'):          # remote: what the other side runs to read the script from stdin (Windows: PowerShell, see drivers/windows.py)
+        if cfg.get('local') and remote == 'sh -s' and hostops.local_ok():          # «Эта машина»: Rack Live runs right here as root — the script runs directly
+            try:
+                return hostops.run_local(script, timeout)
+            except (OSError, RuntimeError) as e:
+                raise DriverError(str(e))
         host, port = cfg['host'].strip(), int(cfg.get('sshPort') or 22)
         user = cfg.get('username') or 'root'
         key, pw = (cfg.get('privateKey') or '').strip(), cfg.get('password') or ''
@@ -322,6 +331,8 @@ done; wait; echo @@end'''
         except DriverError:
             pass
         try:
+            if cfg.get('local'):                                            # Rack Live itself runs here: installing it onto itself makes no sense
+                raise DriverError('local')
             s = collector_install.parse_status(self._run(cfg, collector_install.STATUS, 40))
             out.append(self._collector_card(cfg, True, s))
             if 'rcos' not in s:                                             # a machine turned into ReckController OS has no use for the plain collector card

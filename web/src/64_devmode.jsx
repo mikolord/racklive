@@ -55,6 +55,7 @@ function DevSystem() {
   if (!st) return <Card title="Система"><div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Читаю систему машины…</div></Card>;
   if (!st.ok) return <Card title="Система"><div className="cam-warn">{st.why}</div></Card>;
   const dk = st.docker || {};
+  const hostDev = (data.devices || []).find(d => d.local) || (data.devices || []).find(d => d.driver === 'ssh' && ['127.0.0.1', location.hostname].includes(String(d.host || '').replace(/[:/].*$/, '')));
   return <>
     <Hint id="devsys">Это настоящая система машины, где работает Rack Live. Перед обновлениями и перезагрузкой Rack Live просит подтверждение; долгие операции идут в фоне, окно можно закрыть.</Hint>
     {!st.supported ? <div className="cam-warn" style={{ marginBottom: 12 }}>{st.why}</div> : null}
@@ -84,6 +85,8 @@ function DevSystem() {
       <KV rows={[['Версия', dk.version || 'не установлен'], ['Пакеты', (dk.packages || []).map(p => p.name + ' ' + p.version).join(' · ') || null]]} />
       <Btn style={{ marginTop: 10 }} icon="download" disabled={!st.supported || h.running} onClick={async () => { if (await confirm(dk.version ? 'Обновить Docker и связанные пакеты (containerd, compose) до последних версий из репозитория системы? Контейнеры на время обновления могут перезапуститься.' : 'Docker не установлен. Поставить docker.io из репозитория системы?', { title: 'Docker', ok: dk.version ? 'Обновить' : 'Установить' })) h.start('docker'); }}>{dk.version ? 'Обновить Docker' : 'Установить Docker'}</Btn>
     </Card>
+    {hostDev ? <><div className="card-title" style={{ margin: '18px 4px 8px' }}>Плагины этой машины</div>
+      <PluginsTab device={hostDev} /></> : null}
     {rb ? <WordConfirm title="Перезагрузка машины" word="ПЕРЕЗАГРУЗИТЬ" ok="Перезагрузить" onClose={() => setRb(false)}
       text="Машина перезагрузится через 3 секунды. Панель, терминал и всё, что подключено по Wi-Fi-точке этой машины, на 1–2 минуты пропадёт, потом вернётся само."
       onGo={w => { setRb(false); quick('reboot', { confirm: w }); }} /> : null}
@@ -109,6 +112,7 @@ function WifiCard() {
   const toast = useToast(); const confirm = useConfirm();
   const [w, setW] = useState(null); const [err, setErr] = useState('');
   const [ifc, setIfc] = useState(''); const [ssid, setSsid] = useState(''); const [pw, setPw] = useState(''); const [addr, setAddr] = useState(''); const [band, setBand] = useState('bg'); const [force, setForce] = useState(false);
+  const [editAp, setEditAp] = useState(false);
   const [cIf, setCIf] = useState(''); const [nets, setNets] = useState(null); const [scanning, setScanning] = useState(false); const [pick, setPick] = useState(''); const [cpw, setCpw] = useState(''); const [manual, setManual] = useState(false); const [showPw, setShowPw] = useState(false);
   const load = async () => { try { setW(await api('/api/dev/wifi')); setErr(''); } catch (e) { setErr(e.message); } };
   useEffect(() => { load(); }, []);
@@ -134,6 +138,8 @@ function WifiCard() {
   const defOnIfc = w.defaultDev && w.defaultDev === ifc;
   const defOnC = w.defaultDev && w.defaultDev === cIf;
   const url = hs.on && hs.address ? `http://${hs.address.split('/')[0]}:${w.port}` : '';
+  const viaAp = hs.on && hs.address && location.hostname === hs.address.split('/')[0];          // this very page came through our access point
+  const editing = !hs.on || editAp;
   const join = hs.on && ap.ssid && ap.password ? `WIFI:T:WPA;S:${wifiEsc(ap.ssid)};P:${wifiEsc(ap.password)};;` : '';
   const chipText = (w.chips || []).map(c => c.vendorName + (c.name ? ' ' + c.name : '')).join(', ');
   const sel = nets && nets.find(n => n.ssid === pick);
@@ -169,7 +175,12 @@ function WifiCard() {
             <div className="dim3" style={{ fontSize: 12.5 }}>На телефоне: «Настройки → Wi-Fi» → сеть «{hs.ssid}» → пароль → откройте {url.replace('http://', '')} в браузере.</div></div>
           {join ? <div className="col" style={{ alignItems: 'center', gap: 4 }}><QrCode text={join} size={140} /><span className="dim3" style={{ fontSize: 11.5 }}>QR: подключиться к сети</span></div> : null}
         </div></div> : hs.exists ? <div className="dim" style={{ marginTop: 10 }}>Точка настроена («{hs.ssid}»), но сейчас выключена.</div> : null}
-      <div className="awg-form" style={{ marginTop: 12 }}>
+      {!editing ? <div className="row wrap" style={{ gap: 8, marginTop: 12 }}>
+        <Btn kind="primary" icon="edit" disabled={h.running} onClick={() => { setSsid(hs.ssid || ap.ssid || ssid); setPw(ap.password || ''); setEditAp(true); }}>Изменить название или пароль</Btn>
+        <Btn disabled={h.running} onClick={async () => { if (await confirm(viaAp ? 'Вы сейчас подключены через эту точку: после выключения телефон потеряет связь с машиной, и эта страница перестанет открываться. Выключить?' : 'Выключить точку? Устройства, подключённые к ней (например, телефон), потеряют связь с машиной.', { title: 'Wi-Fi-точка', ok: 'Выключить', danger: true })) quick('ap_off', {}); }}>Выключить</Btn>
+      </div> : null}
+      {editing ? <div className="awg-form" style={{ marginTop: 12 }}>
+        {hs.on && viaAp ? <div className="cam-warn">Вы подключены через эту точку. После «Применить» она перезапустится с новыми настройками: телефон отключится на несколько секунд — подключитесь к сети «{ssid.trim() || hs.ssid}» {pw && pw !== ap.password ? 'с новым паролем' : 'заново'}. Адрес панели останется {url.replace('http://', '')}.</div> : null}
         <div className="row wrap" style={{ gap: 8 }}>
           <Field label="Адаптер"><select className="input" value={ifc} onChange={e => setIfc(e.target.value)}>{names.map(n => <option key={n} value={n}>{n}</option>)}</select></Field>
           <Field label="Название сети"><input className="input" value={ssid} onChange={e => setSsid(e.target.value)} /></Field></div>
@@ -182,10 +193,11 @@ function WifiCard() {
         {defOnIfc ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={force} onChange={setForce} /><div className="grow"><div>Я понимаю, что связь может пропасть</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Через адаптер {ifc} сейчас идёт связь этой машины с сетью. Если превратить его в точку, эта панель и SSH исчезнут, пока не подключён кабель.</div></div></div> : null}
         <div className="row wrap" style={{ gap: 8 }}>
-          <Btn kind="primary" icon="wifi" disabled={h.running || !ifc || !ssid.trim() || (defOnIfc && !force)} onClick={() => h.start('ap_on', { iface: ifc, ssid: ssid.trim(), password: pw, address: addr.trim(), band, force })}>{hs.on ? 'Применить' : 'Включить точку'}</Btn>
-          {hs.on ? <Btn disabled={h.running} onClick={async () => { if (await confirm('Выключить точку? Устройства, подключённые к ней (например, телефон), потеряют связь с машиной.', { title: 'Wi-Fi-точка', ok: 'Выключить', danger: true })) quick('ap_off', {}); }}>Выключить</Btn> : null}
-          {hs.exists ? <Btn kind="danger" icon="trash" disabled={h.running} onClick={async () => { if (await confirm('Удалить настройки точки вместе с паролем?', { title: 'Wi-Fi-точка', ok: 'Удалить', danger: true })) quick('ap_forget', {}); }}>Удалить настройки</Btn> : null}</div>
-      </div></Card> : null}
+          <Btn kind="primary" icon="wifi" disabled={h.running || !ifc || !ssid.trim() || (pw && pw.length < 8) || (defOnIfc && !force)} onClick={() => { h.start('ap_on', { iface: ifc, ssid: ssid.trim(), password: pw, address: addr.trim(), band, force }); setEditAp(false); }}>{hs.on ? 'Применить' : 'Включить точку'}</Btn>
+          {hs.on ? <Btn disabled={h.running} onClick={() => setEditAp(false)}>Отмена</Btn> : null}
+          {hs.exists && !hs.on ? <Btn kind="danger" icon="trash" disabled={h.running} onClick={async () => { if (await confirm('Удалить настройки точки вместе с паролем?', { title: 'Wi-Fi-точка', ok: 'Удалить', danger: true })) quick('ap_forget', {}); }}>Удалить настройки</Btn> : null}</div>
+        {pw && pw.length < 8 ? <div className="dim3" style={{ fontSize: 12.5, color: 'var(--red)' }}>Пароль Wi-Fi — от 8 символов.</div> : null}
+      </div> : null}</Card> : null}
     {ready ? <Card title="Подключение к Wi-Fi">
       <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Машина подключается к чужой сети как обычное устройство — когда нет кабеля. Если адаптер один, его точка на время выключится.</div>
       {(w.profiles || []).length ? <><div className="card-title" style={{ marginTop: 12 }}>Сохранённые сети</div>
@@ -202,9 +214,12 @@ function WifiCard() {
         {manual ? <Field label="Название сети"><input className="input" value={pick} onChange={e => setPick(e.target.value)} /></Field> : null}
         {(pick || manual) && (manual || (sel && sel.security)) ? <Field label={'Пароль сети «' + pick + '»'}><input className="input mono" type="password" value={cpw} onChange={e => setCpw(e.target.value)} /></Field> : null}
         {defOnC ? <div className="cam-warn">Через адаптер {cIf} сейчас идёт связь машины. Подключение к другой сети его перенастроит — эта панель может пропасть. Лучше подключите кабель.</div> : null}
+        {viaAp && hs.iface === cIf ? <div className="cam-warn">Вы подключены через точку этой машины на том же адаптере {cIf}. Если подключить его к другой сети, точка выключится и телефон потеряет связь с панелью. Для того и другого сразу нужен второй Wi-Fi-адаптер.</div> : null}
         <Btn kind="primary" icon="wifi" disabled={h.running || !pick || !cIf} onClick={async () => {
           if (defOnC && !(await confirm(`Адаптер ${cIf} сейчас — единственный канал связи. Подключиться всё равно?`, { title: 'Wi-Fi', ok: 'Подключиться', danger: true }))) return;
-          h.start('connect', { iface: cIf, ssid: pick, password: cpw, hidden: manual, force: defOnC }); setCpw('');
+          const cut = viaAp && hs.iface === cIf;
+          if (cut && !(await confirm(`Точка «${hs.ssid}» выключится, телефон потеряет связь с машиной, и эта страница перестанет открываться. Вернуть точку можно будет с кабеля или после перезагрузки. Подключиться всё равно?`, { title: 'Wi-Fi', ok: 'Подключиться', danger: true }))) return;
+          h.start('connect', { iface: cIf, ssid: pick, password: cpw, hidden: manual, force: defOnC || cut }); setCpw('');
         }}>Подключиться</Btn>
       </div></Card> : null}
   </>;
