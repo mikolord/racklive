@@ -188,6 +188,17 @@ function SettingsView() {
   const fileRef = useRef(null);
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
   const save = async () => { try { await api('/api/settings', { method: 'PUT', body: { title: s.title, poll: +s.poll, publicView: s.publicView, showClients: s.showClients, hints: s.hints !== false, vlans: s.vlans } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
+  const [fullBk, setFullBk] = useState(false); const [bkPw, setBkPw] = useState('');
+  const downloadFull = async () => {                        // the full backup is a POST with the password typed again; the answer is a file
+    try {
+      const tok = ssGet('rl_tok');
+      const r = await fetch('/api/export', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'application/json' }, tok ? { 'X-RL-Session': tok } : {}), body: JSON.stringify({ password: bkPw }) });
+      if (!r.ok) { let m = 'не получилось'; try { m = (await r.json()).error || m; } catch (e) { } throw new Error(m); }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = 'racklive-backup-full.json';
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+      setBkPw(''); setFullBk(false); toast('Полная копия скачана');
+    } catch (e) { toast(e.message, true); }
+  };
   const toggleDev = async v => { try { await api('/api/settings', { method: 'PUT', body: { devMode: v } }); toast(v ? 'Режим разработчика включён: появились «Система» и Wi-Fi в «Сеть»' : 'Режим разработчика выключен'); refresh(); } catch (e) { toast(e.message, true); } };
   const [hiddenN, setHiddenN] = useState(() => hiddenHints().length);
   const [vlanOpen, setVlanOpen] = useState(() => lsGet('rl_vlan_open', '') === '1');      // collapsed by default
@@ -297,8 +308,12 @@ function SettingsView() {
     {cur.id === 'terminal' ? <TerminalCard /> : null}
     {cur.id === 'backup' ? <Card title="Резервная копия и импорт">
       <div className="col" style={{ gap: 12 }}>
-        <div className="dim" style={{ fontSize: 13.5 }}>Копия содержит устройства (с паролями), схему шкафа, карту и настройки. Храните её в надёжном месте.</div>
+        <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Копия содержит устройства, схему шкафа, карту и настройки. Пароля администратора и второго фактора в ней нет никогда, а пароли устройств и ключи сервисов — только в полной копии.</div>
         <a className="btn" href="/api/export"><Icon name="download" size={17} />Скачать резервную копию</a>
+        <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={fullBk} onChange={setFullBk} /><div className="grow"><div>Полная копия — с паролями устройств</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Нужна, чтобы перенести Rack Live на другую машину со всеми доступами. Такой файл — ключи от всех ваших устройств: храните его надёжно.</div></div></div>
+        {fullBk ? <div className="row" style={{ gap: 8 }}><input className="input grow" type="password" placeholder="Пароль администратора" value={bkPw} onChange={e => setBkPw(e.target.value)} />
+          <Btn kind="primary" icon="download" disabled={!bkPw} onClick={downloadFull}>Скачать полную</Btn></div> : null}
         <Btn icon="upload" onClick={() => fileRef.current.click()}>Восстановить или импортировать…</Btn>
         <div className="dim3" style={{ fontSize: 12.5 }}>Подходит резервная копия Rack Live или файл server-rack.html / JSON из старого «Конструктора шкафа»</div>
         <input ref={fileRef} type="file" accept=".json,.html,application/json,text/html" style={{ display: 'none' }} onChange={importFile} />

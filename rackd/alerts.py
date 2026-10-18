@@ -59,12 +59,15 @@ def public(cfg_notify):
 
 
 def tg_allowed(tg):
-    """Telegram accounts allowed into the mini app: the explicit list, else the personal chat ids alerts go to."""
-    src = tg.get('allowed') or tg.get('chat') or ''
-    return {x.strip() for x in str(src).split(',') if x.strip() and not x.strip().startswith('-')}
+    """Telegram accounts allowed into the mini app, Frank in the bot and the Telegram second factor: ONLY the explicit list (linking an account through the
+    bot fills it). The chat ids alerts go to are not a permission: a person who just receives notifications must not become an administrator."""
+    return {x.strip() for x in str(tg.get('allowed') or '').split(',') if x.strip() and not x.strip().startswith('-')}
 
 
-def verify_webapp(cfg_notify, init_data, max_age=86400):
+_USED = {}                                              # launch data already used to sign in: hash → time (one sign-in per opening of the mini app)
+
+
+def verify_webapp(cfg_notify, init_data, max_age=300):
     """Check Telegram mini-app launch data (HMAC with the bot token) → (user, '') or (None, why)."""
     tg = merged(cfg_notify)['telegram']
     if not tg.get('enabled') or not tg.get('token'):
@@ -85,6 +88,12 @@ def verify_webapp(cfg_notify, init_data, max_age=86400):
         return None, 'не удалось прочитать данные Telegram'
     if str(user.get('id')) not in tg_allowed(tg):
         return None, f"аккаунт Telegram {user.get('id')} не в списке разрешённых"
+    now = time.time()
+    for k in [k for k, t in _USED.items() if now - t > max_age * 2]:
+        del _USED[k]
+    if sign in _USED:                                   # the same signed string a second time (copied from a history, a log, a screenshot)
+        return None, 'эти данные входа уже использованы — закройте панель и откройте её заново кнопкой в боте'
+    _USED[sign] = now
     return user, ''
 
 

@@ -5,6 +5,8 @@ Here, in the centre: a site has a name and a secret key; what the collector send
 devices on the map, counted by the health check and the alerts). Nothing from the remote place can reach into this installation: the key only lets it deliver data."""
 import base64, json, re, secrets, time
 
+from .auth import same_secret
+
 MAX_DEVICES = 200
 KEEP = ('summary', 'metrics', 'storage', 'services', 'sections', 'ports')
 KINDS = {'router', 'switch', 'nas', 'server', 'camera', 'ap', 'phone', 'pc', 'printer', 'ups', 'other', 'tv', 'iot', 'nvr', 'vps', 'speaker', 'modem'}
@@ -90,7 +92,7 @@ class Sites:
 
     def ingest(self, token, body, ip):
         """what a collector sent → the site's devices. Returns the answer for the collector. Raises PermissionError (bad key) / ValueError (bad data)."""
-        site = next((s for s in self.items if token and secrets.compare_digest(s['token'], token)), None)
+        site = next((s for s in self.items if same_secret(s['token'], token)), None)
         if not site:
             raise PermissionError('неверный ключ площадки')
         return self.apply(site, body, ip)

@@ -17,6 +17,71 @@ DEFAULT = {
 }
 
 SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword', 'tokenSecret')
+NEVER_EXPORTED = ('auth', 'mfa')          # the administrator password and the second factor stay with the installation: a backup file never carries them
+KEPT_ON_IMPORT = ('auth', 'mfa', 'notify')   # …and restoring a file never replaces them (nor the notification channels)
+
+
+def _service_secrets(c):
+    """(container, key) of every secret that is not a device field"""
+    n = c.get('notify') or {}
+    out = [((n.get('telegram') or {}), 'token'), ((n.get('email') or {}), 'password'), ((c.get('ai') or {}), 'key'), ((c.get('collector') or {}), 'token'),
+           (((c.get('dev') or {}).get('ap') or {}), 'password')]
+    out += [(s, 'token') for s in c.get('sites') or [] if isinstance(s, dict)]
+    return out
+
+
+def backup_of(cfg, with_secrets=False):
+    """the backup file: never the sign-in; without passwords and keys unless asked (and the password was typed again)"""
+    c = copy.deepcopy(cfg)
+    for k in NEVER_EXPORTED:
+        c.pop(k, None)
+    if not with_secrets:
+        for d in c.get('devices') or []:
+            for k in SECRET_KEYS:
+                d.pop(k, None)
+        for box, k in _service_secrets(c):
+            box.pop(k, None)
+    c['backupSecrets'] = bool(with_secrets)
+    return c
+
+
+def restored(cur, data):
+    """a backup file → the new config. Checked first; the sign-in, the second factor and the notification channels stay as they are now;
+    a password or key the file does not carry (a backup without secrets) is kept from the current config. Raises ValueError."""
+    if not isinstance(data, dict) or data.get('version') != 2 or not isinstance(data.get('devices'), list):
+        raise ValueError('это не резервная копия Rack Live')
+    for d in data['devices']:
+        if not isinstance(d, dict) or not isinstance(d.get('id'), str) or not isinstance(d.get('driver'), str):
+            raise ValueError('в резервной копии повреждён список устройств')
+    for k, typ in (('racks', list), ('settings', dict), ('map', dict), ('plan', dict), ('sites', list)):
+        if k in data and not isinstance(data[k], typ):
+            raise ValueError(f'в резервной копии повреждён раздел «{k}»')
+    new = copy.deepcopy(data)
+    new.pop('backupSecrets', None)
+    for k in KEPT_ON_IMPORT:
+        if k in cur:
+            new[k] = copy.deepcopy(cur[k])
+        else:
+            new.pop(k, None)
+    old = {d['id']: d for d in cur.get('devices') or [] if isinstance(d, dict) and d.get('id')}
+    for d in new['devices']:
+        for k in SECRET_KEYS:
+            if not d.get(k) and (old.get(d['id']) or {}).get(k):
+                d[k] = copy.deepcopy(old[d['id']][k])
+    for path in (('ai', 'key'), ('collector', 'token'), ('dev', 'ap', 'password')):
+        src, dst = cur, new
+        for p in path[:-1]:
+            src, dst = (src.get(p) or {}), dst.get(p)
+            if not isinstance(dst, dict):
+                break
+        else:
+            if not dst.get(path[-1]) and src.get(path[-1]):
+                dst[path[-1]] = src[path[-1]]
+    cur_sites = {s.get('id'): s for s in cur.get('sites') or [] if isinstance(s, dict)}
+    for s in new.get('sites') or []:
+        if isinstance(s, dict) and not s.get('token') and (cur_sites.get(s.get('id')) or {}).get('token'):
+            s['token'] = cur_sites[s['id']]['token']
+    return new
 
 
 class Store:

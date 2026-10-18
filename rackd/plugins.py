@@ -29,22 +29,22 @@ INSTALLERS = {
         'packages': ('hrneo', 'hrweb'), 'port': 2000, 'login': 'логин и пароль от роутера',
         'install': '''opkg update >/dev/null 2>&1
 opkg install curl 2>&1 | tail -1
-curl -fsSL "https://git.zerrolabs.org/Ground-Zerro/release/pages/keenetic/install-neo.sh" -o /tmp/rl-inst.sh || \\
-  curl -fsSL "https://ground-zerro.github.io/release/keenetic/install-neo.sh" -o /tmp/rl-inst.sh
-[ -s /tmp/rl-inst.sh ] || { echo "@@fail не удалось скачать установщик HydraRoute Neo"; exit 0; }
-sh /tmp/rl-inst.sh </dev/null 2>&1 | tail -40
-rm -f /tmp/rl-inst.sh''',
+curl -fsSL "https://git.zerrolabs.org/Ground-Zerro/release/pages/keenetic/install-neo.sh" -o "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" || \\
+  curl -fsSL "https://ground-zerro.github.io/release/keenetic/install-neo.sh" -o "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || { echo "@@fail не удалось скачать установщик HydraRoute Neo"; exit 0; }
+sh "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" </dev/null 2>&1 | tail -40
+rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"''',
         'remove': 'neo stop 2>/dev/null; opkg remove hrweb hrneo 2>&1 | tail -5',
     },
     'awgmanager': {
         'packages': ('awg-manager',), 'port': 2222, 'login': 'учётная запись из первого входа в панель',
         'install': '''opkg update >/dev/null 2>&1
-wget -qO /tmp/rl-inst.sh http://repo.hoaxisr.ru/install.sh 2>/dev/null
-if [ ! -s /tmp/rl-inst.sh ]; then opkg install curl 2>&1 | tail -1
-  curl -fsSL https://raw.githubusercontent.com/hoaxisr/awg-manager/develop/scripts/install.sh -o /tmp/rl-inst.sh; fi
-[ -s /tmp/rl-inst.sh ] || { echo "@@fail не удалось скачать установщик AWG Manager"; exit 0; }
-sh /tmp/rl-inst.sh </dev/null 2>&1 | tail -40
-rm -f /tmp/rl-inst.sh''',
+opkg install curl 2>&1 | tail -1
+curl -fsSL https://raw.githubusercontent.com/hoaxisr/awg-manager/develop/scripts/install.sh -o "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" || \\
+  curl -fsSL https://repo.hoaxisr.ru/install.sh -o "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || { echo "@@fail не удалось скачать установщик AWG Manager"; exit 0; }
+sh "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" </dev/null 2>&1 | tail -40
+rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"''',
         'remove': 'opkg remove awg-manager 2>&1 | tail -5; rm -rf /opt/etc/awg-manager /opt/etc/awg-manager.pre-restore-*',
     },
 }
@@ -121,22 +121,22 @@ def parse_owrt(out):
 OWRT_INSTALLERS = {
     'forkop': {'packages': ('forkop', 'luci-app-forkop'), 'conflict': 'podkop', 'freeMB': 15, 'luci': 'admin/services/forkop',
                'install': OWRT_PKG + '''pupd >/dev/null 2>&1
-wget -qO /tmp/rl-inst.sh https://raw.githubusercontent.com/ushan0v/forkop/main/install.sh 2>/dev/null
-[ -s /tmp/rl-inst.sh ] || wget -qO /tmp/rl-inst.sh https://forkop.sourceforge.io/install.sh 2>/dev/null
-[ -s /tmp/rl-inst.sh ] || { echo "@@fail не удалось скачать установщик Forkop"; exit 0; }
-sh /tmp/rl-inst.sh </dev/null 2>&1 | tail -40
-rm -f /tmp/rl-inst.sh
+wget -qO "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" https://raw.githubusercontent.com/ushan0v/forkop/main/install.sh 2>/dev/null
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || wget -qO "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" https://forkop.sourceforge.io/install.sh 2>/dev/null
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || { echo "@@fail не удалось скачать установщик Forkop"; exit 0; }
+sh "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" </dev/null 2>&1 | tail -40
+rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"
 if [ "$RL_EXT" = 1 ] && [ -x /usr/bin/forkop ]; then echo "→ sing-box extended (XHTTP)"; /usr/bin/forkop component_action sing_box install_extended </dev/null 2>&1 | tail -5; fi
 ''',
                'remove': OWRT_PKG + 'service forkop stop 2>/dev/null; pdel luci-i18n-forkop-ru luci-app-forkop forkop 2>&1 | tail -8'},
     'podkop': {'packages': ('podkop', 'luci-app-podkop'), 'conflict': 'forkop', 'freeMB': 25, 'luci': 'admin/services/podkop',
                # the official installer asks y/n questions in a loop (language, conflicting https-dns-proxy) — answer «y» to all
                'install': OWRT_PKG + '''pupd >/dev/null 2>&1
-wget -qO /tmp/rl-inst.sh https://raw.githubusercontent.com/itdoginfo/podkop/refs/heads/main/install.sh 2>/dev/null
-[ -s /tmp/rl-inst.sh ] || { echo "@@fail не удалось скачать установщик Podkop"; exit 0; }
+wget -qO "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" https://raw.githubusercontent.com/itdoginfo/podkop/refs/heads/main/install.sh 2>/dev/null
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || { echo "@@fail не удалось скачать установщик Podkop"; exit 0; }
 T=""; command -v timeout >/dev/null 2>&1 && T="timeout 900"
-(while :; do echo y; done) | $T sh /tmp/rl-inst.sh 2>&1 | tail -40
-rm -f /tmp/rl-inst.sh
+(while :; do echo y; done) | $T sh "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" 2>&1 | tail -40
+rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"
 ''',
                'remove': OWRT_PKG + 'service podkop stop 2>/dev/null; pdel luci-i18n-podkop-ru luci-app-podkop podkop 2>&1 | tail -8'},
 }

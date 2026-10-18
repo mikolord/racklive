@@ -14,6 +14,11 @@ ABS_HOURS = 12              # ...and never lives longer than this
 SAVE_EVERY = 60             # write sessions.json at most this often when only «last seen» changed
 
 
+def same_secret(a, b):
+    """constant-time comparison of two secrets of any characters (str compare_digest refuses non-ASCII and would end in an error 500)"""
+    return bool(a) and bool(b) and hmac.compare_digest(str(a).encode('utf-8', 'replace'), str(b).encode('utf-8', 'replace'))
+
+
 def hash_password(pw, salt=None):
     salt = salt or secrets.token_hex(16)
     h = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), ITER).hex()
@@ -142,7 +147,7 @@ class Sessions:
                 self.saved = 0
             if ip and dev.get('ip') != ip:
                 dev['ip'] = ip
-                self.saved = 0 if not dev.get('ip') else self.saved
+                self.saved = 0                          # a new address of the device is written at once (Настройки → Доступ shows it)
             window = self.p('sessionDays', SESSION_DAYS) * 86400 if dev.get('trusted') else self.p('idleMin', IDLE_MIN) * 60
             new_exp = min(now + window, s['abs']) if s.get('abs') else now + window
             if new_exp > s['exp'] + 1:                 # sliding: activity pushes the end of the session away
@@ -217,14 +222,23 @@ class Sessions:
             self._save()
             return True
 
-    # ── brute force: shared by the password and every second-factor attempt ──
+    # ── brute force: shared by the password and every second-factor attempt, per real address of the connection (server.client_ip).
+    # Everything that comes through the router's own proxy (the KeenDNS domain) has the router's address — so for the Internet this is one common limit. ──
     def throttled(self, ip):
         n, t = self.fails.get(ip, (0, 0))
         return n >= 5 and time.time() - t < 300
 
     def fail(self, ip):
-        n, t = self.fails.get(ip, (0, 0))
-        self.fails[ip] = (n + 1 if time.time() - t < 300 else 1, time.time())
+        """→ True when this very failure locks the address (to tell the owner once)"""
+        now = time.time()
+        with self.lock:
+            if len(self.fails) > 2000:                  # old entries go (the table must not grow without end)
+                self.fails = {k: v for k, v in self.fails.items() if now - v[1] < 300}
+            n, t = self.fails.get(ip, (0, 0))
+            n = n + 1 if now - t < 300 else 1
+            self.fails[ip] = (n, now)
+            return n == 5
 
     def ok(self, ip):
+        """only after a COMPLETE sign-in (password and, when asked, the second factor)"""
         self.fails.pop(ip, None)

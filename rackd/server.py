@@ -1,14 +1,15 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, gzip, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
+import concurrent.futures, gzip, ipaddress, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, scenes as scenes_mod, sandbox as sandbox_mod, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
+from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.10.7'
+VERSION = '2.11.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -18,6 +19,11 @@ SYS_EVENTS = ('Страница', 'Обучение', 'Rack Live')              
 
 def log(*a):
     print(time.strftime('%Y-%m-%d %H:%M:%S'), *a, flush=True)
+
+
+TERM_TICKETS = {}                         # one-time passes for the terminal WebSocket: pass → (session key, until)
+GUEST_SETTINGS = ('title', 'showClients', 'hints', 'vlans', 'publicView', 'poll')               # what a guest («просмотр без пароля») may see of the settings
+TRUSTED_PROXIES = {x.strip() for x in os.environ.get('RL_TRUSTED_PROXIES', '').split(',') if x.strip()}     # e.g. nginx in front: its address
 
 
 def lan_url_toward(host):
@@ -705,10 +711,10 @@ class App:
                 'tgBot': {'username': self.tgbot.username, 'error': self.tgbot.error} if authed else None,
                 'tgLogin': self.tgbot.login_available(), 'loginCodes': self.mfa.login_methods(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO, 'devMode': bool(authed and cfg['settings'].get('devMode')),
-                'settings': cfg['settings'], 'drivers': [drv.schema() for drv in REGISTRY.values()],
+                'settings': cfg['settings'] if authed else {k: cfg['settings'].get(k) for k in GUEST_SETTINGS}, 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
-                'events': self.store.events[-60:][::-1], 'now': time.time()}
+                'events': self.store.events[-60:][::-1] if authed else [], 'now': time.time()}       # the journal holds admin addresses, logins and host names: not for guests
 
 
 APP = None
@@ -742,7 +748,27 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── helpers ──
     def client_ip(self):
-        return (self.headers.get('X-Forwarded-For') or self.client_address[0]).split(',')[0].strip()
+        """the real address of the connection. X-Forwarded-For is believed only from a proxy listed in RL_TRUSTED_PROXIES (and then its LAST entry — what that
+        proxy itself saw): a header the client sends proves nothing, and trusting it let anyone dodge the sign-in limit with a new «address» per try"""
+        peer = self.client_address[0]
+        if peer in TRUSTED_PROXIES:
+            fwd = (self.headers.get('X-Forwarded-For') or '').split(',')[-1].strip()
+            if fwd:
+                return fwd
+        return peer
+
+    def login_fail(self, ip, what):
+        """a wrong password / code: counted; the failure that locks the address is told to the owner (journal + the notification channels)"""
+        if APP.sessions.fail(ip):
+            msg = f'вход закрыт на 5 минут для адреса {ip}: 5 неверных попыток ({what})'
+            APP.store.add_event(None, 'Вход', 'warning', msg)
+
+            def tell():
+                try:
+                    APP.alerter.send(['🔒 ' + msg + '. Если это не вы — значит, кто-то подбирает пароль.'])
+                except Exception:
+                    pass
+            threading.Thread(target=tell, daemon=True).start()
 
     def token(self):
         # cookie for the browser; header for the Telegram mini app (Telegram Web runs it in an iframe, where cookies are often blocked)
@@ -755,9 +781,12 @@ class Handler(BaseHTTPRequestHandler):
         return DEMO or APP.sessions.valid(self.token(), self.client_ip(), self.headers.get('User-Agent') or '')
 
     def body(self):
-        n = int(self.headers.get('Content-Length') or 0)
-        if n > 5_000_000:
-            raise ValueError('слишком большой запрос')
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = -1
+        if n < 0 or n > 5_000_000:                         # a negative length made rfile.read(-1) wait for the end of the connection
+            raise ValueError('неверный размер запроса')
         raw = self.rfile.read(n) if n else b''
         return json.loads(raw) if raw else {}
 
@@ -931,8 +960,11 @@ class Handler(BaseHTTPRequestHandler):
     def terminal(self):
         """WebSocket → a shell on the machine Rack Live runs on (rackd/terminal.py). Admin only, same-site only."""
         q = self.query()
-        if q.get('tok') and not self.headers.get('X-RL-Session'):          # the Telegram mini app keeps the session in a header-less iframe
-            self.headers['X-RL-Session'] = q['tok']
+        # the Telegram mini app keeps the session in a header-less iframe and a WebSocket cannot send headers: it brings a one-time pass (POST /api/term/ticket,
+        # 30 s) instead of the session key itself — a key in a URL would stay in histories and logs
+        tk = TERM_TICKETS.pop(str(q.get('t') or ''), None)
+        if tk and tk[1] > time.time() and not self.headers.get('X-RL-Session'):
+            self.headers['X-RL-Session'] = tk[0]
         if not self.need_admin():
             return
         origin = self.headers.get('Origin')
@@ -998,7 +1030,7 @@ class Handler(BaseHTTPRequestHandler):
     def site_link(self):
         """WebSocket from a site collector: it stays open, the centre sends requests through it (rackd/sitelink.py)"""
         tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
-        site = next((s for s in APP.sites.items if tok and secrets.compare_digest(s['token'], tok)), None)
+        site = next((s for s in APP.sites.items if auth.same_secret(s['token'], tok)), None)
         if not site:
             return self.err('неверный ключ площадки', 401)
         if 'websocket' not in (self.headers.get('Upgrade') or '').lower() or not self.headers.get('Sec-WebSocket-Key'):
@@ -1093,7 +1125,8 @@ class Handler(BaseHTTPRequestHandler):
         if path.rstrip('/') in ('/frank', '/speed', '/terminal'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal
             path = path.rstrip('/') + '.html'
         full = os.path.normpath(os.path.join(WEB, path.lstrip('/')))
-        if not full.startswith(os.path.normpath(WEB)) or not os.path.isfile(full):
+        root = os.path.normpath(WEB)
+        if not (full == root or full.startswith(root + os.sep)) or not os.path.isfile(full):      # inside web/ only (a sibling «web-old» must not match)
             full = os.path.join(WEB, 'index.html')          # SPA fallback
         ctype = mimetypes.guess_type(full)[0] or 'application/octet-stream'
         if full.endswith('.js'):
@@ -1164,7 +1197,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/site/pack':                   # a collector being installed over SSH (plugin «Сборщик площадки») downloads this installation's own code; the site key is the pass
                 tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
                 one_time = (getattr(APP, 'pack_tokens', None) or {}).get(tok, 0) > time.time()          # «ReckController OS» without reporting: a one-hour download key
-                if not tok or not (one_time or any(secrets.compare_digest(s['token'], tok) for s in APP.sites.items)):
+                if not tok or not (one_time or any(auth.same_secret(s['token'], tok) for s in APP.sites.items)):
                     return self.err('неверный ключ площадки', 401)
                 b = cinstall.pack()
                 self.send_response(200)
@@ -1342,7 +1375,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/export':
                 if not self.need_admin():
                     return
-                b = json.dumps(APP.store.cfg, ensure_ascii=False, indent=1).encode()
+                b = json.dumps(store_mod.backup_of(APP.store.cfg), ensure_ascii=False, indent=1).encode()        # without the sign-in and without passwords / keys
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Content-Disposition', 'attachment; filename="racklive-backup.json"')
@@ -1408,11 +1441,20 @@ class Handler(BaseHTTPRequestHandler):
                 APP.themes.remove(m.group(1))
                 st.add_event(None, 'Оформление', 'info', f'оформление «{m.group(1)}» удалено')
                 return self.send({'ok': True})
-            body = self.body()
+            try:
+                body = self.body()
+            except ValueError as e:                         # a broken or oversized body: a plain 400, not an error of the server
+                return self.err(str(e), 400)
             # ── auth ──
             if path == '/api/setup' and method == 'POST':
                 if st.cfg.get('auth'):
                     return self.err('уже настроено', 403)
+                try:                                                    # the first password is set from the home network only (not by whoever finds a fresh install online)
+                    home = ipaddress.ip_address(self.client_address[0]).is_private
+                except ValueError:
+                    home = False
+                if not home and not DEMO:
+                    return self.err('первый пароль задаётся из домашней сети: откройте Rack Live по его домашнему адресу', 403)
                 pw = body.get('password') or ''
                 if len(pw) < 8:
                     return self.err('пароль должен быть не короче 8 символов')
@@ -1426,17 +1468,18 @@ class Handler(BaseHTTPRequestHandler):
                 if APP.sessions.throttled(ip):
                     return self.err('слишком много попыток, подождите 5 минут', 429)
                 if not auth.check_password(st.cfg.get('auth'), body.get('password') or ''):
-                    APP.sessions.fail(ip)
                     st.add_event(None, 'Вход', 'warning', f'неверный пароль с адреса {ip}')
+                    self.login_fail(ip, 'пароль')
                     time.sleep(1)
                     return self.err('неверный пароль', 401)
-                APP.sessions.ok(ip)
                 remember = body.get('remember') is not False
                 if APP.mfa.enabled() and not APP.sessions.trusted_device(self.dev_token()):
-                    # the password is right, but this device is not remembered: one more proof is needed before a session exists
+                    # the password is right, but this device is not remembered: one more proof is needed before a session exists.
+                    # The failure count is NOT reset here — only a complete sign-in resets it (else the password would wipe the code guesses)
                     ticket = APP.mfa.begin(ip, self.headers.get('User-Agent') or '')
                     st.add_event(None, 'Вход', 'info', f'пароль принят с адреса {ip}, ждём второй фактор')
                     return self.send({'ok': False, 'mfa': True, 'ticket': ticket, 'methods': APP.mfa.methods()})
+                APP.sessions.ok(ip)
                 st.add_event(None, 'Вход', 'info', f'администратор вошёл с адреса {ip}')
                 return self.signed_in('password', remember)
             if path == '/api/login/code/start' and method == 'POST':
@@ -1466,11 +1509,11 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     good = APP.mfa.verify(body.get('ticket'), method_id, body.get('code'))
                 except ValueError as e:
-                    APP.sessions.fail(ip)
+                    self.login_fail(ip, 'код')
                     return self.err(str(e), 400)
                 if not good:
-                    APP.sessions.fail(ip)
                     st.add_event(None, 'Вход', 'warning', f'неверный код второго фактора с адреса {ip}')
+                    self.login_fail(ip, 'код')
                     time.sleep(0.7)
                     return self.err('неверный код', 401)
                 APP.mfa.finish(body.get('ticket'))
@@ -1500,13 +1543,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.err('слишком много попыток, подождите 5 минут', 429)
                 user, why = alerts.verify_webapp(st.cfg.get('notify'), body.get('initData') or '')
                 if not user:
-                    APP.sessions.fail(ip)
                     st.add_event(None, 'Вход', 'warning', f'вход через Telegram отклонён: {why}')
+                    self.login_fail(ip, 'Telegram')
                     return self.err(why, 403)
                 APP.sessions.ok(ip)
                 who = ' '.join(x for x in (user.get('first_name'), user.get('last_name')) if x) or str(user.get('id'))
                 st.add_event(None, 'Вход', 'info', f'вход через Telegram: {who} (id {user.get("id")})')
-                return self.signed_in('telegram', True, {'token': True})
+                # a short session that is not remembered: the mini app signs in again by itself every time it is opened from the bot
+                return self.signed_in('telegram', False, {'token': True})
             if path == '/api/tgauth/start' and method == 'POST':
                 # «Войти через Telegram» on the login page: a one-time code → the bot asks «это вы?»
                 ua = self.headers.get('User-Agent') or ''
@@ -1545,7 +1589,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.err(str(e), 400)
             if path == '/api/agent' and method == 'POST':
                 tok = (self.headers.get('Authorization') or '').replace('Bearer ', '').strip()
-                d = next((x for x in st.cfg['devices'] if tok and x.get('agentToken') == tok), None)
+                d = next((x for x in st.cfg['devices'] if auth.same_secret(x.get('agentToken'), tok)), None)
                 if not d:
                     return self.err('неверный токен агента', 401)
                 state = {k: body[k] for k in ('summary', 'metrics', 'storage', 'services', 'sections', 'ports') if k in body}
@@ -1895,12 +1939,33 @@ class Handler(BaseHTTPRequestHandler):
             if m and method == 'DELETE':
                 APP.speed.delete(m.group(1))
                 return self.send({'ok': True})
+            if path == '/api/export' and method == 'POST':
+                # the backup WITH device passwords and service keys: only after the administrator password is typed again (the sign-in itself is never in a file)
+                ip = self.client_ip()
+                if APP.sessions.throttled(ip):
+                    return self.err('слишком много попыток, подождите 5 минут', 429)
+                if not auth.check_password(st.cfg.get('auth'), body.get('password') or ''):
+                    self.login_fail(ip, 'пароль для резервной копии')
+                    time.sleep(1)
+                    return self.err('неверный пароль', 403)
+                st.add_event(None, 'Резервная копия', 'warning', f'скачана копия с паролями устройств (адрес {ip})')
+                b = json.dumps(store_mod.backup_of(st.cfg, True), ensure_ascii=False, indent=1).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Disposition', 'attachment; filename="racklive-backup-full.json"')
+                self.send_header('Content-Length', str(len(b)))
+                self.end_headers()
+                return self.wfile.write(b)
             if path == '/api/import' and method == 'POST':
                 data = body.get('data') or {}
-                if data.get('version') == 2 and 'devices' in data:     # full backup
-                    keep_auth = st.cfg.get('auth')
-                    st.cfg = data
-                    st.cfg['auth'] = keep_auth
+                if data.get('version') == 2:                            # a backup: checked, and the sign-in / second factor / notifications stay as they are
+                    try:
+                        new = store_mod.restored(st.cfg, data)
+                    except ValueError as e:
+                        return self.err(str(e))
+                    with st.lock:
+                        st.cfg = new
+                    st.add_event(None, 'Резервная копия', 'warning', f'настройки восстановлены из файла (устройств: {len(new["devices"])}); вход, второй фактор и уведомления остались прежними')
                 else:
                     st.cfg['racks'] = [st.import_old_rack(data)]
                 st.save()
@@ -2088,6 +2153,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
+            if path == '/api/term/ticket' and method == 'POST':           # a one-time pass for the terminal WebSocket (see terminal())
+                now = time.time()
+                for k in [k for k, v in TERM_TICKETS.items() if v[1] < now]:
+                    del TERM_TICKETS[k]
+                t = secrets.token_urlsafe(24)
+                TERM_TICKETS[t] = (self.token() or '', now + 30)
+                return self.send({'ok': True, 't': t})
             if path in ('/api/dev/op', '/api/dev/job') and method == 'POST':
                 if not self.need_admin():
                     return
@@ -2262,8 +2334,8 @@ class Handler(BaseHTTPRequestHandler):
         except NotImplementedError as e:
             return self.err(str(e) or 'не поддерживается', 400)
         except Exception as e:
-            traceback.print_exc()
-            return self.err(f'{type(e).__name__}: {e}', 500)
+            traceback.print_exc()                         # the details go to the program's log, not to whoever sent the request
+            return self.err('внутренняя ошибка сервера — подробности в журнале программы', 500)
 
 
 def main():

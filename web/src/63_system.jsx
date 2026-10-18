@@ -158,8 +158,10 @@ function TerminalView({ onClose, extra = '', ssh = null, sshCmd = '' }) {       
       const t = new window.Terminal({ cursorBlink: true, fontSize: size, fontFamily: 'ui-monospace, Menlo, Consolas, monospace', theme: { background: '#0b0f14', foreground: '#d6deeb', cursor: '#7fd1ff' }, scrollback: 5000, convertEol: false });
       const fit = new window.FitAddon.FitAddon(); t.loadAddon(fit); t.open(box.current); try { fit.fit(); } catch (e) { }
       term.current = t;
-      const tok = ssGet('rl_tok');
-      const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/term/ws?cols=${t.cols}&rows=${t.rows}${tok ? '&tok=' + encodeURIComponent(tok) : ''}${extra}`);
+      let pass = '';                                        // no session key in the URL: where a cookie cannot carry the session (Telegram), a one-time 30-second pass
+      if (ssGet('rl_tok')) { try { pass = (await api('/api/term/ticket', { method: 'POST', body: {} })).t || ''; } catch (e) { } }
+      if (dead) return;
+      const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/term/ws?cols=${t.cols}&rows=${t.rows}${pass ? '&t=' + encodeURIComponent(pass) : ''}${extra}`);
       sock.binaryType = 'arraybuffer'; ws.current = sock;
       const enc = new TextEncoder();
       sock.onopen = () => { setState('open'); t.focus(); };

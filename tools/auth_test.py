@@ -251,7 +251,8 @@ def totp_unit():
 def server_flow():
     data = tempfile.mkdtemp(prefix='rl-auth-')
     port = free_port()
-    env = dict(os.environ, RL_DATA=data, RL_WEB=os.path.join(ROOT, 'web'), RL_PORT=str(port), PYTHONIOENCODING='utf-8')
+    # the test clients tell their «address» with X-Forwarded-For: the server believes it only from a trusted proxy — here the test itself is that proxy
+    env = dict(os.environ, RL_DATA=data, RL_WEB=os.path.join(ROOT, 'web'), RL_PORT=str(port), PYTHONIOENCODING='utf-8', RL_TRUSTED_PROXIES='127.0.0.1')
     env.pop('RL_DEMO', None)
     srv = subprocess.Popen([sys.executable, '-m', 'rackd'], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     base = f'http://127.0.0.1:{port}'

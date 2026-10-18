@@ -139,17 +139,18 @@ class Mfa:
         The app code needs nothing sent: the sign-in just waits for the six digits (wrong guesses count against the address as usual)."""
         if method not in self.login_methods():
             raise ValueError('этот способ входа не включён')
-        if method == 'totp':
-            return self.begin(ip, ua, primary=True), 'введите шесть цифр из приложения'
         now = time.time()
+        gap, most = (5, 6) if method == 'totp' else (20, 4)          # the app code costs nothing to ask for, but each try is a guess at six digits: rationed too
         with self.lock:
             q = self.pstarts.setdefault(method, [])
             q[:] = [x for x in q if now - x < 600]
-            if q and now - q[-1] < 20:
-                raise ValueError(f'код уже отправлен — повторить можно через {int(20 - (now - q[-1])) + 1} с')
-            if len(q) >= 4:
-                raise ValueError('слишком много запросов кода — подождите несколько минут')
+            if q and now - q[-1] < gap:
+                raise ValueError(('повторить можно' if method == 'totp' else 'код уже отправлен — повторить можно') + f' через {int(gap - (now - q[-1])) + 1} с')
+            if len(q) >= most:
+                raise ValueError('слишком много попыток входа без пароля — подождите несколько минут или войдите с паролем')
             q.append(now)
+        if method == 'totp':
+            return self.begin(ip, ua, primary=True), 'введите шесть цифр из приложения'
         ticket = self.begin(ip, ua, primary=True)
         return ticket, self.send(ticket, method)
 

@@ -48,6 +48,9 @@ NEEDS = [  # (pattern, permission it requires)
     (r'\b(curl|wget|fetch)\b|\bgit\s+clone\b', 'network'),
 ]
 URL_RE = re.compile(r'https?://([A-Za-z0-9.\-_]+|\$\{?[A-Za-z_]\w*\}?)')
+# the checks above look for forms of writing, not for behaviour — anything that runs code they cannot read makes the plugin «high risk» (find, recursive rm included)
+OPAQUE = re.compile(r'(?i)\b(python[0-9.]*|perl|ruby|node|php|lua|awk)\b\s+-[ceE]?\b|\b(ba|da|z)?sh\s+-c\b|\beval\b|base64\s+(-d|--decode)\b|\bxxd\s+-r\b|'
+                    r'\bsource\s+<\(|\$\(\s*(curl|wget)\b|\bfind\b[^\n]*\s-(delete|exec|execdir|ok)\b|\brm\s+-\w*r\w*\b|awk\b[^\n]*system\s*\(')
 PIPE_SH = re.compile(r'\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da)?sh\b')
 REF_RE = re.compile(r'\$\{?RL_P_([A-Z0-9_]+)')
 
@@ -222,7 +225,7 @@ def check(files):
         warnings.append('нет status: Rack Live не узнает, установлен ли плагин (добавьте скрипт со строкой @@installed 0|1)')
 
     risk, field_ids = 'low', {f['id'].upper() for f in clean_fields}
-    need_found, pipe = set(), False
+    need_found, pipe, opaque = set(), False, False
     for where, txt in _scripts(m):
         for pat, why in DENY:
             if re.search(pat, txt, re.I):
@@ -235,6 +238,10 @@ def check(files):
                     errors.append(f'{where}: скрипт делает то, что требует permissions "{perm}" ({PERMS[perm]}), но оно не объявлено')
         if PIPE_SH.search(code):
             pipe = True
+        mo = OPAQUE.search(code)
+        if mo:                                          # code the pattern checks cannot see through: an interpreter, eval, decoding, -exec / -delete, recursive rm
+            opaque = True
+            warnings.append(f'{where}: «{mo.group(0).strip()[:40]}» — запускает код, который автоматическая проверка не видит насквозь: прочтите скрипт целиком')
         for u in URL_RE.findall(code):
             if u.startswith('$'):
                 continue
@@ -253,7 +260,7 @@ def check(files):
     for p in perms:
         if p not in need_found and p != 'network':
             warnings.append(f'объявлено "{p}", но скрипты этого не делают')
-    if 'reboot' in need_found or pipe:
+    if 'reboot' in need_found or pipe or opaque:
         risk = 'high'
     elif need_found - {'network'}:
         risk = 'medium'
