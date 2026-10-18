@@ -498,25 +498,54 @@ echo @@ok
 '''
 
 
-def awg_conf_text(text, use_dns=True):
-    """the config as it goes to the machine: checked by the same parser as the Keenetic plugin; DNS lines dropped when not wanted"""
-    from .plugins import parse_conf
+def awg_conf_text(text, dns='conf'):
+    """the config as it goes to the machine: checked by the same parser as the Keenetic plugin.
+    dns: 'conf' = keep the DNS line from the pasted config as-is; '' / None = no DNS line (system/router DNS);
+    any other value = use it as the DNS line (a preset or a typed-in address).
+    Fields only AmneziaWG 3.x has (header protection etc.) are dropped — the open-source build Rack Live
+    installs doesn't know them, and leaving them in makes awg-quick refuse to bring the interface up."""
+    from .plugins import parse_conf, AWG3_KEYS
     c = parse_conf(text)                                    # raises ValueError with a readable reason
-    lines = [l for l in (text or '').replace('\r\n', '\n').split('\n') if use_dns or not re.match(r'(?i)^\s*dns\s*=', l)]
-    body = '\n'.join(lines).strip() + '\n'
+    dns = 'conf' if dns is True else '' if dns is False else dns
+    if dns not in ('conf', '', None):
+        try:
+            ipaddress.ip_address(dns)
+        except ValueError:
+            raise ValueError(f'не похоже на адрес DNS-сервера: {dns}')
+    dns_line = c.get('dns') if dns == 'conf' else (dns or '')
+    out, in_iface, dropped = [], False, []
+    for raw in (text or '').replace('\r\n', '\n').split('\n'):
+        line = raw.rstrip()
+        s = line.strip()
+        m = re.match(r'\[(\w+)\]$', s)
+        if m:
+            in_iface = m.group(1).lower() == 'interface'
+            out.append(line)
+            if in_iface and dns_line:
+                out.append(f'DNS = {dns_line}')
+            continue
+        key = s.split('=', 1)[0].strip().lower() if '=' in s and not s.startswith('#') else None
+        if in_iface and key == 'dns':
+            continue                                        # replaced right after the [Interface] line above
+        if in_iface and key in AWG3_KEYS:
+            dropped.append(key)
+            continue
+        out.append(line)
+    body = '\n'.join(out).strip() + '\n'
     if any(ord(ch) < 9 or 13 < ord(ch) < 32 for ch in body):
         raise ValueError('в конфиге есть непечатные символы')
-    return body, c
+    return body, c, dropped, dns_line
 
 
-def awg_conf_script(text, use_dns=True):
-    body, c = awg_conf_text(text, use_dns)
+def awg_conf_script(text, dns='conf'):
+    body, c, dropped, dns_line = awg_conf_text(text, dns)
     path = f'{AWG_DIR}/{AWG_IF}.conf'
-    dns = use_dns and bool(c.get('dns'))
+    has_dns = bool(dns_line)
     return _APT + _ROOT_APT + f'''mkdir -p {AWG_DIR}; chmod 700 {AWG_DIR}
 {_put_file(path, body)} || {{ echo "@@fail не удалось записать конфиг"; exit 0; }}
-''' + (f'''command -v resolvconf >/dev/null 2>&1 || {{ echo "— для DNS из конфига ставлю openresolv"; $APT install openresolv </dev/null 2>&1 | grep -E '^(Setting up|E:)' | tail -2; }}
-''' if dns else '') + f'''echo "— конфиг сохранён ({AWG_IF})"
+''' + (f'''command -v resolvconf >/dev/null 2>&1 || {{ echo "— для DNS ставлю openresolv"; $APT install openresolv </dev/null 2>&1 | grep -E '^(Setting up|E:)' | tail -2; }}
+''' if has_dns else '') + (f'''echo "— поля AmneziaWG 3.x ({", ".join(dropped)}) не поддерживаются этой сборкой — убраны из конфига"
+''' if dropped else '') + f'''echo "— конфиг сохранён ({AWG_IF})"
 if systemctl is-active awg-quick@{AWG_IF} >/dev/null 2>&1; then systemctl restart awg-quick@{AWG_IF} </dev/null 2>&1 | tail -2; echo "— VPN перезапущен с новым конфигом"; fi
 echo @@ok
 '''

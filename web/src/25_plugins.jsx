@@ -142,6 +142,7 @@ function AwgPlugin({ p, device, reload, openPlugin }) {
         <KV rows={[['Тип', prev.type], ['Сервер', <span className="mono">{prev.server}</span>], ['Адрес в туннеле', <span className="mono">{prev.address}</span>],
           ['MTU', prev.mtu], ...(prev.psk ? [['Общий ключ (PSK)', 'есть']] : []),
           ...(prev.dns ? [['DNS из конфига', <span className="dim">{prev.dns} — не используется, роутер оставит свой DNS</span>]] : [])]} />
+        {prev.awg3 ? <div className="dim3" style={{ fontSize: 12 }}>В конфиге есть поля AmneziaWG 3.x (защита заголовков) — прошивка роутера их не понимает, туннель будет работать без них (как AWG 1.0/2.0).</div> : null}
         {prev.ipv6Skipped ? <div className="dim3" style={{ fontSize: 12 }}>IPv6-адрес из конфига пропущен — туннель будет работать по IPv4.</div> : null}
       </div> : null}
       <Field label="Название подключения"><input className="input" value={name} maxLength={40} placeholder="Например: AWG Нидерланды" onChange={e => setName(e.target.value)} /></Field>

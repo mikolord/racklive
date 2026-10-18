@@ -718,6 +718,8 @@ class Keenetic(Driver):
         msg = f'Подключение «{name}» ({iface}) создано' + (', сервер ответил — туннель работает' if state else
                                                             ', но сервер пока не ответил: проверьте конфиг и что сервер доступен')
         msg += f'. Через туннель идут {len(doms)} сайтов и подсетей.' if doms else '. Трафик в туннель сам не идёт — направьте нужные сайты (например, HydraRoute Neo).'
+        if c.get('awg3'):
+            msg += ' В конфиге есть поля AmneziaWG 3.x (защита заголовков) — прошивка роутера их не понимает, туннель поднят без них (как AWG 1.0/2.0).'
         return {'ok': True, 'log': log, 'iface': iface, 'name': name, 'domains': len(doms), 'skipped': skipped[:20], 'up': state, 'message': msg}
 
     def _route(self, cli, iface, name, doms, log):

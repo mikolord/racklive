@@ -156,6 +156,15 @@ for name, sc in (('vpn status', h.AWG_STATUS), ('vpn install', h.awg_install_scr
 ok('VPN: приватный ключ не лежит в тексте скрипта', 'PRIVATE-KEY-XYZ' not in h.awg_conf_script(AWG))
 ok('VPN: DNS из конфига убирается по просьбе', 'DNS' not in h.awg_conf_text(AWG, False)[0] and 'DNS' in h.awg_conf_text(AWG)[0])
 ok('VPN: для DNS ставится openresolv только когда нужен', 'openresolv' in h.awg_conf_script(AWG) and 'openresolv' not in h.awg_conf_script(AWG, False))
+ok('VPN: можно указать свой/защищённый DNS вместо конфига', 'DNS = 9.9.9.9' in h.awg_conf_text(AWG, '9.9.9.9')[0] and '1.1.1.1' not in h.awg_conf_text(AWG, '9.9.9.9')[0])
+try:
+    h.awg_conf_text(AWG, 'не-адрес'); ok('VPN: плохой адрес DNS отклонён', False)
+except ValueError:
+    ok('VPN: плохой адрес DNS отклонён', True)
+AWG3 = AWG.replace('H4 = 4\n', 'H4 = 4\nS3 = 1\nS4 = 2\nHeaderProtectionKey = KEY\nContentPaddingAddition = 18-31\n')
+body3, c3, dropped3, _ = h.awg_conf_text(AWG3)
+ok('VPN: поля AmneziaWG 3.x определены и убраны из конфига (сборка их не понимает)', c3['awg3'] and 'HeaderProtectionKey' not in body3 and 'headerprotectionkey' in dropped3, (c3.get('awg3'), dropped3))
+syntax('vpn conf AWG 3.x', h.awg_conf_script(AWG3))
 for bad in ('', 'просто текст', '[Interface]\nAddress = 10.0.0.2/32\n[Peer]\nEndpoint = 1.2.3.4:1\n'):
     try:
         h.awg_conf_text(bad); ok('VPN: неправильный конфиг отклонён: ' + repr(bad[:20]), False)

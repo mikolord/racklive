@@ -6,6 +6,18 @@ Shared helpers: the AmneziaWG/WireGuard .conf parser and the domain-list parser.
 """
 import ipaddress, re
 
+# AmneziaWG 3.x (защита заголовков): поля сверх 2.0 (S3/S4/I1-5). Встречаются у некоторых платных провайдеров,
+# в официальных open-source amneziawg-tools/amneziawg-go их нет — такие строки роутер и ReckController не применяют.
+AWG3_KEYS = ('headerprotectionkey', 'contentpaddingaddition', 'rekeyaftertime', 'rekeytimeout',
+             'rejectaftertime', 'keepalivetimeout', 'maxhandshakeattempts', 'randomtrailers', 'disablecookies')
+
+DNS_PRESETS = [
+    {'id': 'cloudflare', 'label': 'Cloudflare', 'ip': '1.1.1.1'},
+    {'id': 'quad9', 'label': 'Quad9', 'ip': '9.9.9.9'},
+    {'id': 'google', 'label': 'Google', 'ip': '8.8.8.8'},
+    {'id': 'adguard', 'label': 'AdGuard DNS', 'ip': '94.140.14.14'},
+]
+
 CATALOG = [
     {'id': 'entware', 'drivers': ['keenetic'], 'title': 'Entware (OPKG)', 'icon': 'box', 'kind': 'guide',
      'description': 'Репозиторий пакетов Linux на роутере. Нужен для HydraRoute Neo, AWG Manager и других дополнений. '
@@ -203,13 +215,15 @@ def parse_conf(text):
     awg.update({k: hval(k) for k in ('h1', 'h2', 'h3', 'h4')})
     awg.update({k: i.get(k, '') for k in ('i1', 'i2', 'i3', 'i4', 'i5')})
     is_awg = any(awg[k] for k in ('jc', 's1', 's2')) or any(awg[k] not in ('0', '1', '2', '3', '4') for k in ('h1', 'h2', 'h3', 'h4'))
+    awg3 = any(k in i for k in AWG3_KEYS)
     allowed = [a.strip() for a in p.get('allowedips', '0.0.0.0/0').split(',') if a.strip()]
     host, _, port = p['endpoint'].rpartition(':')
     if not host or not port.isdigit():
         raise ValueError(f"не понял адрес сервера Endpoint = {p['endpoint']}")
     return {'privateKey': i['privatekey'], 'address': str(addr.ip), 'mask': str(addr.netmask), 'mtu': num('mtu', 1280) or 1280,
-            'dns': i.get('dns', ''), 'awg': awg, 'isAwg': is_awg, 'awg2': bool(awg['s3'] or awg['s4'] or any(awg[k] for k in ('i1', 'i2', 'i3', 'i4', 'i5'))
-                                                                                or any('-' in awg[k] for k in ('h1', 'h2', 'h3', 'h4'))),
+            'dns': i.get('dns', ''), 'awg': awg, 'isAwg': is_awg, 'awg3': awg3,
+            'awg2': bool(awg['s3'] or awg['s4'] or any(awg[k] for k in ('i1', 'i2', 'i3', 'i4', 'i5'))
+                         or any('-' in awg[k] for k in ('h1', 'h2', 'h3', 'h4'))),
             'peer': {'publicKey': p['publickey'], 'psk': p.get('presharedkey', ''), 'endpoint': f'{host.strip("[]")}:{port}',
                      'allowed': allowed, 'keepalive': int(p['persistentkeepalive']) if p.get('persistentkeepalive', '').isdigit() else 25},
             'ipv6': [a for a in i.get('address', '').split(',') if ':' in a]}
@@ -219,7 +233,8 @@ def conf_preview(c):
     """What the user sees before anything is created (no keys)."""
     full = any(a in ('0.0.0.0/0', '::/0') for a in c['peer']['allowed'])
     return {'server': c['peer']['endpoint'], 'address': c['address'], 'mtu': c['mtu'], 'dns': c['dns'],
-            'type': 'AmneziaWG 2.0' if c['awg2'] else 'AmneziaWG' if c['isAwg'] else 'WireGuard', 'fullTunnel': full,
+            'type': 'AmneziaWG 3.x' if c.get('awg3') else 'AmneziaWG 2.0' if c['awg2'] else 'AmneziaWG' if c['isAwg'] else 'WireGuard',
+            'fullTunnel': full, 'awg3': bool(c.get('awg3')),
             'allowed': c['peer']['allowed'][:8], 'psk': bool(c['peer']['psk']), 'ipv6Skipped': bool(c['ipv6'])}
 
 

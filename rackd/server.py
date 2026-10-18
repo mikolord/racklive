@@ -9,7 +9,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.12.1'
+VERSION = '2.12.2'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -24,6 +24,12 @@ def log(*a):
 TERM_TICKETS = {}                         # one-time passes for the terminal WebSocket: pass → (session key, until)
 GUEST_SETTINGS = ('title', 'showClients', 'hints', 'vlans', 'publicView', 'poll')               # what a guest («просмотр без пароля») may see of the settings
 TRUSTED_PROXIES = {x.strip() for x in os.environ.get('RL_TRUSTED_PROXIES', '').split(',') if x.strip()}     # e.g. nginx in front: its address
+
+
+def _awg_dns(body):
+    """body['dns']: True/missing → keep the config's own DNS; False → none (system/router DNS); a string (preset or typed address) → use it."""
+    d = body.get('dns')
+    return 'conf' if d is True or d is None else '' if d is False else str(d)
 
 
 def lan_url_toward(host):
@@ -619,9 +625,10 @@ class App:
             return job('AmneziaWG', run)
         if op == 'awg_preview':                         # what the config is, before anything is written (no keys in the answer)
             from . import plugins as plugins_mod
-            return {'ok': True, 'preview': plugins_mod.conf_preview(hostops.awg_conf_text(body.get('conf') or '', body.get('dns') is not False)[1])}
+            return {'ok': True, 'preview': plugins_mod.conf_preview(hostops.awg_conf_text(body.get('conf') or '', _awg_dns(body))[1]),
+                    'dnsPresets': plugins_mod.DNS_PRESETS}
         if op == 'awg_conf':
-            script = hostops.awg_conf_script(body.get('conf') or '', body.get('dns') is not False)      # ValueError → a readable reason
+            script = hostops.awg_conf_script(body.get('conf') or '', _awg_dns(body))      # ValueError → a readable reason
             if demo:
                 return {'ok': True, 'message': 'Конфиг сохранён (демо)'}
             _, lines = self._host_exec(script, 300)

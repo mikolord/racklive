@@ -98,8 +98,10 @@ function DevSystem() {
 function VpnCard() {
   const { data } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [v, setV] = useState(null); const [err, setErr] = useState('');
-  const [conf, setConf] = useState(''); const [dns, setDns] = useState(true); const [pv, setPv] = useState(null); const [edit, setEdit] = useState(false); const [busy, setBusy] = useState('');
+  const [conf, setConf] = useState(''); const [dnsMode, setDnsMode] = useState('conf'); const [dnsCustom, setDnsCustom] = useState('');
+  const [presets, setPresets] = useState([]); const [pv, setPv] = useState(null); const [edit, setEdit] = useState(false); const [busy, setBusy] = useState('');
   const fileRef = useRef(null);
+  const dnsOut = dnsMode === 'conf' ? true : dnsMode === 'off' ? false : dnsMode === 'custom' ? dnsCustom.trim() : dnsMode;
   const load = async () => { try { setV(await api('/api/dev/vpn')); setErr(''); } catch (e) { setErr(e.message); } };
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
   const h = useHostJob(() => load());
@@ -110,9 +112,12 @@ function VpnCard() {
   };
   useEffect(() => {                                        // what the pasted config is: checked on the server, no keys come back
     if (!conf.trim()) { setPv(null); return; }
-    const t = setTimeout(async () => { try { setPv((await api('/api/dev/op', { method: 'POST', body: { op: 'awg_preview', conf, dns } })).preview); } catch (e) { setPv({ error: e.message }); } }, 500);
+    const t = setTimeout(async () => {
+      try { const r = await api('/api/dev/op', { method: 'POST', body: { op: 'awg_preview', conf, dns: dnsOut } }); setPv(r.preview); if (r.dnsPresets) setPresets(r.dnsPresets); }
+      catch (e) { setPv({ error: e.message }); }
+    }, 500);
     return () => clearTimeout(t);
-  }, [conf, dns]);
+  }, [conf, dnsOut]);
   const readFile = e => { const f = e.target.files && e.target.files[0]; if (!f) return; f.text().then(setConf); e.target.value = ''; };
   if (err) return <Card title="VPN (AmneziaWG)"><div className="cam-warn">{err}</div></Card>;
   if (!v) return <Card title="VPN (AmneziaWG)"><div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Проверяю VPN…</div></Card>;
@@ -141,13 +146,21 @@ function VpnCard() {
         <textarea className="input mono" rows={7} value={conf} onChange={e => setConf(e.target.value)} placeholder={'[Interface]\nPrivateKey = …\nAddress = …\nJc = …\n[Peer]\nPublicKey = …\nEndpoint = …'} spellCheck={false} autoCapitalize="off" autoCorrect="off" /></Field>
       <div className="row wrap" style={{ gap: 8 }}><Btn size="sm" icon="upload" onClick={() => fileRef.current && fileRef.current.click()}>Выбрать файл</Btn>
         <input ref={fileRef} type="file" accept=".conf,text/plain" style={{ display: 'none' }} onChange={readFile} /></div>
-      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={dns} onChange={setDns} /><div className="grow"><div>DNS из конфига</div>
-        <div className="dim3" style={{ fontSize: 12.5 }}>Адреса сайтов будут определяться через VPN (без утечек). Выключите, если с ним что-то не открывается.</div></div></div>
+      <Field label="DNS" hint="«Из конфига» — адреса сайтов определяются через VPN (как задумал провайдер), но если его DNS не отвечает надёжно через этот туннель, VPN и всё, что ходит в интернет с этой машины (включая Claude Code), может перестать работать. Если что-то не открывается — выберите защищённый DNS из списка или DNS своего роутера (адрес роутера как «Свой адрес»).">
+        <select className="input" value={dnsMode} onChange={e => setDnsMode(e.target.value)}>
+          <option value="conf">Из конфига VPN</option>
+          {presets.map(p => <option key={p.id} value={p.ip}>{p.label} ({p.ip})</option>)}
+          <option value="off">Системный (без DNS в конфиге)</option>
+          <option value="custom">Свой адрес…</option>
+        </select>
+        {dnsMode === 'custom' ? <input className="input mono" style={{ marginTop: 6 }} placeholder="например, 192.168.1.1" value={dnsCustom} onChange={e => setDnsCustom(e.target.value)} /> : null}
+      </Field>
       {pv ? pv.error ? <div className="cam-err">{pv.error}</div> : <div className="plugin-result">
-        <KV rows={[['Тип', pv.type], ['Сервер', pv.server], ['Адрес в VPN', pv.address], ['Через VPN', pv.fullTunnel ? 'весь интернет' : (pv.allowed || []).join(', ')], ['DNS', dns ? pv.dns || '—' : 'системный']]} />
+        <KV rows={[['Тип', pv.type], ['Сервер', pv.server], ['Адрес в VPN', pv.address], ['Через VPN', pv.fullTunnel ? 'весь интернет' : (pv.allowed || []).join(', ')], ['DNS', dnsOut === false ? 'системный' : pv.dns || '—']]} />
+        {pv.awg3 ? <div className="cam-warn" style={{ marginTop: 6 }}>В конфиге есть поля AmneziaWG 3.x (защита заголовков) — открытая сборка, которую ставит Rack Live, их не понимает. Они будут убраны автоматически; без них туннель обычно всё равно поднимается, но если провайдер требует именно их — попросите конфиг версии 1.0/2.0.</div> : null}
         {pv.ipv6Skipped ? <div className="dim3" style={{ fontSize: 12.5 }}>IPv6-адрес из конфига тоже будет настроен, если сеть его поддерживает.</div> : null}</div> : null}
       <div className="row wrap" style={{ gap: 8 }}>
-        <Btn kind="primary" icon="check" disabled={!conf.trim() || !pv || !!pv.error || !!busy} onClick={async () => { const r = await op('awg_conf', { conf, dns }); if (r) { setConf(''); setEdit(false); } }}>Сохранить конфиг</Btn>
+        <Btn kind="primary" icon="check" disabled={!conf.trim() || !pv || !!pv.error || !!busy || (dnsMode === 'custom' && !dnsCustom.trim())} onClick={async () => { const r = await op('awg_conf', { conf, dns: dnsOut }); if (r) { setConf(''); setEdit(false); } }}>Сохранить конфиг</Btn>
         {edit ? <Btn onClick={() => { setEdit(false); setConf(''); }}>Отмена</Btn> : null}</div>
     </div> : null}
   </Card>;
