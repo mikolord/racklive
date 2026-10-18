@@ -85,7 +85,6 @@ function DevSystem() {
       <KV rows={[['Версия', dk.version || 'не установлен'], ['Пакеты', (dk.packages || []).map(p => p.name + ' ' + p.version).join(' · ') || null]]} />
       <Btn style={{ marginTop: 10 }} icon="download" disabled={!st.supported || h.running} onClick={async () => { if (await confirm(dk.version ? 'Обновить Docker и связанные пакеты (containerd, compose) до последних версий из репозитория системы? Контейнеры на время обновления могут перезапуститься.' : 'Docker не установлен. Поставить docker.io из репозитория системы?', { title: 'Docker', ok: dk.version ? 'Обновить' : 'Установить' })) h.start('docker'); }}>{dk.version ? 'Обновить Docker' : 'Установить Docker'}</Btn>
     </Card>
-    {st.supported ? <VpnCard /> : null}
     {hostDev ? <><div className="card-title" style={{ margin: '18px 4px 8px' }}>Плагины этой машины</div>
       <PluginsTab device={hostDev} /></> : null}
     {rb ? <WordConfirm title="Перезагрузка машины" word="ПЕРЕЗАГРУЗИТЬ" ok="Перезагрузить" onClose={() => setRb(false)}
@@ -166,16 +165,16 @@ function VpnCard() {
   </Card>;
 }
 
-/* Settings → «Сеть»: with the developer mode on there are two tabs, «Сеть» and «Wi-Fi» */
+/* Settings → «Сеть»: with the developer mode on there are three tabs, «Сеть», «Wi-Fi» and «VPN» */
 function NetworkTabs() {
   const { data } = useApp();
-  const [tab, setTab] = useState(() => { const q = new URLSearchParams(location.search).get('nettab'); return q === 'wifi' ? 'wifi' : lsGet('rl_net_tab', 'net'); });
+  const [tab, setTab] = useState(() => { const q = new URLSearchParams(location.search).get('nettab'); return ['wifi', 'vpn'].includes(q) ? q : lsGet('rl_net_tab', 'net'); });
   if (!data.devMode) return <NetworkCard />;
   const pick = v => { setTab(v); lsSet('rl_net_tab', v); };
   return <>
-    <Seg value={tab} onChange={pick} options={[{ value: 'net', label: 'Сеть' }, { value: 'wifi', label: 'Wi-Fi', icon: 'wifi' }]} />
+    <Seg value={tab} onChange={pick} options={[{ value: 'net', label: 'Сеть' }, { value: 'wifi', label: 'Wi-Fi', icon: 'wifi' }, { value: 'vpn', label: 'VPN', icon: 'shield' }]} />
     <div style={{ height: 12 }} />
-    {tab === 'wifi' ? <WifiCard /> : <NetworkCard />}
+    {tab === 'wifi' ? <WifiCard /> : tab === 'vpn' ? <VpnCard /> : <NetworkCard />}
   </>;
 }
 

@@ -615,7 +615,7 @@ def main():
                  'VPS · ИИ-агенты': f'?device={dev["demo_server"]}&tab=plugins&plugin=agents',
                  'VPS · Сборщик площадки': f'?device={dev["demo_server"]}&tab=plugins&plugin=collector',
                  'VPS · ReckController OS': f'?device={dev["demo_server"]}&tab=plugins&plugin=rcos',
-                 'Настройки · Система': '?section=system#settings', 'Настройки · Wi-Fi': '?section=network&nettab=wifi#settings', 'Настройки · режим разработчика': '?section=general#settings',
+                 'Настройки · Система': '?section=system#settings', 'Настройки · Wi-Fi': '?section=network&nettab=wifi#settings', 'Настройки · VPN': '?section=network&nettab=vpn#settings', 'Настройки · режим разработчика': '?section=general#settings',
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
@@ -751,9 +751,11 @@ def main():
             if name == 'VPS · ReckController OS':
                 check('плагин ReckController OS: часовой пояс, точка, название и пароль Wi-Fi, кнопка', 'ReckController OS' in out and 'Часовой пояс машины' in out and 'Своя Wi-Fi-точка для телефона' in out and 'Пароль Wi-Fi' in out and 'Установить ReckController OS' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · Система':
-                check('раздел «Система»: время, обновления, Docker, VPN', 'Время и часовой пояс' in out and 'Обновления системы' in out and 'Docker' in out and 'Проверить обновления' in out and 'Перезагрузить машину' in out and 'VPN (AmneziaWG)' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+                check('раздел «Система»: время, обновления, Docker', 'Время и часовой пояс' in out and 'Обновления системы' in out and 'Docker' in out and 'Проверить обновления' in out and 'Перезагрузить машину' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · Wi-Fi':
                 check('«Сеть → Wi-Fi»: адаптеры, своя точка, подключение к сети', 'Адаптеры' in out and 'Своя Wi-Fi-точка' in out and 'Подключение к Wi-Fi' in out and 'Искать сети' in out and 'ReckController' in out and 'Изменить название или пароль' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+            if name == 'Настройки · VPN':
+                check('«Сеть → VPN»: карточка AmneziaWG в разделе «Сеть»', 'VPN (AmneziaWG)' in out and 'Заменить конфиг' in out and 'Удалить конфиг' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · режим разработчика':
                 check('тумблер «Режим разработчика» в основных настройках', 'Режим разработчика' in out and 'Система' in out, re.sub(r'<[^>]+>', ' ', out)[-400:])
             if name == 'Карта — ONT':
