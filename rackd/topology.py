@@ -6,8 +6,8 @@ plus any manual links the user drew in edit mode.
 import ipaddress
 import re
 
-ROUTER_DRIVERS = ('keenetic', 'openwrt', 'demo_router', 'demo_sim_router')
-SWITCH_DRIVERS = ('tplink_jetstream', 'snmp', 'demo_switch', 'demo_sim_switch')
+ROUTER_DRIVERS = ('keenetic', 'openwrt', 'demo_router')
+SWITCH_DRIVERS = ('tplink_jetstream', 'snmp', 'demo_switch')
 # how the internet reaches the router: map.wan = {via: auto|direct|ont|modem, unit, name}
 WAN_VIA = {'ont': ('PON-терминал', 'оптика'), 'modem': ('Модем', 'линия провайдера')}
 ONT_RE = re.compile(r'(^|[^a-z])(g?e?x?pon|ont|onu)([^a-z]|$)|оптич\w*\s+терминал|терминал', re.I)
@@ -88,7 +88,7 @@ def pick_main(routers, states, wan_cfg, ont_routers=()):
             if macs & cmacs or ips & cips:
                 behind.add(o['id'])
     cands = [d for d in local if d['id'] not in behind] or local
-    pick = next((d for d in cands if d.get('driver') in ('keenetic', 'demo_router', 'demo_sim_router')), cands[0])
+    pick = next((d for d in cands if d.get('driver') in ('keenetic', 'demo_router')), cands[0])
     return pick, ('единственный' if len(routers) == 1 else 'остальные подключены через него' if behind else 'первый в списке')
 
 

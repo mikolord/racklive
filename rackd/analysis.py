@@ -286,7 +286,7 @@ def analyze(topo, devices, states, cable_tests):
 
     for d in devices:
         st = states.get(d['id']) or {}
-        if d.get('driver') not in ('tplink_jetstream', 'snmp', 'demo_switch', 'demo_sim_switch'):
+        if d.get('driver') not in ('tplink_jetstream', 'snmp', 'demo_switch'):
             continue
         for p in st.get('ports') or []:
             sp = p.get('speed') or 0

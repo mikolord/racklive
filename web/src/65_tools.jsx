@@ -11,8 +11,6 @@ const realDriver = g => g.drivers[0];          // the driver names plugins are d
 const TOOLS = [
   { id: 'cameras', title: 'Камеры и видеорегистраторы', icon: 'camera', color: '#ff375f',
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
-  { id: 'scenes', title: 'Демо-сцены и планы', icon: 'home', color: '#ff9f0a',
-    text: 'Большая выдуманная сеть с домами, этажами и комнатами — посмотреть в отдельной демо-копии или перенести раскладку на свой план. Сцены можно составить с нейросетью.' },
   { id: 'sites', title: 'Удалённые площадки и агенты', icon: 'globe2', color: '#5e5ce6',
     text: 'Следить за другой сетью без белого IP и проброса портов: офис, дача, квартира родителей. Там ставится свой Rack Live (сборщик) или маленький агент — данные приходят сюда сами.' },
 ];
@@ -31,7 +29,7 @@ function ToolsView() {
   return <>
     <div className="view-switch"><Seg value={sec} onChange={s => { setSec(s); setTool(null); }}
       options={[{ value: 'devices', label: T('tab.devices', 'Устройства'), icon: 'list' }, { value: 'plugins', label: 'Плагины', icon: 'box' }, { value: 'catalog', label: 'Инструменты', icon: 'wrench' }]} /></div>
-    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : tool === 'scenes' ? <ScenesTool onBack={() => setTool(null)} /> : String(tool).startsWith('x-') ? <CommunityTool id={tool.slice(2)} onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
+    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : String(tool).startsWith('x-') ? <CommunityTool id={tool.slice(2)} onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
   </>;
 }
 
@@ -39,11 +37,18 @@ function ToolsView() {
 function WhereToSearch({ subnets, value, onChange, disabled }) {
   const [open, setOpen] = useState(false);
   const [own, setOwn] = useState('');
+  const [align, setAlign] = useState('left');          // the popup can go off the right edge on a phone — flip it to the right-anchored variant when there is no room
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
     const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('pointerdown', h); return () => document.removeEventListener('pointerdown', h);
+  }, [open]);
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const popW = Math.min(380, window.innerWidth - 32);
+    setAlign(r.left + popW > window.innerWidth - 16 ? 'right' : 'left');
   }, [open]);
   const auto = !value.length;
   const known = new Set(subnets.map(s => s.cidr));
@@ -53,7 +58,7 @@ function WhereToSearch({ subnets, value, onChange, disabled }) {
   return <div className="where" ref={ref}>
     <button type="button" className="btn sm where-btn" disabled={disabled} onClick={() => setOpen(!open)}>
       <Icon name="map" size={14} />{auto ? 'Сети: автоматически' : 'Сети: ' + (value.length === 1 ? value[0] : value.length + ' выбрано')}<Icon name="chevron" size={12} style={{ transform: open ? 'rotate(-90deg)' : 'rotate(90deg)' }} /></button>
-    {open ? <div className="where-pop card">
+    {open ? <div className={'where-pop card' + (align === 'right' ? ' right' : '')}>
       <button type="button" className={'where-row' + (auto ? ' on' : '')} onClick={() => onChange([])}><span className="where-dot" />
         <span className="grow" style={{ textAlign: 'left' }}><b>Автоматически</b><small>все сети, о которых знает Rack Live: ваша, сети роутеров и устройств</small></span></button>
       <div className="dim3" style={{ fontSize: 11.5, margin: '8px 4px 4px' }}>Или выберите сами:</div>
