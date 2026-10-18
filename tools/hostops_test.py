@@ -147,6 +147,27 @@ ok('машина не добавлена — подсказка, что сдел
 ok('демо: ничего настоящего', h.Host(app, demo=True).target()[0] == 'demo' and h.Host(app, demo=True).status()['mode'] == 'demo' and h.Host(app, demo=True).wifi()['hotspot']['on'])
 ok('локальный запуск возможен только на Linux под root без контейнера', h.local_ok() is False or sys.platform.startswith('linux'))
 
+# VPN (AmneziaWG)
+AWG = ('[Interface]\nPrivateKey = PRIVATE-KEY-XYZ\nAddress = 10.8.0.2/32\nDNS = 1.1.1.1\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 0\nS2 = 0\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n'
+       '[Peer]\nPublicKey = PUB\nEndpoint = 203.0.113.10:51820\nAllowedIPs = 0.0.0.0/0\n')
+for name, sc in (('vpn status', h.AWG_STATUS), ('vpn install', h.awg_install_script()), ('vpn conf', h.awg_conf_script(AWG)), ('vpn conf без DNS', h.awg_conf_script(AWG, False)),
+                 ('vpn on', h.AWG_ON_SCRIPT), ('vpn off', h.AWG_OFF_SCRIPT), ('vpn forget', h.AWG_FORGET_SCRIPT)):
+    syntax(name, sc)
+ok('VPN: приватный ключ не лежит в тексте скрипта', 'PRIVATE-KEY-XYZ' not in h.awg_conf_script(AWG))
+ok('VPN: DNS из конфига убирается по просьбе', 'DNS' not in h.awg_conf_text(AWG, False)[0] and 'DNS' in h.awg_conf_text(AWG)[0])
+ok('VPN: для DNS ставится openresolv только когда нужен', 'openresolv' in h.awg_conf_script(AWG) and 'openresolv' not in h.awg_conf_script(AWG, False))
+for bad in ('', 'просто текст', '[Interface]\nAddress = 10.0.0.2/32\n[Peer]\nEndpoint = 1.2.3.4:1\n'):
+    try:
+        h.awg_conf_text(bad); ok('VPN: неправильный конфиг отклонён: ' + repr(bad[:20]), False)
+    except ValueError:
+        ok('VPN: неправильный конфиг отклонён: ' + repr(bad[:20]), True)
+v = h.parse_awg('@@awg amneziawg-tools v1.0\n@@quick 1\n@@go 1\n@@conf 1\n@@enabled enabled\n@@active active\n@@up 1\n@@peer PUB\t(none)\t203.0.113.10:51820\t0.0.0.0/0\t1792300000\t1000\t2000\t25\n@@end\n')
+ok('VPN: статус — установлен, включён, сервер, связь, трафик', v['installed'] and v['enabled'] and v['active'] and v['impl'] == 'amneziawg-go' and v['peer'] == {'endpoint': '203.0.113.10:51820', 'handshake': 1792300000, 'rx': 1000, 'tx': 2000}, v)
+v = h.parse_awg('@@awg \n@@quick \n@@go \n@@enabled disabled\n@@active inactive\n@@end\n')
+ok('VPN: не установлен — так и сказано', not v['installed'] and not v['hasConf'] and not v['enabled'] and v['peer'] is None, v)
+ok('VPN: служба поднимается после перезагрузки, при ошибке выключается обратно', 'systemctl enable awg-quick@awg0' in h.AWG_ON_SCRIPT and 'systemctl disable awg-quick@awg0' in h.AWG_ON_SCRIPT)
+ok('VPN: программы берутся из официальных исходников Amnezia', 'https://github.com/amnezia-vpn/$1' in h.awg_install_script() and 'amneziawg-go' in h.awg_install_script())
+
 # «Эта машина»: Rack Live on a Linux box as root adds that box itself, and its commands run here (no SSH to itself)
 from rackd import server
 from rackd.store import Store

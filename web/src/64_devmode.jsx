@@ -85,12 +85,72 @@ function DevSystem() {
       <KV rows={[['Версия', dk.version || 'не установлен'], ['Пакеты', (dk.packages || []).map(p => p.name + ' ' + p.version).join(' · ') || null]]} />
       <Btn style={{ marginTop: 10 }} icon="download" disabled={!st.supported || h.running} onClick={async () => { if (await confirm(dk.version ? 'Обновить Docker и связанные пакеты (containerd, compose) до последних версий из репозитория системы? Контейнеры на время обновления могут перезапуститься.' : 'Docker не установлен. Поставить docker.io из репозитория системы?', { title: 'Docker', ok: dk.version ? 'Обновить' : 'Установить' })) h.start('docker'); }}>{dk.version ? 'Обновить Docker' : 'Установить Docker'}</Btn>
     </Card>
+    {st.supported ? <VpnCard /> : null}
     {hostDev ? <><div className="card-title" style={{ margin: '18px 4px 8px' }}>Плагины этой машины</div>
       <PluginsTab device={hostDev} /></> : null}
     {rb ? <WordConfirm title="Перезагрузка машины" word="ПЕРЕЗАГРУЗИТЬ" ok="Перезагрузить" onClose={() => setRb(false)}
       text="Машина перезагрузится через 3 секунды. Панель, терминал и всё, что подключено по Wi-Fi-точке этой машины, на 1–2 минуты пропадёт, потом вернётся само."
       onGo={w => { setRb(false); quick('reboot', { confirm: w }); }} /> : null}
   </>;
+}
+
+/* Settings → «Система» → VPN (AmneziaWG): install in one press, paste a ready config, a switch turns it on / off (rackd/hostops.py AWG_*) */
+function VpnCard() {
+  const { data } = useApp(); const toast = useToast(); const confirm = useConfirm();
+  const [v, setV] = useState(null); const [err, setErr] = useState('');
+  const [conf, setConf] = useState(''); const [dns, setDns] = useState(true); const [pv, setPv] = useState(null); const [edit, setEdit] = useState(false); const [busy, setBusy] = useState('');
+  const fileRef = useRef(null);
+  const load = async () => { try { setV(await api('/api/dev/vpn')); setErr(''); } catch (e) { setErr(e.message); } };
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
+  const h = useHostJob(() => load());
+  const op = async (o, body = {}) => {
+    setBusy(o);
+    try { const r = await api('/api/dev/op', { method: 'POST', body: { op: o, ...body } }); toast(r.message || 'Готово'); await load(); return r; }
+    catch (e) { toast(e.message, true); return null; } finally { setBusy(''); }
+  };
+  useEffect(() => {                                        // what the pasted config is: checked on the server, no keys come back
+    if (!conf.trim()) { setPv(null); return; }
+    const t = setTimeout(async () => { try { setPv((await api('/api/dev/op', { method: 'POST', body: { op: 'awg_preview', conf, dns } })).preview); } catch (e) { setPv({ error: e.message }); } }, 500);
+    return () => clearTimeout(t);
+  }, [conf, dns]);
+  const readFile = e => { const f = e.target.files && e.target.files[0]; if (!f) return; f.text().then(setConf); e.target.value = ''; };
+  if (err) return <Card title="VPN (AmneziaWG)"><div className="cam-warn">{err}</div></Card>;
+  if (!v) return <Card title="VPN (AmneziaWG)"><div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Проверяю VPN…</div></Card>;
+  if (!v.ok) return <Card title="VPN (AmneziaWG)"><div className="cam-warn">{v.why}</div></Card>;
+  const on = v.enabled && v.active; const p = v.peer || {};
+  const showForm = v.installed && (!v.hasConf || edit);
+  return <Card title="VPN (AmneziaWG)">
+    <HostJobBar h={h} />
+    {!v.installed ? <div className="col" style={{ gap: 10 }}>
+      <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>AmneziaWG — VPN, который маскирует трафик WireGuard от блокировок. Rack Live соберёт официальные программы Amnezia с GitHub (awg, awg-quick и amneziawg-go — модуль ядра не нужен) и подготовит службу. После установки останется вставить готовый конфиг.</div>
+      <Btn kind="primary" icon="download" disabled={h.running} onClick={async () => { if (await confirm('Установить AmneziaWG? Rack Live поставит git, make и Go из репозитория системы и соберёт awg, awg-quick и amneziawg-go из официальных исходников Amnezia на GitHub. Нужен интернет, займёт 3–10 минут. Сеть и эта панель не прерываются.', { title: 'VPN', ok: 'Установить' })) h.start('awg_install'); }}>Установить AmneziaWG</Btn>
+    </div> : <>
+      <div className="row" style={{ alignItems: 'flex-start' }}>
+        <Switch on={on} disabled={!v.hasConf || !!busy || h.running} onChange={async x => { if (x) op('awg_on'); else if (await confirm('Выключить VPN? Трафик пойдёт напрямую через провайдера.', { title: 'VPN', ok: 'Выключить' })) op('awg_off'); }} />
+        <div className="grow"><div><b>VPN {busy === 'awg_on' ? 'включается…' : busy === 'awg_off' ? 'выключается…' : on ? 'включён' : 'выключен'}</b></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>{!v.hasConf ? 'Сначала вставьте конфиг ниже.' : on ? 'Включается сам после перезагрузки. Локальная сеть и точка ReckController продолжают работать.' : 'Включите, когда нужно — настройки сохранятся.'}</div></div></div>
+      {on && v.peer ? <KV rows={[['Сервер', p.endpoint || '—'], ['Последняя связь', p.handshake ? fmt.ago(p.handshake, data.now) : 'ещё не было — сервер не отвечает?'], ['Трафик', `↓ ${fmt.bytes(p.rx)} · ↑ ${fmt.bytes(p.tx)}`]]} /> : null}
+      <div className="dim3" style={{ fontSize: 12.5, marginTop: 6 }}>{v.version || 'AmneziaWG'} · {v.impl || '—'}</div>
+      {v.hasConf && !edit ? <div className="row wrap" style={{ gap: 8, marginTop: 10 }}>
+        <Btn icon="edit" disabled={!!busy} onClick={() => setEdit(true)}>Заменить конфиг</Btn>
+        <Btn kind="danger" icon="trash" disabled={!!busy} onClick={async () => { if (await confirm('Удалить конфиг VPN с машины? VPN выключится.', { title: 'VPN', ok: 'Удалить', danger: true })) op('awg_forget'); }}>Удалить конфиг</Btn>
+        <Btn icon="download" disabled={h.running} onClick={() => h.start('awg_install')}>Обновить AmneziaWG</Btn></div> : null}
+    </>}
+    {showForm ? <div className="awg-form" style={{ marginTop: 12 }}>
+      <Field label="Конфиг AmneziaWG (.conf)" hint="Вставьте текст конфига из приложения AmneziaVPN / от провайдера VPN или выберите файл. Приватный ключ хранится только на этой машине (файл с доступом 600).">
+        <textarea className="input mono" rows={7} value={conf} onChange={e => setConf(e.target.value)} placeholder={'[Interface]\nPrivateKey = …\nAddress = …\nJc = …\n[Peer]\nPublicKey = …\nEndpoint = …'} spellCheck={false} autoCapitalize="off" autoCorrect="off" /></Field>
+      <div className="row wrap" style={{ gap: 8 }}><Btn size="sm" icon="upload" onClick={() => fileRef.current && fileRef.current.click()}>Выбрать файл</Btn>
+        <input ref={fileRef} type="file" accept=".conf,text/plain" style={{ display: 'none' }} onChange={readFile} /></div>
+      <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={dns} onChange={setDns} /><div className="grow"><div>DNS из конфига</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>Адреса сайтов будут определяться через VPN (без утечек). Выключите, если с ним что-то не открывается.</div></div></div>
+      {pv ? pv.error ? <div className="cam-err">{pv.error}</div> : <div className="plugin-result">
+        <KV rows={[['Тип', pv.type], ['Сервер', pv.server], ['Адрес в VPN', pv.address], ['Через VPN', pv.fullTunnel ? 'весь интернет' : (pv.allowed || []).join(', ')], ['DNS', dns ? pv.dns || '—' : 'системный']]} />
+        {pv.ipv6Skipped ? <div className="dim3" style={{ fontSize: 12.5 }}>IPv6-адрес из конфига тоже будет настроен, если сеть его поддерживает.</div> : null}</div> : null}
+      <div className="row wrap" style={{ gap: 8 }}>
+        <Btn kind="primary" icon="check" disabled={!conf.trim() || !pv || !!pv.error || !!busy} onClick={async () => { const r = await op('awg_conf', { conf, dns }); if (r) { setConf(''); setEdit(false); } }}>Сохранить конфиг</Btn>
+        {edit ? <Btn onClick={() => { setEdit(false); setConf(''); }}>Отмена</Btn> : null}</div>
+    </div> : null}
+  </Card>;
 }
 
 /* Settings → «Сеть»: with the developer mode on there are two tabs, «Сеть» and «Wi-Fi» */

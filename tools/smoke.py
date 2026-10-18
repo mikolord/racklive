@@ -465,7 +465,14 @@ def main():
         check('devmode: a public address for the access point is refused', HTTP('/api/dev/op', {'op': 'ap_on', 'iface': 'wlp3s0', 'ssid': 'X', 'address': '8.8.8.1/24'}, 'POST')[0] == 400)
         check('devmode: a bad adapter name is refused', HTTP('/api/dev/op', {'op': 'scan', 'iface': 'wlan0; id'}, 'POST')[0] == 400)
         check('devmode: scan finds networks', len(DV({'op': 'scan', 'iface': 'wlp3s0'})['networks']) >= 2)
-        # ReckController OS = collector + developer mode + Wi-Fi access point, in one plugin
+        # VPN (AmneziaWG) in the developer mode (simulated in the demo)
+        vv = api('/api/dev/vpn')
+        check('devmode vpn: status (demo)', vv.get('ok') and vv.get('installed') and vv.get('hasConf'), json.dumps(vv, ensure_ascii=False)[:200])
+        AWGC = '[Interface]\nPrivateKey = k\nAddress = 10.8.0.2/32\nJc = 4\nS1 = 0\nS2 = 0\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n[Peer]\nPublicKey = p\nEndpoint = 203.0.113.10:51820\nAllowedIPs = 0.0.0.0/0\n'
+        pv = DV({'op': 'awg_preview', 'conf': AWGC})['preview']
+        check('devmode vpn: config preview without keys', pv['server'] == '203.0.113.10:51820' and pv['fullTunnel'] and 'k' not in json.dumps(pv).replace('"', ' ').split(), pv)
+        check('devmode vpn: a broken config is refused', HTTP('/api/dev/op', {'op': 'awg_conf', 'conf': 'nonsense'}, 'POST')[0] == 400)
+        check('devmode vpn: save, on, off', 'демо' in DV({'op': 'awg_conf', 'conf': AWGC})['message'] and 'демо' in DV({'op': 'awg_on'})['message'] and 'демо' in DV({'op': 'awg_off'})['message'])        # ReckController OS = collector + developer mode + Wi-Fi access point, in one plugin
         n_sites = len(api('/api/sites')['sites'])
         jid = VP({'plugin': 'rcos', 'op': 'install', 'name': 'Мини-ПК Теста', 'server': 'https://racklive.example.com', 'port': 9998, 'level': 'view', 'tz': 'Europe/Moscow', 'ap': True, 'ssid': 'ReckController', 'apPassword': 'pass-12345'})['job']
         for _ in range(40):
@@ -756,7 +763,7 @@ def main():
             if name == 'VPS · ReckController OS':
                 check('плагин ReckController OS: часовой пояс, точка, название и пароль Wi-Fi, кнопка', 'ReckController OS' in out and 'Часовой пояс машины' in out and 'Своя Wi-Fi-точка для телефона' in out and 'Пароль Wi-Fi' in out and 'Установить ReckController OS' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · Система':
-                check('раздел «Система»: время, обновления, Docker', 'Время и часовой пояс' in out and 'Обновления системы' in out and 'Docker' in out and 'Проверить обновления' in out and 'Перезагрузить машину' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
+                check('раздел «Система»: время, обновления, Docker, VPN', 'Время и часовой пояс' in out and 'Обновления системы' in out and 'Docker' in out and 'Проверить обновления' in out and 'Перезагрузить машину' in out and 'VPN (AmneziaWG)' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · Wi-Fi':
                 check('«Сеть → Wi-Fi»: адаптеры, своя точка, подключение к сети', 'Адаптеры' in out and 'Своя Wi-Fi-точка' in out and 'Подключение к Wi-Fi' in out and 'Искать сети' in out and 'ReckController' in out and 'Изменить название или пароль' in out, re.sub(r'<[^>]+>', ' ', out)[-500:])
             if name == 'Настройки · режим разработчика':

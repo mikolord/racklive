@@ -434,6 +434,119 @@ echo @@ok
 '''
 
 
+# ───────── VPN: AmneziaWG (ReckController OS) ─────────
+# The kernel module when the system has one, otherwise the official userspace amneziawg-go; awg / awg-quick from amneziawg-tools — both built from the
+# Amnezia sources on GitHub (no third-party binaries). The tunnel is the systemd service awg-quick@awg0: the switch enables + starts / disables + stops it,
+# so «on» survives a reboot. awg-quick keeps the routes of the local networks, so the cable network, our access point and this panel stay reachable.
+AWG_IF, AWG_DIR = 'awg0', '/etc/amnezia/amneziawg'
+AWG_SRC = '/opt/racklive-awg-src'
+
+AWG_STATUS = r'''echo "@@awg $(command -v awg >/dev/null 2>&1 && awg --version 2>/dev/null | head -1)"
+echo "@@quick $(command -v awg-quick >/dev/null 2>&1 && echo 1)"
+echo "@@go $(command -v amneziawg-go >/dev/null 2>&1 && echo 1)"
+modinfo amneziawg >/dev/null 2>&1 && echo "@@kmod 1"
+[ -f ''' + AWG_DIR + '/' + AWG_IF + r'''.conf ] && echo "@@conf 1"
+echo "@@enabled $(systemctl is-enabled awg-quick@''' + AWG_IF + r''' 2>/dev/null)"
+echo "@@active $(systemctl is-active awg-quick@''' + AWG_IF + r''' 2>/dev/null)"
+ip link show ''' + AWG_IF + r''' >/dev/null 2>&1 && echo "@@up 1"
+command -v awg >/dev/null 2>&1 && awg show ''' + AWG_IF + r''' dump 2>/dev/null | sed -n '2p' | sed 's/^/@@peer /'
+command -v awg >/dev/null 2>&1 && awg show ''' + AWG_IF + r''' dump 2>/dev/null | sed -n '1p' | awk '{print "@@listen "$3}'
+echo @@end
+'''
+
+
+def parse_awg(out):
+    s = {}
+    for l in out.splitlines():
+        k, _, v = l.partition(' ')
+        if k.startswith('@@') and k != '@@end':
+            s[k[2:]] = v.strip()
+    r = {'installed': bool(s.get('awg') and s.get('quick') and (s.get('kmod') or s.get('go'))), 'version': s.get('awg') or None,
+         'impl': 'модуль ядра' if s.get('kmod') else 'amneziawg-go' if s.get('go') else None, 'hasConf': bool(s.get('conf')),
+         'enabled': s.get('enabled') == 'enabled', 'active': s.get('active') == 'active', 'up': bool(s.get('up')), 'peer': None}
+    p = (s.get('peer') or '').split('\t')
+    if len(p) >= 7:
+        hs = int(p[4]) if p[4].isdigit() else 0
+        r['peer'] = {'endpoint': p[2] if p[2] != '(none)' else '', 'handshake': hs or None, 'rx': int(p[5]) if p[5].isdigit() else 0, 'tx': int(p[6]) if p[6].isdigit() else 0}
+    return r
+
+
+def awg_install_script():
+    """the tools + (when the kernel has no module) the userspace implementation, built from the official sources; a repeat run updates them"""
+    return _APT + _ROOT_APT + f'''SRC={AWG_SRC}; mkdir -p "$SRC"
+echo "— пакеты для сборки: git, make, gcc, Go"
+$APT update </dev/null 2>&1 | tail -1
+$APT install git make gcc libc6-dev pkg-config iproute2 iptables ca-certificates golang-go </dev/null 2>&1 | grep -E '^(Setting up|Err|E:)' | tail -10
+command -v git >/dev/null 2>&1 && command -v make >/dev/null 2>&1 || {{ echo "@@fail не удалось поставить git/make — проверьте интернет и репозитории"; exit 0; }}
+get() {{ if [ -d "$SRC/$1/.git" ]; then git -C "$SRC/$1" pull -q --ff-only </dev/null; else rm -rf "$SRC/$1"; git clone -q --depth 1 "https://github.com/amnezia-vpn/$1" "$SRC/$1" </dev/null; fi; }}
+echo "— amneziawg-tools (awg, awg-quick): скачиваю и собираю"
+get amneziawg-tools || {{ echo "@@fail не удалось скачать amneziawg-tools с GitHub"; exit 0; }}
+make -C "$SRC/amneziawg-tools/src" </dev/null >/dev/null 2>&1 && make -C "$SRC/amneziawg-tools/src" install WITH_WGQUICK=yes WITH_SYSTEMDUNITS=yes </dev/null >/dev/null 2>&1 \\
+  || {{ echo "@@fail не удалось собрать amneziawg-tools"; exit 0; }}
+if modprobe amneziawg 2>/dev/null; then
+  echo "— в ядре есть модуль AmneziaWG: программная реализация не нужна"
+else
+  echo "— amneziawg-go (работает без модуля ядра): скачиваю и собираю, это несколько минут"
+  get amneziawg-go || {{ echo "@@fail не удалось скачать amneziawg-go с GitHub"; exit 0; }}
+  (cd "$SRC/amneziawg-go" && GOTOOLCHAIN=auto GOFLAGS=-buildvcs=false make </dev/null >/dev/null 2>&1) && install -m 755 "$SRC/amneziawg-go/amneziawg-go" /usr/local/bin/amneziawg-go \\
+    || {{ echo "@@fail не удалось собрать amneziawg-go (нужен Go и интернет)"; exit 0; }}
+fi
+mkdir -p {AWG_DIR}; chmod 700 {AWG_DIR}
+systemctl daemon-reload </dev/null
+echo "@@ver $(awg --version 2>/dev/null | head -1)"
+echo @@ok
+'''
+
+
+def awg_conf_text(text, use_dns=True):
+    """the config as it goes to the machine: checked by the same parser as the Keenetic plugin; DNS lines dropped when not wanted"""
+    from .plugins import parse_conf
+    c = parse_conf(text)                                    # raises ValueError with a readable reason
+    lines = [l for l in (text or '').replace('\r\n', '\n').split('\n') if use_dns or not re.match(r'(?i)^\s*dns\s*=', l)]
+    body = '\n'.join(lines).strip() + '\n'
+    if any(ord(ch) < 9 or 13 < ord(ch) < 32 for ch in body):
+        raise ValueError('в конфиге есть непечатные символы')
+    return body, c
+
+
+def awg_conf_script(text, use_dns=True):
+    body, c = awg_conf_text(text, use_dns)
+    path = f'{AWG_DIR}/{AWG_IF}.conf'
+    dns = use_dns and bool(c.get('dns'))
+    return _APT + _ROOT_APT + f'''mkdir -p {AWG_DIR}; chmod 700 {AWG_DIR}
+{_put_file(path, body)} || {{ echo "@@fail не удалось записать конфиг"; exit 0; }}
+''' + (f'''command -v resolvconf >/dev/null 2>&1 || {{ echo "— для DNS из конфига ставлю openresolv"; $APT install openresolv </dev/null 2>&1 | grep -E '^(Setting up|E:)' | tail -2; }}
+''' if dns else '') + f'''echo "— конфиг сохранён ({AWG_IF})"
+if systemctl is-active awg-quick@{AWG_IF} >/dev/null 2>&1; then systemctl restart awg-quick@{AWG_IF} </dev/null 2>&1 | tail -2; echo "— VPN перезапущен с новым конфигом"; fi
+echo @@ok
+'''
+
+
+AWG_ON_SCRIPT = f'''[ "$(id -u)" = 0 ] || {{ echo "@@fail нужны права root"; exit 0; }}
+[ -f {AWG_DIR}/{AWG_IF}.conf ] || {{ echo "@@fail сначала вставьте конфиг"; exit 0; }}
+systemctl enable awg-quick@{AWG_IF} </dev/null >/dev/null 2>&1
+systemctl restart awg-quick@{AWG_IF} </dev/null 2>&1 | tail -3
+sleep 3
+systemctl is-active awg-quick@{AWG_IF} >/dev/null 2>&1 || {{ echo "@@fail VPN не поднялся: $(journalctl -u awg-quick@{AWG_IF} -n 4 --no-pager </dev/null 2>/dev/null | tail -2 | tr '\\n' ' ')"; systemctl disable awg-quick@{AWG_IF} </dev/null >/dev/null 2>&1; exit 0; }}
+echo "— VPN включён и будет включаться после перезагрузки"
+echo @@ok
+'''
+
+AWG_OFF_SCRIPT = f'''[ "$(id -u)" = 0 ] || {{ echo "@@fail нужны права root"; exit 0; }}
+systemctl disable --now awg-quick@{AWG_IF} </dev/null >/dev/null 2>&1
+ip link show {AWG_IF} >/dev/null 2>&1 && awg-quick down {AWG_IF} </dev/null >/dev/null 2>&1
+echo "— VPN выключен"
+echo @@ok
+'''
+
+AWG_FORGET_SCRIPT = AWG_OFF_SCRIPT.replace('echo @@ok\n', f'rm -f {AWG_DIR}/{AWG_IF}.conf\necho "— конфиг удалён"\necho @@ok\n')
+
+
+def demo_awg():
+    return {'ok': True, 'installed': True, 'version': 'amneziawg-tools v1.0.20250901', 'impl': 'amneziawg-go', 'hasConf': True, 'enabled': True, 'active': True, 'up': True,
+            'peer': {'endpoint': '203.0.113.10:51820', 'handshake': int(time.time()) - 40, 'rx': 52_400_000, 'tx': 8_100_000}}
+
+
 # ───────── running ─────────
 def local_ok():
     """the commands can run right here: a real Linux machine, root, systemd — not a container"""
@@ -552,6 +665,17 @@ class Host:
         w['mode'] = kind
         w['suggestAddress'] = suggest_address(nets_of(w['routes'], (w.get('hotspot') or {}).get('iface')))
         return w
+
+    def vpn(self):
+        kind, why = self.target()
+        if kind is None:
+            return {'ok': False, 'why': why}
+        if kind == 'demo':
+            return demo_awg()
+        try:
+            return dict(parse_awg(self.run(AWG_STATUS, 30)), ok=True)
+        except Exception as e:
+            return {'ok': False, 'why': f'не удалось прочитать VPN: {e}'}
 
     def zones(self):
         kind, _ = self.target()

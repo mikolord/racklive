@@ -9,7 +9,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.11.0'
+VERSION = '2.12.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -633,6 +633,28 @@ class App:
                 port = os.environ.get('RL_PORT', '8080')
                 return {'ok': True, 'ssid': ssid, 'password': psk, 'address': address, 'url': f'http://{host}:{port}', 'message': f'Точка «{ssid}» работает. С телефона: http://{host}:{port}'}
             return job('Wi-Fi-точка', run)
+        if op == 'awg_install':
+            def run(progress):
+                out, _ = self._host_exec(hostops.awg_install_script(), 1800, progress)
+                ev('установлен AmneziaWG')
+                return {'ok': True, 'version': hostops.parse_marks(out).get('ver'), 'message': 'AmneziaWG установлен: теперь вставьте конфиг'}
+            return job('AmneziaWG', run)
+        if op == 'awg_preview':                         # what the config is, before anything is written (no keys in the answer)
+            from . import plugins as plugins_mod
+            return {'ok': True, 'preview': plugins_mod.conf_preview(hostops.awg_conf_text(body.get('conf') or '', body.get('dns') is not False)[1])}
+        if op == 'awg_conf':
+            script = hostops.awg_conf_script(body.get('conf') or '', body.get('dns') is not False)      # ValueError → a readable reason
+            if demo:
+                return {'ok': True, 'message': 'Конфиг сохранён (демо)'}
+            _, lines = self._host_exec(script, 300)
+            ev('сохранён конфиг VPN (AmneziaWG)')
+            return {'ok': True, 'message': lines[-1] if lines else 'Конфиг сохранён'}
+        if op in ('awg_on', 'awg_off', 'awg_forget'):
+            if demo:
+                return {'ok': True, 'message': {'awg_on': 'VPN включён (демо)', 'awg_off': 'VPN выключен (демо)', 'awg_forget': 'Конфиг удалён (демо)'}[op]}
+            _, lines = self._host_exec({'awg_on': hostops.AWG_ON_SCRIPT, 'awg_off': hostops.AWG_OFF_SCRIPT, 'awg_forget': hostops.AWG_FORGET_SCRIPT}[op], 90)
+            ev({'awg_on': 'VPN включён', 'awg_off': 'VPN выключен', 'awg_forget': 'конфиг VPN удалён'}[op], 'warning' if op != 'awg_on' else 'info')
+            return {'ok': True, 'message': lines[-1] if lines else 'Готово'}
         if op in ('ap_off', 'ap_forget'):
             if demo:
                 return {'ok': True, 'message': 'Точка выключена (демо)'}
@@ -1265,6 +1287,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(APP.hostnet.view())
+            if path == '/api/dev/vpn':                      # «Режим разработчика» → VPN (AmneziaWG) on the machine
+                if not self.need_admin():
+                    return
+                if not APP.store.cfg['settings'].get('devMode'):
+                    return self.err('включите «Режим разработчика» в Настройки → Основные', 403)
+                return self.send(APP.host.vpn())
             if path in ('/api/dev/status', '/api/dev/wifi', '/api/dev/zones'):        # «Режим разработчика»: the system of the machine (admin only, and only when the mode is on)
                 if not self.need_admin():
                     return
