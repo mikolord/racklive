@@ -42,6 +42,28 @@ def main():
     os.remove(bundle)
     print('ok:', os.path.getsize(os.path.join(WEB, 'app.js')), 'bytes')
     defaults()
+    bust_cache()
+
+
+def bust_cache():
+    """app.js/styles.css had no cache-busting query (unlike the icons, which already use ?v=): Cache-Control: no-cache
+    is a request to revalidate, not a ban on caching, and iOS home-screen apps are known to ignore it and keep serving
+    a stale bundle after a deploy. Tag both with ?v=<VERSION> (from rackd/server.py) in every page that loads them,
+    so a version bump always forces a fresh fetch."""
+    import re
+    srv = open(os.path.join(ROOT, 'rackd', 'server.py'), encoding='utf-8').read()
+    ver = re.search(r"VERSION = '([^']+)'", srv).group(1)
+    changed = []
+    for name in ('index.html', 'frank.html', 'speed.html', 'terminal.html'):
+        p = os.path.join(WEB, name)
+        html = open(p, encoding='utf-8').read()
+        new = re.sub(r'(href="/?styles\.css)(\?v=[^"]*)?"', rf'\1?v={ver}"', html)
+        new = re.sub(r'(src="/?app\.js)(\?v=[^"]*)?"', rf'\1?v={ver}"', new)
+        if new != html:
+            open(p, 'w', encoding='utf-8', newline='\n').write(new)
+            changed.append(name)
+    if changed:
+        print('cache-bust: ?v=' + ver, 'in', ', '.join(changed))
 
 
 def defaults():
