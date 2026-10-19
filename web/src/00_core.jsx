@@ -148,12 +148,14 @@ const T = (key, def) => { const v = THEME.strings[key]; return typeof v === 'str
 /* the app icons (Rack Live / Frank / speed test) — same files as on the home screen; ?v= busts the old cached ones */
 const APP_ICONS = { rack: '/icon.svg?v=27', frank: '/frank-icon.svg?v=27', speed: '/speed-icon.svg?v=27', terminal: '/terminal-icon.svg?v=27' };
 const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1', terminal: '/terminal-icon.svg?v=27' };
+const APP_ICONS_N = { rack: '/icon-net.svg?v=1', frank: '/frank-icon-net.svg?v=1', speed: '/speed-icon-net.svg?v=1', terminal: '/terminal-icon.svg?v=27' };
 function AppIcon({ app = 'rack', size = 30, radius, style }) {
   const st = { borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, ...style };
   if (THEME.appIcons[app]) return <img src={THEME.appIcons[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;      // the custom look brings its own
-  // every app icon has a flat outline twin for the «Графит» look (css shows one of the two, so the original look is untouched)
+  // every app icon has flat outline twins for the «Графит» and «Контроллер» looks (css shows the right one, so the original look is untouched)
   return <><img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false" className="app-ic-c" style={{ display: 'block', ...st }} />
-    <img src={APP_ICONS_G[app]} width={size} height={size} alt="" draggable="false" className="app-ic-g" style={st} /></>;
+    <img src={APP_ICONS_G[app]} width={size} height={size} alt="" draggable="false" className="app-ic-g" style={st} />
+    <img src={APP_ICONS_N[app]} width={size} height={size} alt="" draggable="false" className="app-ic-n" style={st} /></>;
 }
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {
   const d = THEME.icons[name] || ICON_PATHS[name] || ICON_PATHS.other;
@@ -164,9 +166,19 @@ function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) 
 const KIND_COLOR = { router: '#0a84ff', switch: '#30d158', server: '#5e5ce6', nas: '#64d2ff', ap: '#40c8e0', camera: '#ff453a', nvr: '#ff375f', phone: '#8e8e93',
   tablet: '#8e8e93', tv: '#bf5af2', laptop: '#8e8e93', pc: '#ac8e68', printer: '#8e8e93', speaker: '#ff9f0a', iot: '#ffd60a', internet: '#bf5af2', web: '#5e5ce6',
   ups: '#ff9f0a', patch: '#8e8e93', cross: '#64d2ff', pdu: '#ff9f0a', modem: '#bf5af2', other: '#8e8e93' };
+/* «Контроллер»: a small, coordinated palette instead of the original rainbow — blue for infrastructure, teal/cyan next to it (nas/ap keep their own, already close),
+   green only for the switch, yellow for power/sound, red only for cameras (kept, it is the one colour that must still stand out), grey for plain client devices */
+const KIND_COLOR_NET = { tv: 'var(--accent)', internet: 'var(--accent)', modem: 'var(--accent)', server: 'var(--accent)', web: 'var(--accent)',
+  speaker: 'var(--orange)', ups: 'var(--orange)', pdu: 'var(--orange)', pc: 'var(--text3)' };
+function kindColor(kind) {
+  const k = kind || 'other';
+  if (THEME.kindColors[k]) return THEME.kindColors[k];
+  if (document.documentElement.getAttribute('data-skin') === 'net' && KIND_COLOR_NET[k]) return KIND_COLOR_NET[k];
+  return KIND_COLOR[k] || KIND_COLOR.other;
+}
 function KindIcon({ kind, size = 36, round = 10 }) {
-  const c = THEME.kindColors[kind] || KIND_COLOR[kind] || KIND_COLOR.other;
-  return <div style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
+  const c = kindColor(kind);
+  return <div className="kind-ic" style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
     background: `color-mix(in srgb, ${c} 16%, transparent)` }}><Icon name={kind} size={size * .54} color={c} /></div>;
 }
 

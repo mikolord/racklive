@@ -5,7 +5,7 @@
 const siteBase = apps => { const o = location.origin; return PRIVATE_URL.test(o) && apps && apps.url ? apps.url : o; };
 const siteKey = (base, token) => 'RL1.' + btoa(unescape(encodeURIComponent(JSON.stringify({ u: base, t: token })))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-function SitesTool({ onBack }) {
+function SitesTool() {
   const { data, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [info, setInfo] = useState(null);
   const [name, setName] = useState(''); const [agentName, setAgentName] = useState('');
@@ -29,7 +29,6 @@ function SitesTool({ onBack }) {
   const showAgent = async a => { try { const r = await api(`/api/devices/${a.id}/token`, { method: 'POST' }); setShown({ kind: 'agent', name: a.name, token: r.agentToken }); } catch (e) { toast(e.message, true); } };
   const ago = t => (t ? fmt.ago(t, data.now) : 'ещё не выходила на связь');
   return <>
-    <button type="button" className="link-btn" onClick={onBack} style={{ marginBottom: 8 }}>‹ Все инструменты</button>
     <Hint id="sites">Когда в другом месте нет белого IP и нельзя открыть порты (офис, дача, квартира родителей), Rack Live всё равно может следить за той сетью: там ставится свой Rack Live, он сам собирает данные и присылает их сюда одним исходящим соединением. Для одного сервера хватит маленького агента.</Hint>
     {priv ? <div className="warn-box"><Icon name="alert" size={16} /><div>Адрес <b>{base}</b> домашний — с другой площадки он не откроется. Сделайте внешнее имя: Настройки → Приложения на телефон. Ключи ниже подставят его сами.</div></div> : null}
 

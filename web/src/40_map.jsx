@@ -242,7 +242,7 @@ function edgePath(e, L) {
 function MapNode({ n, p, sel, dim, mark, onDown, onClick, onDoubleClick }) {
   const small = n.kind === 'group' || n.client;
   const iconKind = n.kind === 'group' ? 'wifi' : n.kind;
-  const c = KIND_COLOR[iconKind] || KIND_COLOR.other;
+  const c = kindColor(iconKind);
   const is = small ? 28 : 34;
   const room = p.w - (is + 18) - 24, capL = Math.max(8, Math.floor(room / 7.4)), capS = Math.max(10, Math.floor(room / 6.2));      // characters that fit the card (the other map views have wider cards)
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}

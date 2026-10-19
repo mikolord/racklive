@@ -1,4 +1,5 @@
-/* Tab «Инструменты»: three sections — «Устройства» (the old tab), «Плагины» (by device) and «Инструменты» (a catalog of helpers; first: cameras and recorders).
+/* Tab «Инструменты»: one list of sections — like Настройки (coloured icon, name, live status, chevron).
+   «Устройства» and «Плагины» are built in; every helper (cameras, remote sites, community tools) is its own row too.
    Backend: GET /api/plugins/catalog · rackd/cameras.py (/api/cameras*). */
 const PLUGIN_GROUPS = [
   { id: 'keenetic', title: 'Keenetic / Netcraze', drivers: ['keenetic', 'demo_router'], icon: 'router', empty: 'роутер Keenetic или Netcraze' },
@@ -14,23 +15,72 @@ const TOOLS = [
   { id: 'sites', title: 'Удалённые площадки и агенты', icon: 'globe2', color: '#5e5ce6',
     text: 'Следить за другой сетью без белого IP и проброса портов: офис, дача, квартира родителей. Там ставится свой Rack Live (сборщик) или маленький агент — данные приходят сюда сами.' },
 ];
+const TOOLS_BASE = [
+  { id: 'devices', label: () => T('tab.devices', 'Устройства'), icon: 'list', color: '#8e8e93', desc: 'Все устройства в сети, поиск и фильтр' },
+  { id: 'plugins', label: () => 'Плагины', icon: 'box', color: '#0a84ff', desc: 'Установка дополнений: роутер, OpenWrt, сервер, NAS' },
+];
+const TOOLS_GROUPS = [['devices', 'plugins'], ['tools']];           // «tools» stands for every TOOLS.* / community row, in order
+const COMMUNITY_COLORS = ['#0a84ff', '#30b0c7', '#34c759', '#ff9f0a', '#bf5af2', '#ff375f'];
 
-/* open an instrument from anywhere: the Tools tab → «Инструменты» → the tool (and a camera's address to pick in it) */
+/* open an instrument from anywhere: the Tools tab → the tool (and a camera's address to pick in it) */
 function openToolById(ctx, id, cam) {
   try { sessionStorage.setItem('rl_pending_tool', id); if (cam) sessionStorage.setItem('rl_pending_cam', cam); } catch (e) { }
-  ctx.setToolsSec('catalog'); ctx.setTab('tools');
+  ctx.setTab('tools');
   setTimeout(() => window.dispatchEvent(new CustomEvent('rl-open-tool', { detail: id })), 120);
 }
 
 function ToolsView() {
-  const { toolsSec: sec, setToolsSec: setSec } = useApp();
-  const [tool, setTool] = useState(() => { const t = new URLSearchParams(location.search).get('tool') || ssGet('rl_pending_tool') || null; try { sessionStorage.removeItem('rl_pending_tool'); } catch (e) { } return t; });
-  useEffect(() => { const h = e => setTool(e.detail); window.addEventListener('rl-open-tool', h); return () => window.removeEventListener('rl-open-tool', h); }, []);       // «open the cameras tool» from elsewhere (the scan window, a client's card)
-  return <>
-    <div className="view-switch"><Seg value={sec} onChange={s => { setSec(s); setTool(null); }}
-      options={[{ value: 'devices', label: T('tab.devices', 'Устройства'), icon: 'list' }, { value: 'plugins', label: 'Плагины', icon: 'box' }, { value: 'catalog', label: 'Инструменты', icon: 'wrench' }]} /></div>
-    {sec === 'devices' ? <DevicesView /> : sec === 'plugins' ? <PluginsOverview /> : tool === 'cameras' ? <CameraTool onBack={() => setTool(null)} /> : tool === 'sites' ? <SitesTool onBack={() => setTool(null)} /> : String(tool).startsWith('x-') ? <CommunityTool id={tool.slice(2)} onBack={() => setTool(null)} /> : <ToolsCatalog onOpen={setTool} />}
-  </>;
+  const [mine, setMine] = useState([]);              // community tools (uploaded or from the catalog)
+  const [comm, setComm] = useState(false);            // the «plugins & tools» manager window
+  const loadMine = () => api('/api/community').then(r => setMine(r.plugins.filter(p => p.kind === 'tool'))).catch(() => { });
+  useEffect(() => { loadMine(); }, []);
+  const toolRows = [...TOOLS.map(t => ({ id: t.id, label: () => t.title, icon: t.icon, color: t.color, desc: t.text })),
+    ...mine.map((t, i) => ({ id: 'x-' + t.id, label: () => t.title, icon: t.icon || 'wrench', color: COMMUNITY_COLORS[i % COMMUNITY_COLORS.length], desc: t.description, tag: t.source === 'community' ? 'сообщество' : 'своё' }))];
+  const secs = [...TOOLS_BASE, ...toolRows];
+  const phone = useMedia('(max-width: 900px)');
+  const pendingTool = () => { const q = new URLSearchParams(location.search).get('tsec') || ssGet('rl_pending_tool'); try { sessionStorage.removeItem('rl_pending_tool'); } catch (e) { } return q || ''; };
+  const [sec, setSec] = useState(() => pendingTool() || 'devices');
+  const [open, setOpen] = useState(() => pendingTool() || null);
+  const pick = id => {
+    if (id === 'add') return setComm(true);
+    if (phone) { setOpen(id); try { history.pushState({ rltool: id }, ''); } catch (e) { } window.scrollTo({ top: 0 }); return; }
+    setSec(id); window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const back = () => { if (history.state && history.state.rltool) history.back(); else setOpen(null); window.scrollTo({ top: 0 }); };
+  useEffect(() => { const h = e => pick(e.detail); window.addEventListener('rl-open-tool', h); return () => window.removeEventListener('rl-open-tool', h); }, [phone]);     // «open the cameras tool» from elsewhere (the scan window, a client's card)
+  useEffect(() => { const h = e => setOpen(e.state && e.state.rltool ? e.state.rltool : null); window.addEventListener('popstate', h); return () => window.removeEventListener('popstate', h); }, []);
+  useEffect(() => { document.documentElement.classList.toggle('set-detail', !!(phone && open)); return () => document.documentElement.classList.remove('set-detail'); }, [phone, open]);
+  const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
+  const listMode = phone && !open;
+  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
+  return <div className={'set-layout' + (phone ? ' ios' : '')}>
+    {listMode ? <div className="ios-list">{TOOLS_GROUPS.map((g, gi) => { const items = g[0] === 'tools' ? toolRows : g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
+      return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" onClick={() => pick(x.id)}>
+        <span className="ios-ico"><span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span></span>
+        <span className="ios-label">{x.label()}</span>{x.tag ? <span className="badge">{x.tag}</span> : null}
+        <Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} /></button>)}
+        {gi === TOOLS_GROUPS.length - 1 ? <button type="button" className="ios-cell" onClick={() => pick('add')}>
+          <span className="ios-ico"><span className="set-ic" style={{ background: 'var(--fill)' }}><Icon name="plus" size={18} /></span></span>
+          <span className="ios-label">Свой инструмент или из каталога</span><Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} /></button> : null}
+      </div>; })}</div> : null}
+    {!phone ? <nav className="set-nav">{TOOLS_BASE.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
+        <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
+        <span className="set-txt"><b>{x.label()}</b><small>{x.desc}</small></span><Icon name="chevron" size={14} color="var(--text3)" /></button>)}
+      <div className="set-nav-sep" />
+      {toolRows.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
+        <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
+        <span className="set-txt"><b>{x.label()}</b><small>{x.desc}</small></span><Icon name="chevron" size={14} color="var(--text3)" /></button>)}
+      <button type="button" className="set-item" onClick={() => pick('add')}>
+        <span className="set-ic" style={{ background: 'var(--fill)' }}><Icon name="plus" size={16} /></span>
+        <span className="set-txt"><b>Свой инструмент или из каталога</b><small>Загрузить .zip или взять из каталога сообщества</small></span></button>
+    </nav> : null}
+    <div className={'set-body' + (listMode ? ' ios-hidden' : phone ? ' ios-push' : '')} key={phone ? 'p' + cur.id : 'd' + cur.id}>
+      {phone ? <div className="ios-nav"><button type="button" className="ios-back" onClick={back}><Icon name="chevron" size={20} stroke={2.6} style={{ transform: 'rotate(180deg)' }} />Инструменты</button><b className="ios-title">{cur.label()}</b><span /></div>
+        : <div className="set-head"><b>{cur.label()}</b><span>{cur.desc}</span></div>}
+      {content}
+    </div>
+    {comm ? <CommunityManager onClose={() => { setComm(false); loadMine(); }} /> : null}
+  </div>;
 }
 
 /* ───────── «where to look»: automatic by default; a small button opens the choice of networks ───────── */
@@ -147,37 +197,12 @@ function MissingGroup({ g, list }) {
   </div>;
 }
 
-/* ───────── catalog of tools ───────── */
-function ToolsCatalog({ onOpen }) {
-  const toast = useToast();
-  const [mine, setMine] = useState([]); const [mgr, setMgr] = useState(false);
-  const loadMine = () => api('/api/community').then(r => setMine(r.plugins.filter(p => p.kind === 'tool'))).catch(() => { });
-  useEffect(() => { loadMine(); }, []);
-  const ICON_COLORS = ['#0a84ff', '#30b0c7', '#34c759', '#ff9f0a', '#bf5af2', '#ff375f'];
-  return <>
-    <Hint id="tools-catalog">Инструменты — помощники для администратора. Встроенные только смотрят и сами ничего не меняют. Инструменты сообщества (свои или из каталога) перед запуском показывают, что именно будут делать.</Hint>
-    <div className="plug-grid">{TOOLS.map(t => <button type="button" key={t.id} className="card tool-card" onClick={() => onOpen(t.id)}>
-      <div className="tool-ic" style={{ background: t.color }}><Icon name={t.icon} size={24} color="#fff" stroke={2} /></div>
-      <div className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{t.title}</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 3 }}>{t.text}</div></div>
-      <Icon name="chevron" size={16} /></button>)}
-      {mine.map((t, i) => <button type="button" key={t.id} className="card tool-card" onClick={() => onOpen('x-' + t.id)}>
-        <div className="tool-ic" style={{ background: ICON_COLORS[i % ICON_COLORS.length] }}><Icon name={t.icon || 'wrench'} size={24} color="#fff" stroke={2} /></div>
-        <div className="grow" style={{ textAlign: 'left', minWidth: 0 }}><div className="row" style={{ gap: 6 }}><b>{t.title}</b><span className="badge">{t.source === 'community' ? 'сообщество' : 'своё'}</span></div>
-          <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 3 }}>{t.description}</div></div>
-        <Icon name="chevron" size={16} /></button>)}
-      <button type="button" className="card tool-card soon" onClick={() => setMgr(true)}><div className="tool-ic" style={{ background: 'var(--fill)' }}><Icon name="plus" size={22} /></div>
-        <div className="grow" style={{ textAlign: 'left' }}><b>Свой инструмент или из каталога</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 3 }}>Загрузите .zip или выберите готовый в каталоге сообщества. Плагины и инструменты добавляются в одном окне, каждый появляется на своём месте.</div></div></button>
-    </div>
-    {mgr ? <CommunityManager onClose={() => { setMgr(false); loadMine(); }} /> : null}
-  </>;
-}
-
 /* ───────── cameras ───────── */
 const LOGIN_TEXT = { password: ['запрашивает пароль', 'online'], open: ['открыта без пароля!', 'offline'], inactive: ['не активирована', 'warning'], unknown: ['пароль не проверен', ''] };
 const KIND_WORD = { camera: 'Камера', recorder: 'Видеорегистратор', unknown: 'Видеоустройство' };
 const genPassword = () => { const a = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const v = new Uint32Array(12); (window.crypto || window.msCrypto).getRandomValues(v); return Array.from(v, x => a[x % a.length]).join(''); };
 
-function CameraTool({ onBack }) {
+function CameraTool() {
   const { data, newDevice } = useApp(); const toast = useToast();
   const [info, setInfo] = useState(null);
   const [where, setWhere] = useState([]);                // [] = automatically
@@ -204,7 +229,6 @@ function CameraTool({ onBack }) {
   const allOn = items.length > 0 && items.every(i => sel.has(i.ip));
   const follow = it => newDevice({ driver: 'ping', kind: 'camera', name: (it.what || '').split('·').slice(-1)[0].trim() || it.ip, fields: { host: it.ip, location: 'local', notes: [it.vendor, it.mac].filter(Boolean).join(' · ') } });
   return <>
-    <button type="button" className="btn sm" onClick={onBack} style={{ marginBottom: 12 }}><Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />Все инструменты</button>
     <Card>
       <div className="row between" style={{ gap: 8, alignItems: 'flex-start' }}>
         <div className="card-title" style={{ margin: 0 }}><Icon name="camera" size={15} />Камеры и видеорегистраторы</div>

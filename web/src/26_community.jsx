@@ -137,7 +137,7 @@ function CommunityManager({ onClose }) {
 
 /* a community TOOL (a plugin of kind «tool»): a form, a device to run it on, one button, and the result drawn from what the script printed */
 const TOOL_TARGETS = { ssh: ['ssh', 'demo_server'], openwrt: ['openwrt', 'demo_openwrt'], synology: ['synology'] };
-function CommunityTool({ id, onBack }) {
+function CommunityTool({ id }) {
   const { data } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [t, setT] = useState(null); const [detail, setDetail] = useState(null); const [showCmds, setShowCmds] = useState(false);
   const [devId, setDevId] = useState(''); const [vals, setVals] = useState({}); const [job, setJob] = useState(null); const [now, setNow] = useState(Date.now());
@@ -153,7 +153,7 @@ function CommunityTool({ id, onBack }) {
     return () => clearInterval(iv);
   }, [job && job.id, job && job.done]);
   if (t === null) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загрузка…</div>;
-  if (t === false) return <><button type="button" className="link-btn" onClick={onBack}>‹ Все инструменты</button><div className="err-note">Такого инструмента нет (его могли убрать).</div></>;
+  if (t === false) return <div className="err-note">Такого инструмента нет (его могли убрать).</div>;
   const missing = (t.fields || []).find(f => f.required && !String(vals[f.id] ?? '').trim() && f.type !== 'switch');
   const loadCmds = async () => { if (detail) return detail; const d = await api('/api/community/' + id); setDetail(d); return d; };
   const run = async () => {
@@ -168,7 +168,6 @@ function CommunityTool({ id, onBack }) {
   };
   const running = job && !job.done; const out = job && job.done && job.result && job.result.output;
   return <>
-    <button type="button" className="link-btn" onClick={onBack} style={{ marginBottom: 8 }}>‹ Все инструменты</button>
     <Card title={t.title}>
       <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>{t.description}</div>
       <div className="row wrap" style={{ gap: 6, marginTop: 8 }}><RiskBadge risk={t.risk} /><span className={'badge' + (t.source === 'community' ? ' online' : '')}>{t.source === 'community' ? 'из каталога сообщества' : 'своё, не проверено'}</span>

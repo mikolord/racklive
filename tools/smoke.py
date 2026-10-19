@@ -587,8 +587,8 @@ def main():
                                + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
-                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — каталог': '?tsec=catalog#tools', 'Инструменты — камеры': '?tsec=catalog&tool=cameras#tools', 'Инструменты — площадки': '?tsec=catalog&tool=sites#tools', 'Инструменты — каталог с инструментом': '?tsec=catalog#tools', 'Инструмент сообщества': '?tsec=catalog&tool=x-disk-usage#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
-                 'Камера — вход': '?tsec=catalog&tool=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
+                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — камеры': '?tsec=cameras#tools', 'Инструменты — площадки': '?tsec=sites#tools', 'Инструменты — каталог с инструментом': '?tsec=cameras#tools', 'Инструмент сообщества': '?tsec=x-disk-usage#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
+                 'Камера — вход': '?tsec=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
                  'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · О программе': '?section=about#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
                  'Кросс': f'?unit={units["cross"]}#rack', 'ONT': f'?unit={units["modem"]}#rack',
@@ -607,6 +607,7 @@ def main():
                  'События — системные': '?sys=1#events',
                  'Настройки — оформление': '?section=look#settings',
                  'Главная — стиль «Графит»': '?skin=graphite&accent=green#rack',
+                 'Главная — стиль «Контроллер»': '?skin=net#rack',
                  'Устройства — удалённые': '#devices', 'Доступ — вход и устройства': '?section=access#settings',
                  'Доступ — подключение приложения': '?section=access&mfa=totp#settings',
                  'Новое устройство — группы': '?add=1#devices', 'Новое устройство — роутеры': '?add=1&addgrp=router#devices',
@@ -704,9 +705,11 @@ def main():
                 check('окно «Сканировать сеть»: сети, кнопка, результаты', 'Сканировать сеть' in out and 'Сканировать' in out and 'стучится' in out)
                 check('сканирование: то, что уже в дереве сети, не предлагается как новое, а показано отдельно', 'ничего добавлять не нужно' in out and 'в дереве сети' in out and 'Камеры: вход, пароль, кадр' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
             if name == 'Настройки — оформление':
-                check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
+                check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Контроллер' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
             if name == 'Главная — стиль «Графит»':
                 check('стиль «Графит» включается атрибутами на <html>', 'data-skin="graphite"' in out and 'data-accent="green"' in out)
+            if name == 'Главная — стиль «Контроллер»':
+                check('стиль «Контроллер» включается атрибутом на <html>', 'data-skin="net"' in out)
             if name == 'Устройства — удалённые':
                 check('«Где находятся» — в меню фильтра (кнопка), отдельных вкладок нет', 'удалённые' in out and 'dev-loc' not in out and 'sort-btn' in out)
             if name == 'Новое устройство — группы':

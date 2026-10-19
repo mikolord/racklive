@@ -68,8 +68,15 @@ function ShortcutsWidget() {
   const { data, admin, setTab } = useApp();
   if (!admin) return null;
   const secs = SET_SECTIONS.filter(x => !x.need || data[x.need]);
-  return <Card title="Настройки"><div className="shortcuts">{secs.map(x => <button key={x.id} type="button" className="shortcut"
-    onClick={() => { lsSet('rl_set_sec', x.id); setTab('settings'); }}>
+  const open = x => { lsSet('rl_set_sec', x.id); setTab('settings'); };
+  if (document.documentElement.getAttribute('data-skin') === 'net') {    // «Контроллер»: a list of rows, like the «Устройства» widget, not a grid of coloured tiles
+    return <Card title="Настройки"><div className="list">{secs.map(x => <div className="li" key={x.id} style={{ cursor: 'pointer' }} onClick={() => open(x)}>
+      <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
+      <div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{x.label}</div>
+        <div className="dim ellipsis" style={{ fontSize: 12 }}>{x.state ? x.state(data) : x.desc}</div></div>
+      <Icon name="chevron" size={14} color="var(--text3)" /></div>)}</div></Card>;
+  }
+  return <Card title="Настройки"><div className="shortcuts">{secs.map(x => <button key={x.id} type="button" className="shortcut" onClick={() => open(x)}>
     {x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} />
       : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
     <span className="ellipsis">{x.label}</span></button>)}</div></Card>;
@@ -154,11 +161,11 @@ function ViewWidget({ which }) {
 const avgUptime = d => { const k = (d.uptime || []).filter(u => u.pct != null); return k.length ? k.reduce((a, u) => a + u.pct, 0) / k.length : null; };
 const ALL = ['S', 'M', 'L'];
 const WIDGETS = {
-  rack: { title: 'Шкафы и места', icon: 'rack', color: '#5e5ce6', size: 'M', sizes: ['M'], once: true, desc: 'Серверный шкаф, щитки и комнаты с оборудованием',
-    render: () => <RackView /> },
+  rack: { title: 'Шкафы и места', icon: 'rack', color: '#5e5ce6', size: 'M', sizes: ['S', 'M'], once: true, desc: 'Серверный шкаф, щитки и комнаты с оборудованием; квадратом — кнопка, открывает сам шкаф',
+    flat: true, render: () => <RackView />, tile: d => ({ v: (d.racks || []).length || '', s: 'шкафы и места' }) },
   stats: { title: 'Сводка', icon: 'pulse', color: '#0a84ff', size: 'M', sizes: ALL, once: true, desc: 'Устройства в сети, проблемы, клиенты, PoE', render: () => <StatsWidget />,
     tile: d => ({ v: `${d.devices.filter(x => (x.state || {}).status === 'online').length}/${d.devices.length}`, s: 'устройств в сети' }) },
-  problems: { title: 'Требуют внимания', icon: 'alert', color: '#ff9f0a', size: 'M', sizes: ALL, list: true, once: true, desc: 'Что сейчас не в сети или с предупреждением', render: () => <ProblemsWidget />,
+  problems: { title: 'Требуют внимания', icon: 'alert', color: '#ff9f0a', size: 'M', sizes: ALL, list: true, once: true, desc: 'Что сейчас не в сети или с предупреждением', flat: true, render: () => <ProblemsWidget />,
     tile: d => { const n = d.devices.filter(x => ['offline', 'warning'].includes((x.state || {}).status)).length; const t = probTone(d);
       return { v: n || '', s: t === 'red' ? `${n} ${ruPlural(n, 'проблема', 'проблемы', 'проблем')} — нет связи` : t === 'yellow' ? `${n} — требует внимания` : 'всё работает', tone: t }; } },
   state: { title: 'Состояние сети', icon: 'shield', color: '#30d158', size: 'M', sizes: ALL, once: true, desc: 'Здоровье и безопасность сети', render: () => <StateCard />,
@@ -186,7 +193,7 @@ const WIDGETS = {
   speed: { title: 'Тест скорости', icon: 'gauge', color: '#30d158', size: 'S', sizes: ALL, once: true, desc: 'Последний замер и кнопка «Начать»', render: () => <SpeedWidget />,
     tile: d => { const l = (d.speedtests || []).filter(t => t.kind !== 'iperf').slice(-1)[0]; return { v: l ? mbpsText(l.down) + '↓' : '—', s: 'нажмите — тест' }; },
     go: ctx => ctx.openSpeed() },
-  frank: { title: 'Frank', icon: 'eye', color: '#636366', size: 'M', sizes: ALL, once: true, desc: 'Задать вопрос помощнику прямо с главной', render: () => <FrankWidget />,
+  frank: { title: 'Frank', icon: 'eye', color: '#636366', size: 'M', sizes: ALL, once: true, desc: 'Задать вопрос помощнику прямо с главной', flat: true, render: () => <FrankWidget />,
     tile: () => ({ v: '', s: 'спросить Frank' }), go: ctx => ctx.askAi('') },
   advice: { title: 'Советы Frank', icon: 'eye', color: '#bf5af2', size: 'M', sizes: ALL, list: true, once: true, desc: 'Раз в несколько дней Frank советует, что добавить и что улучшить',
     render: () => <AdviceWidget />, tile: d => { const n = ((d.advice || {}).items || []).length; return { v: n || '', s: n ? ruPlural(n, 'совет', 'совета', 'советов') + ' от Frank' : 'советов нет', bad: n > 0 }; } },
@@ -363,7 +370,7 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
       <span className="wg-tile-top"><span className="wg-tile-ic" style={{ background: `var(--tile-ic-bg, ${col})` }}><Icon name={d.icon} size={14} color="#fff" stroke={2.2} style={{ stroke: 'var(--tile-ic-fg, #fff)' }} /></span>
         <span className="wg-tile-name ellipsis">{name}</span></span>
       <span className="wg-tile-art">{art}</span>
-      <span className="wg-tile-big"><Icon name={d.icon} size={46} stroke={1.5} /></span>        {/* «Графит»: a big outline icon instead of the picture */}
+      <span className="wg-tile-big">{w.type === 'rack' && document.documentElement.getAttribute('data-skin') === 'net' ? <MiniRack /> : <Icon name={d.icon} size={46} stroke={1.5} />}</span>        {/* «Графит»: a big outline icon instead of the picture */}
       {showV ? <span className="wg-tile-v" style={{ color: t.bad ? 'var(--orange)' : undefined }}>{t.v}</span>
         : t.v !== '' && t.v != null ? <span className="wg-tile-v gv" style={{ color: t.bad ? 'var(--orange)' : undefined }}>{t.v}</span> : null}
       <span className="wg-tile-s ellipsis">{t.s}</span>
@@ -375,7 +382,7 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
   }
   const view = size === 'L' && d.h;          // map / plan: a fixed height, the content fills it
   const tone = size === 'S' && d.tile ? (d.tile(data, w) || {}).tone : null;
-  return <div className={'wg size-' + size + (tone ? ' tone-' + tone : '') + (view ? ' view' : '') + (d.list ? ' wg-list' : '') + (lifted ? ' lifted' : '') + (arranging ? ' arranging' : '')}
+  return <div className={'wg size-' + size + ' t-' + w.type + (d.flat ? ' flat' : '') + (tone ? ' tone-' + tone : '') + (view ? ' view' : '') + (d.list ? ' wg-list' : '') + (lifted ? ' lifted' : '') + (arranging ? ' arranging' : '')}
     data-wid={w.id} ref={elRef} style={{ gridColumn: `span ${span}`, gridRow: `span ${rows}`, '--tc': THEME.tileColors[w.type] || d.color }}>
     <div className="wg-in" ref={inner} style={view ? { height: d.h } : null}>
       <div className="wg-body">{body}</div>
@@ -456,28 +463,67 @@ function MiniTopo({ data }) {        // the «star» scheme from the network map
 
 function MiniPlan({ data }) {         // a floor plan like a drawing: walls, doors, windows, furniture and a wall being drawn with a pencil
   const tests = (data.speedtests || []).filter(t => t.where).length;
+  const net = document.documentElement.getAttribute('data-skin') === 'net';
+  const line = net ? 'var(--accent)' : '#ff9f0a';           // «Контроллер»: the blueprint itself drawn in blue instead of orange
   return <svg viewBox="0 0 100 100" className="mini-svg">
     <defs>
       <radialGradient id="mpw" cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="#30d158" stopOpacity=".55" /><stop offset="1" stopColor="#30d158" stopOpacity="0" /></radialGradient>
-      <pattern id="mpg" width="8" height="8" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".9" fill="#ff9f0a" opacity=".3" /></pattern>
+      <pattern id="mpg" width="8" height="8" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".9" fill={line} opacity=".3" /></pattern>
     </defs>
     <rect x="3" y="3" width="94" height="94" rx="9" fill="url(#mpg)" />
-    <rect x="12" y="13" width="76" height="72" fill="#ff9f0a" opacity=".12" />
+    <rect x="12" y="13" width="76" height="72" fill={line} opacity=".12" />
     <circle cx="72" cy="68" r={tests ? 24 : 17} fill="url(#mpw)" />
     {/* furniture: a bed, a table */}
-    <rect x="17" y="18" width="22" height="15" rx="3" fill="#ff9f0a" opacity=".38" /><rect x="17" y="18" width="7" height="15" rx="3" fill="#ff9f0a" opacity=".55" />
-    <circle cx="71" cy="31" r="7.5" fill="none" stroke="#ff9f0a" strokeWidth="2" opacity=".6" />
+    <rect x="17" y="18" width="22" height="15" rx="3" fill={line} opacity=".38" /><rect x="17" y="18" width="7" height="15" rx="3" fill={line} opacity=".55" />
+    <circle cx="71" cy="31" r="7.5" fill="none" stroke={line} strokeWidth="2" opacity=".6" />
     {/* outer walls, then the partitions with a doorway */}
-    <path d="M12 13 H88 V85 H12 Z" fill="none" stroke="#ff9f0a" strokeWidth="5" strokeLinejoin="round" />
-    <path d="M54 13 V52 M12 52 H40 M54 52 H88" fill="none" stroke="#ff9f0a" strokeWidth="3.4" strokeLinecap="round" />
-    <path d="M40 52 V38.5 A13.5 13.5 0 0 1 53.5 52" fill="none" stroke="#ff9f0a" strokeWidth="1.3" opacity=".75" />
+    <path d="M12 13 H88 V85 H12 Z" fill="none" stroke={line} strokeWidth="5" strokeLinejoin="round" />
+    <path d="M54 13 V52 M12 52 H40 M54 52 H88" fill="none" stroke={line} strokeWidth="3.4" strokeLinecap="round" />
+    <path d="M40 52 V38.5 A13.5 13.5 0 0 1 53.5 52" fill="none" stroke={line} strokeWidth="1.3" opacity=".75" />
     {/* windows */}
     <path d="M24 13 H38 M66 13 H80" stroke="#fff" strokeWidth="2.4" opacity=".9" /><path d="M88 62 V76" stroke="#fff" strokeWidth="2.4" opacity=".9" />
     {/* a new wall being drawn: dashed, handles at the ends, a pencil */}
     <path d="M26 52 V74" stroke="#0a84ff" strokeWidth="2.4" strokeDasharray="3 3.4" strokeLinecap="round" />
     <circle cx="26" cy="52" r="3.2" fill="#fff" stroke="#0a84ff" strokeWidth="1.8" /><circle cx="26" cy="74" r="3.2" fill="#fff" stroke="#0a84ff" strokeWidth="1.8" />
-    <g transform="translate(33 80) rotate(38)"><rect x="-3" y="-17" width="6" height="15" rx="1.4" fill="#fff" stroke="#ff9f0a" strokeWidth="1.2" />
-      <path d="M-3 -2 L3 -2 L0 5 Z" fill="#ffd60a" stroke="#ff9f0a" strokeWidth="1" strokeLinejoin="round" /></g>
+    <g transform="translate(33 80) rotate(38)"><rect x="-3" y="-17" width="6" height="15" rx="1.4" fill="#fff" stroke={line} strokeWidth="1.2" />
+      <path d="M-3 -2 L3 -2 L0 5 Z" fill={net ? 'var(--accent)' : '#ffd60a'} stroke={line} strokeWidth="1" strokeLinejoin="round" /></g>
+  </svg>;
+}
+
+function MiniWeb() {        // «Контроллер»: a green spiderweb filling the whole tile, the device caught off to one side of it (not dead centre)
+  const a = [0, 36, 72, 108, 144, 180, 216, 252, 288, 324].map(deg => deg * Math.PI / 180);
+  const pt = (r, ang) => [50 + r * Math.sin(ang), 46 - r * Math.cos(ang)];
+  const ring = r => a.map(ang => pt(r, ang));
+  const poly = r => ring(r).map(p => p.join(',')).join(' ');
+  const [dx, dy] = pt(40, 72 * Math.PI / 180);
+  return <svg viewBox="0 0 100 100" className="mini-svg">
+    <g stroke="#30d158" strokeWidth="1.5" fill="none" opacity=".85" strokeLinejoin="round">
+      {a.map((ang, i) => { const [x, y] = pt(40, ang); return <line key={i} x1="50" y1="46" x2={x} y2={y} />; })}
+      <polygon points={poly(13)} /><polygon points={poly(26)} /><polygon points={poly(40)} />
+    </g>
+    <g transform={`translate(${dx} ${dy})`}>
+      <rect x="-11" y="-8" width="22" height="16" rx="5" fill="#ff453a" />
+      <circle cx="-4.5" cy="0" r="1.8" fill="#fff" /><circle cx="1.5" cy="0" r="1.8" fill="#fff" /><circle cx="7.5" cy="0" r="1.8" fill="#fff" />
+    </g>
+  </svg>;
+}
+
+function MiniGears() {        // «Контроллер»: two overlapping gears (like the picture sent), flat outline in our colours
+  return <svg viewBox="0 0 100 100" className="mini-svg">
+    <g transform="translate(36 36) rotate(-10) scale(2.55) translate(-12 -12)" fill="none" stroke="#0066ff" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round">
+      <path d={ICON_PATHS.settings} />
+    </g>
+    <g transform="translate(70 70) rotate(14) scale(1.65) translate(-12 -12)" fill="none" stroke="#8e8e93" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round">
+      <path d={ICON_PATHS.settings} />
+    </g>
+  </svg>;
+}
+
+function MiniRack() {        // «Контроллер»: the same outline rack glyph, but its 4 LED dots are real circles so CSS can blink them one by one
+  return <svg viewBox="0 0 24 24" className="mini-svg" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 2h14v20H5zM5 7h14M5 12h14M5 17h14" />
+    <circle cx="8" cy="4.5" r=".9" fill="currentColor" stroke="none" /><circle cx="8" cy="9.5" r=".9" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="14.5" r=".9" fill="currentColor" stroke="none" /><circle cx="8" cy="19.5" r=".9" fill="currentColor" stroke="none" />
   </svg>;
 }
 
@@ -510,7 +556,8 @@ const TILE_ART = {
   uptime: d => <MiniBars days={(() => { const all = (d.uptime || []).filter(u => u.kind !== 'ap'); if (!all.length) return [];
     return all[0].days.map((_, i) => { const v = all.map(u => u.days[i]).filter(x => x != null); return v.length ? Math.min(...v) : null; }); })()} />,
   speed: d => { const l = (d.speedtests || []).filter(t => t.kind !== 'iperf').slice(-1)[0]; return <MiniGauge value={l ? l.down : 0} />; },
-  newdev: d => { const fresh = (d.newDevices || []).filter(x => !x.trusted);
+  newdev: d => { if (document.documentElement.getAttribute('data-skin') === 'net') return <MiniWeb />;
+    const fresh = (d.newDevices || []).filter(x => !x.trusted);
     return <div className="mini-faces">{fresh.slice(0, 4).map((x, i) => <span key={i} style={{ background: ['#bf5af2', '#0a84ff', '#ff9f0a', '#30d158'][i] }}>
       <Icon name={x.random ? 'phone' : 'other'} size={16} color="#fff" /></span>)}{fresh.length > 4 ? <span className="more">+{fresh.length - 4}</span> : null}
       {!fresh.length ? <span style={{ background: 'var(--green)' }}><Icon name="check" size={18} color="#fff" stroke={3} /></span> : null}</div>; },
@@ -523,7 +570,7 @@ const TILE_ART = {
   frank: () => <div className="mini-frank"><FrankEye size={120} round={0} /></div>,
   advice: d => <div className="mini-events">{((d.advice || {}).items || []).slice(0, 3).map((x, i) => <div key={i}><i style={{ background: (ADVICE_KIND[x.kind] || ADVICE_KIND.idea)[1] }} />
     <span className="ellipsis">{x.title}</span></div>)}</div>,
-  shortcuts: d => <div className="mini-grid4">{SET_SECTIONS.filter(x => !x.need || d[x.need]).slice(0, 4).map(x =>
+  shortcuts: d => document.documentElement.getAttribute('data-skin') === 'net' ? <MiniGears /> : <div className="mini-grid4">{SET_SECTIONS.filter(x => !x.need || d[x.need]).slice(0, 4).map(x =>
     <span key={x.id} style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>)}</div>,
   note: (d, w) => <div className="mini-note">{((w.opts || {}).text || 'Пустая заметка').split('\n').slice(0, 4).map((l, i) => <div key={i} className="ellipsis">{l || ' '}</div>)}</div>,
 };

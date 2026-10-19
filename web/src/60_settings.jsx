@@ -176,7 +176,8 @@ const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps', 'network', 's
 function IosSettingsList({ secs, data, onPick }) {
   return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
     return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
-      <span className="ios-ico">{x.id === 'frank' ? <AppIcon app="frank" size={32} radius={8} /> : x.id === 'about' ? <AppIcon size={32} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>}</span>
+      <span className="ios-ico">{document.documentElement.getAttribute('data-skin') === 'net' ? <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>
+        : x.id === 'frank' ? <AppIcon app="frank" size={32} radius={8} /> : x.id === 'about' ? <AppIcon size={32} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>}</span>
       <span className="ios-label">{x.label}</span><span className="ios-val">{x.state ? x.state(data) : ''}</span>
       <Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} /></button>)}</div>; })}</div>;
 }
@@ -237,7 +238,8 @@ function SettingsView() {
   return <div className={'set-layout' + (phone ? ' ios' : '')}>
     {listMode ? <IosSettingsList secs={secs} data={data} onPick={pick} /> : null}
     {!phone ? <nav className="set-nav">{secs.map(x => <button key={x.id} type="button" data-tour={'set-' + x.id} className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
-      {x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
+      {document.documentElement.getAttribute('data-skin') === 'net' ? <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
+        : x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
       <span className="set-txt"><b>{x.label}</b><small>{x.state ? x.state(data) : x.desc}</small></span>
       <Icon name="chevron" size={14} color="var(--text3)" /></button>)}</nav> : null}
     <div className={'set-body' + (listMode ? ' ios-hidden' : phone ? ' ios-push' : '')} key={phone ? 'p' + cur.id : 'd'}>
@@ -341,7 +343,7 @@ function SystemEvents() {
     const t = x => new Date(x * 1000).toLocaleString('ru-RU');
     const head = [`Rack Live ${data.version} · отчёт ${new Date().toLocaleString('ru-RU')}`,
       `Устройство: ${/iPhone|iPad|iPod/.test(navigator.userAgent) ? 'iPhone/iPad' : 'компьютер/другое'}${navigator.standalone ? ' (приложение «Домой»)' : ''} · экран ${innerWidth}×${innerHeight}`,
-      `Адрес: ${location.origin} · оформление: ${lsGet('rl_skin', 'classic')} · User-Agent: ${navigator.userAgent}`];
+      `Адрес: ${location.origin} · оформление: ${lsGet('rl_skin', 'net')} · User-Agent: ${navigator.userAgent}`];
     const body = list.map(e => `${t(e.t)} [${e.name}] ${e.text}`);
     const tail = pend.length ? ['', 'Ещё не отправлено с этого устройства:', ...pend.map(x => `${new Date(x.t).toLocaleTimeString('ru-RU')} ${x.s}`)] : [];
     return [...head, '', `Системные события (${list.length}):`, ...(body.length ? body : ['— пока пусто']), ...tail].join('\n');

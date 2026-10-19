@@ -480,7 +480,7 @@ function PlanItem({ it, devById, racks, sel, edit, onDown }) {
   const name = ref ? ref.name : '—';
   const kind = isPlace ? (ref ? (PLACE_KINDS[ref.kind] || PLACE_KINDS.rack).icon : 'rack') : (ref ? ref.kind : 'other');
   const status = isPlace ? (ref ? placeStatus(ref, devById) : '') : (ref && ref.state ? ref.state.status : '');
-  const col = KIND_COLOR[kind] || KIND_COLOR.other;
+  const col = kindColor(kind);
   return <g className={'plan-item' + (sel ? ' sel' : '')} transform={`translate(${it.x},${it.y})`} onPointerDown={onDown} style={{ cursor: edit ? 'move' : 'pointer' }}>
     <circle r={21} className="pi-bg" style={{ fill: `color-mix(in srgb, ${col} 22%, var(--card-solid))`, stroke: col }} />
     <g transform="translate(-11,-11)"><Icon name={kind} size={22} color={col} /></g>

@@ -1,16 +1,17 @@
-/* Настройки → Оформление: the look of the interface. Two built-in looks — «Rack Live» (the original, the default) and «Графит» (flat, black, thin outlines, green accent) —
-   and CUSTOM looks: a .zip with plain data (colours, texts, icons, css, pictures) that the administrator uploads («Добавить своё»); Rack Live checks it (rackd/themes.py)
-   and keeps the verdict up to date after every update. An accent colour and the light / dark theme work with all of them.
-   The choice is kept per device in localStorage (rl_skin = classic | graphite | <id of a custom look>, rl_theme_meta, rl_accent, rl_theme); the page applies it before the first paint (index.html). */
+/* Настройки → Оформление: the look of the interface. Three built-in looks — «Контроллер» (the default, blue accent, flat UniFi-style icons), «Rack Live» (the original, glass/iOS)
+   and «Графит» (flat, black, thin outlines, green accent) — and CUSTOM looks: a .zip with plain data (colours, texts, icons, css, pictures) that the administrator uploads
+   («Добавить своё»); Rack Live checks it (rackd/themes.py) and keeps the verdict up to date after every update. An accent colour and the light / dark theme work with all of them.
+   The choice is kept per device in localStorage (rl_skin = net | classic | graphite | <id of a custom look>, default net, rl_theme_meta, rl_accent, rl_theme); the page applies it before the first paint (index.html). */
 const SKINS = [
-  { id: 'classic', name: 'Rack Live', text: 'Стекло, мягкие градиенты и синий акцент — как в iOS. Основное оформление.', rows: ['Сводка', 'Роутер'] },
+  { id: 'net', name: 'Контроллер', text: 'Яркий синий акцент как у сетевых контроллеров, без оранжевого (жёлтый вместо него) и фиолетового, плоские иконки без картинок на плитках. Основное оформление.', rows: ['Сводка', 'Роутер'] },
+  { id: 'classic', name: 'Rack Live', text: 'Стекло, мягкие градиенты и синий акцент — как в iOS.', rows: ['Сводка', 'Роутер'] },
   { id: 'graphite', name: 'Графит', text: 'Чёрный фон, плоские серые карточки, тонкие рамки, зелёный акцент — без размытия и теней.', rows: ['Сводка', 'Роутер'] },
 ];
 const ACCENTS = [['', 'По умолчанию у оформления', null], ['blue', 'Синий', '#0a84ff'], ['green', 'Зелёный', '#30b455'], ['purple', 'Фиолетовый', '#a259e6'],
   ['orange', 'Оранжевый', '#f5870a'], ['red', 'Красный', '#f2453d'], ['teal', 'Бирюзовый', '#20b4cc'], ['pink', 'Розовый', '#ee3d73']];
 
-const BUILTIN_SKINS = ['classic', 'graphite'];
-const getSkin = () => lsGet('rl_skin', 'classic') || 'classic';
+const BUILTIN_SKINS = ['classic', 'graphite', 'net'];
+const getSkin = () => lsGet('rl_skin', 'net') || 'net';
 const getAccent = () => { const a = lsGet('rl_accent', ''); return ACCENTS.some(x => x[0] === a) ? a : ''; };
 const themeMeta = () => { try { return JSON.parse(lsGet('rl_theme_meta', '') || 'null'); } catch (e) { return null; } };
 function applyLook(skin, accent) {                              // built-in looks only (a custom look needs its css: a page reload does it, see pickCustom)
@@ -91,7 +92,7 @@ function LookCard() {
   };
   const remove = async t => {
     if (!(await confirm(`Удалить оформление «${t.name}»?`, { danger: true, ok: 'Удалить' }))) return;
-    try { await api('/api/themes/' + t.id, { method: 'DELETE' }); if (skin === t.id) { pickBuiltin('classic'); return; } reload(); } catch (e) { toast(e.message, true); }
+    try { await api('/api/themes/' + t.id, { method: 'DELETE' }); if (skin === t.id) { pickBuiltin('net'); return; } reload(); } catch (e) { toast(e.message, true); }
   };
   const customs = (list && list.themes) || [];
   const card = (id, name, text, ok = true, base = 'classic', meta = null) => <div key={id} className={'look-skin' + (skin === id ? ' on' : '') + (ok ? '' : ' off')} role="button" tabIndex={0}

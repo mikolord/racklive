@@ -20,8 +20,6 @@ const TAB_HINTS = {
     'нажмите кнопку-спидометр вверху, сделайте тест и отметьте место — получится карта покрытия.',
     'Сначала нарисуйте комнаты инструментом «Комната», потом «Оборудование» → выберите устройство и нажмите на план. ' +
     'Дома и столбы на территории соединяются инструментом «Магистраль».'],
-  devices: ['Устройства — то, с чего Rack Live собирает данные. «Добавить» → выберите тип (роутер, коммутатор, NAS, сервер по SSH…), ' +
-    'введите адрес и пароль и нажмите «Проверить» — сразу будет видно, подключается ли.'],
   events: ['Журнал: сбои, восстановления, входы и действия. Чтобы узнавать о сбоях сразу, подключите Telegram-бота в «Настройках» → «Уведомления».'],
   settings: ['Начните с уведомлений: подключите Telegram-бота, и Rack Live сам напишет, если что-то сломается. ' +
     'Подсказки вроде этой выключаются переключателем «Подсказки» в разделе «Основные».'],
@@ -53,9 +51,8 @@ function App() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [tab, setTabRaw] = useState(() => { const t = location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'plan' ? 'map' : t === 'devices' ? 'tools' : t; });
-  const [toolsSec, setToolsSec] = useState(() => { const q = new URLSearchParams(location.search).get('tsec'); return q || 'devices'; });      // the section inside «Инструменты»: devices | plugins | catalog
   const [mapView, setMapView] = useState(() => location.hash === '#plan' ? 'plan' : 'map');     // «Карта» opens on the network map
-  const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else if (t === 'devices') { setToolsSec('devices'); setTabRaw('tools'); } else setTabRaw(t); };
+  const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else if (t === 'devices') { setTabRaw('tools'); } else setTabRaw(t); };
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
   const [arrange, setArrange] = useState(() => new URLSearchParams(location.search).get('arrange') === '1');     // «Расстановка виджетов» on the home page (switch beside «Редактирование»)
@@ -139,7 +136,7 @@ function App() {
     if (data.settings.tourDone !== true) { try { await api('/api/tour', { method: 'POST', body: {} }); } catch (e) { } refresh(); }
   };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, arrange, setArrange, toolsSec, setToolsSec, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
+  const ctx = { data, admin, edit, arrange, setArrange, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
@@ -155,14 +152,13 @@ function App() {
   const badge = problems > 99 ? '99+' : problems;
   const tabs = TABS.filter(t => !t.admin || admin).map(t => ({ ...t, label: T('tab.' + t.id, t.label) }));      // a custom look may rename the tabs
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
-  const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur === 'tools' && toolsSec === 'devices' ? 'devices' : cur;          // what is shown: subtitle and hint follow it
+  const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur;          // what is shown: subtitle and hint follow it
   const subtitle = {
     rack: `${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
-    devices: 'Всё, что собирает данные: локальные и удалённые устройства',
     events: 'Сбои, восстановления и действия администратора',
-    tools: { devices: 'Всё, что собирает данные: локальные и удалённые устройства', plugins: 'Плагины для ваших роутеров и серверов', catalog: 'Готовые помощники: поиск и настройка камер' }[toolsSec],
+    tools: 'Устройства, плагины и готовые помощники: камеры, удалённые площадки',
     settings: 'Уведомления, Frank, приложения на телефон, доступ и резервные копии',
   }[view];
 

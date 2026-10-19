@@ -26,6 +26,7 @@ function DevicesView() {
   const [scan, setScan] = useState(() => new URLSearchParams(location.search).get('netscan') === '1');       // «Сканировать сеть» (?netscan=1)
   const changed = onlyBad || sort !== 'group' || loc !== 'all';
   return <>
+    <Hint id="tools-devices">Устройства — то, с чего Rack Live собирает данные. «Добавить» → выберите тип (роутер, коммутатор, NAS, сервер по SSH…), введите адрес и пароль и нажмите «Проверить» — сразу будет видно, подключается ли.</Hint>
     <div className="dev-tools">
       {find || q ? <div className="dev-find"><SearchBox value={q} onChange={setQ} placeholder="Имя, адрес, площадка" autoFocus />
         <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFind(false); }} /></div>

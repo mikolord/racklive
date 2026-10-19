@@ -19,7 +19,7 @@ MAX_FILES = 200
 MAX_FILE = 3 * 1024 * 1024
 MAX_CSS = 400 * 1024
 EXT = {'.json', '.css', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff2', '.txt', '.md'}
-RESERVED = {'classic', 'graphite', 'none', 'default', 'custom', 'auto', 'light', 'dark', 'system'}
+RESERVED = {'classic', 'graphite', 'net', 'none', 'default', 'custom', 'auto', 'light', 'dark', 'system'}
 ID_RE = re.compile(r'^[a-z][a-z0-9-]{2,31}$')
 APP_ICON_SLOTS = ('rack', 'frank', 'speed')
 
