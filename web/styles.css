@@ -131,7 +131,10 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .stat .v { font-size: 22px; font-weight: 700; letter-spacing: -.4px; margin-top: 2px; }
 .stat .v small { font-size: 13px; font-weight: 600; color: var(--text2); margin-left: 2px; }
 .stat.warn .v { color: var(--orange); } .stat.bad .v { color: var(--red); }
-.stat svg.spark { position: absolute; right: 0; bottom: 0; width: 100%; height: 34px; opacity: .55; }
+/* a bare <Sparkline> (the Internet widget) has no size of its own otherwise — the browser falls back to its default SVG box (300×150), way
+   oversized for the card, with a flat-bottomed fill that looked like a square cut right where the card's corner should round off */
+svg.spark { display: block; width: 100%; height: 56px; }
+.stat svg.spark { position: absolute; right: 0; bottom: 0; height: 34px; opacity: .55; }
 .kv { display: grid; grid-template-columns: minmax(110px, 40%) 1fr; gap: 0; font-size: 14px; }
 .kv > div { padding: 9px 0; border-bottom: .5px solid var(--line); } .kv > div:nth-last-child(-n+2) { border-bottom: 0; }
 .kv > div:nth-child(odd) { color: var(--text2); } .kv > div:nth-child(even) { text-align: right; word-break: break-word; }
