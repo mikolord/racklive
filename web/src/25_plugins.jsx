@@ -47,6 +47,7 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.id === 'awg' ? <AwgPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
       {p.kind === 'installer' ? <InstallerPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
       {p.kind === 'modem' ? <ModemPlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'meshnode' ? <MeshNodePlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'panel' ? <PanelPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'agents' ? <AgentsPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'collector' ? <CollectorPlugin p={p} device={device} reload={reload} /> : null}
@@ -218,6 +219,148 @@ function InstallerPlugin({ p, device, reload, openPlugin }) {
     </div>
     {!ready && !p.installed ? <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка станет активной, когда все пункты выше будут отмечены зелёным.</div> : null}
     {result ? <PluginResult r={result} openPlugin={openPlugin} /> : null}
+  </>;
+}
+
+/* OpenWrt router as a Keenetic mesh access point */
+function MeshNodePlugin({ p, device, reload }) {
+  const toast = useToast(); const confirm = useConfirm();
+  const [busy, setBusy] = useState('');
+  const [result, setResult] = useState(null);
+  const [adv, setAdv] = useState(false);
+  const devHost = (device.fields && device.fields.host) || device.host || '';
+  const [dumbIp, setDumbIp] = useState('');
+  const [gw, setGw] = useState('');
+  const [sugg, setSugg] = useState('');                    // '' | 'loading' | 'done' | 'fail'
+  const toggleAdv = async on => {
+    setAdv(on);
+    if (!on || dumbIp || sugg === 'loading') return;
+    setSugg('loading');
+    try { const r = await call({ op: 'suggest_ip' }); if (r.ip) setDumbIp(r.ip); if (r.gw) setGw(r.gw); setSugg(r.ip ? 'done' : 'fail'); }
+    catch (e) { setSugg('fail'); }
+  };
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: p.id, ...body } });
+  const [stage, setStage] = useState('');
+  const [reset, setReset] = useState(null);           // {left} — обратный отсчёт полного сброса
+  useEffect(() => { if (!reset || reset.left <= 0) return;
+    const t = setTimeout(() => setReset(r => r && { left: r.left - 1 }), 1000); return () => clearTimeout(t); }, [reset]);
+  const pollJob = async id => {                      // установка идёт фоном — ждём её, обновляя строку состояния
+    for (let i = 0; i < 300; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      let j; try { j = await call({ op: 'job', job: id }); } catch (e) { continue; }
+      if (j.stage) setStage(j.stage);
+      if (j.done) return j.error ? { ok: false, error: j.error } : { ...(j.result || {}), ok: (j.result || {}).ok !== false };
+    }
+    return { ok: false, error: 'установка заняла слишком долго' };
+  };
+  const run = async op => {
+    if (op === 'remove') {
+      const ok = await confirm('Убрать точку Keenetic с этого роутера? Наша служба Mesh снимется, роутеру вернётся его собственный Wi-Fi. '
+        + 'Адрес роутера, root-пароль и остальные настройки сохранятся — он останется на связи. '
+        + 'В приложении Keenetic эту точку (станет офлайн) удалите вручную. Продолжить?',
+        { title: 'Убрать точку', ok: 'Убрать', danger: true });
+      if (!ok) return;
+      setBusy('remove'); setResult(null);
+      try { const r = await call({ op: 'remove' }); setResult({ ...r, up: r.ok, kept: true }); toast(r.message, !r.ok); reload(); }
+      catch (e) { setResult({ error: e.message, kept: true }); toast(e.message, true); }
+      finally { setBusy(''); }
+      return;
+    }
+    if (op === 'acquire') {
+      setBusy('acquire'); setResult(null); setStage('Запускаю захват…');
+      try {
+        let r = await call({ op: 'acquire' });
+        if (r.job) r = await pollJob(r.job);
+        setResult({ ...r, up: r.ok, kept: true }); toast(r.message || (r.ok ? 'Готово' : r.error) || '', !r.ok); reload();
+      } catch (e) { setResult({ error: e.message, kept: true }); toast(e.message, true); }
+      finally { setBusy(''); setStage(''); }
+      return;
+    }
+    if (op === 'factory') {
+      const ok = await confirm('Полный сброс до чистого OpenWrt? Это сотрёт на роутере ВСЕ настройки (адрес, пароль, Wi-Fi) и перезагрузит его. '
+        + 'После сброса роутер вернётся на заводской адрес 192.168.1.1 — а это адрес вашего Keenetic, поэтому СРАЗУ по окончании отсчёта '
+        + 'выньте кабель роутера из коммутатора, иначе он помешает всей сети. Продолжить?',
+        { title: 'Полный сброс', ok: 'Сбросить', danger: true });
+      if (!ok) return;
+      setBusy('factory'); setResult(null);
+      try { const r = await call({ op: 'factory' }); if (r.reset) setReset({ left: r.delay || 20 }); toast(r.message, !r.ok); }
+      catch (e) { setResult({ error: e.message, kept: true }); toast(e.message, true); }
+      finally { setBusy(''); }
+      return;
+    }
+    const text = 'Rack Live поставит на роутер небольшую службу (Python), и роутер появится в системе Keenetic как точка доступа. '
+      + (dumbIp ? `Роутер будет переведён в режим точки доступа с адресом ${dumbIp} — его веб-интерфейс потом будет на этом адресе. ` : '')
+      + 'Займёт 1–3 минуты. Продолжить?';
+    if (!(await confirm(text, { title: p.title, ok: p.installed ? 'Переустановить' : 'Сделать точкой' }))) return;
+    setBusy(op); setResult(null); setStage('Ставлю службу на роутер…');
+    try {
+      let r = await call({ op, dumbIp, gw });
+      if (r.job) r = await pollJob(r.job);                 // фоновая установка — дожидаемся
+      setResult({ ...r, up: r.ok, kept: true }); toast(r.message || (r.ok ? 'Готово' : r.error) || '', !r.ok); reload();
+    } catch (e) { setResult({ error: e.message, kept: true }); toast(e.message, true); }
+    finally { setBusy(''); setStage(''); }
+  };
+  if (reset) return <div className={'plugin-result' + (reset.left <= 0 ? ' bad' : ' warn')}>
+    <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+      <div style={{ fontSize: 34, fontWeight: 800, minWidth: 54, textAlign: 'center' }}>{reset.left > 0 ? reset.left : '0'}</div>
+      <div className="grow">{reset.left > 0
+        ? <><b>Роутер сбрасывается…</b><div style={{ fontSize: 13.5, lineHeight: 1.45 }}>Приготовьтесь. Когда отсчёт дойдёт до нуля — <b>выньте кабель роутера из коммутатора</b>.</div></>
+        : <><b style={{ color: 'var(--red)' }}>Выньте кабель роутера сейчас!</b><div style={{ fontSize: 13.5, lineHeight: 1.45 }}>Роутер стирает настройки и перезагружается в чистый OpenWrt (192.168.1.1).
+          Пока он подключён к коммутатору, он мешает сети. В приложении Keenetic удалите эту точку (офлайн).</div></>}</div>
+    </div>
+  </div>;
+  const required = (p.checks || []).filter(c => !c.optional);
+  const ready = required.every(c => c.ok);
+  return <>
+    {p.author ? <div className="dim3" style={{ fontSize: 12, marginBottom: 6 }}>Автор способа: {p.author}</div> : null}
+    <details className="guide" open={!p.installed}>
+      <summary>Как подготовить роутер</summary>
+      <ol style={{ margin: '6px 0 4px', paddingLeft: 20, fontSize: 13.5, lineHeight: 1.5 }}>
+        <li><b>Подсеть.</b> Посмотрите, какая подсеть у вашего основного роутера (например, 192.168.1.x), и поставьте новому роутеру такую же. Адрес выберите свободный из вашего пула.</li>
+        <li><b>Wi-Fi.</b> Включите вещание Wi-Fi в обоих диапазонах (2,4 и 5 ГГц), если они есть.</li>
+        <li><b>DNS.</b> Укажите IP-адрес вашего основного роутера.</li>
+        <li><b>Шлюз.</b> Тоже укажите IP-адрес основного роутера.</li>
+        <li><b>Сохраните</b> настройки и подключите кабель от вашей сети в <b>LAN-порт</b> нового роутера (не в WAN).</li>
+        <li>Добавьте роутер в Rack Live как OpenWrt, затем здесь нажмите «Сделать точкой Keenetic», а после установки — «Захватить в Keenetic».</li>
+      </ol>
+      <div className="dim3" style={{ fontSize: 12.5 }}>Поле «Broadcast» (широковещательный адрес) оставьте пустым — если там адрес роутера, новый роутер не увидит сеть.</div>
+    </details>
+    <Checks checks={p.checks || []} />
+    {p.installed ? <div className={'plugin-result' + (p.member ? '' : ' warn')}>
+      <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name={p.member ? 'check' : 'bulb'} size={18} />
+        <div className="grow"><b>{p.member ? 'Роутер работает точкой Keenetic.' : 'Служба запущена — осталось принять точку в Keenetic.'}</b>
+          {p.member && (p.ssids || []).length ? <div className="dim" style={{ fontSize: 12.5 }}>Раздаёт: {p.ssids.join(', ')}</div> : null}
+          {!p.member ? <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45 }}>Нажмите «Захватить в Keenetic» ниже — Rack Live сам примет точку (без приложения). Или примите вручную в приложении Keenetic → Wi-Fi-система.</div> : null}</div></div></div> : null}
+    {p.installed && !p.member ? <div className="row wrap" style={{ marginTop: 8 }}>
+      <Btn kind="primary" icon="wifi" busy={busy === 'acquire'} disabled={!!busy} onClick={() => run('acquire')}>{busy === 'acquire' ? 'Захватываю…' : 'Захватить в Keenetic'}</Btn>
+      <Btn icon="refresh" disabled={!!busy} onClick={reload}>Обновить статус</Btn>
+    </div> : null}
+    {busy === 'acquire' && stage ? <div className="dim row" style={{ gap: 8, fontSize: 12.5, marginTop: 6 }}><span className="spin-dot" />{stage}</div> : null}
+    {!p.installed ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={adv} onChange={toggleAdv} />
+      <div className="grow"><div>Перевести роутер в режим точки доступа</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>Включите, только если это НОВЫЙ роутер со своей отдельной сетью. Rack Live отключит на нём интернет-порт, DHCP и файрвол (адреса будет раздавать Keenetic)
+          и даст роутеру свободный адрес в вашей сети. {devHost ? `Этот роутер уже в вашей сети (${devHost}) — можно не включать, просто нажмите «Сделать точкой».` : 'Если роутер уже как точка доступа — не включайте.'}</div></div></div> : null}
+    {adv && !p.installed ? <div className="awg-form">
+      <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+        <div className="grow" style={{ minWidth: 150 }}><Field label="Свободный адрес для роутера"><input className="input" value={dumbIp} placeholder={sugg === 'loading' ? 'ищу свободный…' : 'например 192.168.1.250'} onChange={e => setDumbIp(e.target.value)} /></Field></div>
+        <div style={{ width: 150 }}><Field label="Шлюз (обычно .1)"><input className="input" value={gw} placeholder="192.168.1.1" onChange={e => setGw(e.target.value)} /></Field></div>
+      </div>
+      <div className="dim3" style={{ fontSize: 12.5 }}>{sugg === 'loading' ? 'Rack Live ищет в сети свободный адрес…'
+        : sugg === 'done' ? 'Rack Live подобрал свободный адрес (проверил, что он не занят). Можно оставить так или вписать другой.'
+        : sugg === 'fail' ? 'Не удалось подобрать адрес автоматически — впишите свободный адрес вручную (который точно никем не занят).'
+        : 'Укажите свободный адрес в вашей сети — такой, который никому не выдан.'}</div>
+    </div> : null}
+    <div className="row wrap">
+      <Btn kind="primary" icon={p.installed ? 'refresh' : 'wifi'} busy={busy === 'install'} disabled={!ready || !!busy} onClick={() => run('install')}>
+        {busy === 'install' ? 'Устанавливаю…' : p.installed ? 'Переустановить' : 'Сделать точкой Keenetic'}</Btn>
+      {p.installed ? <Btn kind="danger" icon="trash" busy={busy === 'remove'} disabled={!!busy} onClick={() => run('remove')}>Убрать точку</Btn> : null}
+    </div>
+    {p.installed ? <div className="row wrap" style={{ marginTop: 2 }}>
+      <button type="button" className="linkbtn" style={{ color: 'var(--red)', fontSize: 12.5 }} disabled={!!busy} onClick={() => run('factory')}>Полный сброс до чистого OpenWrt (с перезагрузкой)</button>
+    </div> : null}
+    {busy === 'install' && stage ? <div className="dim row" style={{ gap: 8, fontSize: 12.5, marginTop: 6 }}><span className="spin-dot" />{stage}</div> : null}
+    {!ready && !p.installed ? <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка станет активной, когда все пункты выше будут зелёными.</div> : null}
+    {result ? <PluginResult r={result} /> : null}
   </>;
 }
 

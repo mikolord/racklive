@@ -132,9 +132,10 @@ main.page { min-height: calc(100lvh + 1px); padding: calc(env(safe-area-inset-to
 .stat .v small { font-size: 13px; font-weight: 600; color: var(--text2); margin-left: 2px; }
 .stat.warn .v { color: var(--orange); } .stat.bad .v { color: var(--red); }
 /* a bare <Sparkline> (the Internet widget) has no size of its own otherwise — the browser falls back to its default SVG box (300×150), way
-   oversized for the card, with a flat-bottomed fill that looked like a square cut right where the card's corner should round off */
-svg.spark { display: block; width: 100%; height: 56px; }
-.stat svg.spark { position: absolute; right: 0; bottom: 0; height: 34px; opacity: .55; }
+   oversized for the card. Its own fill has flat, square corners — round them, so a plain rectangle doesn't visually clash sitting this close
+   to the card's rounded corner (that was the "square cut" look, not actual overflow — the rectangle never left the card at all). */
+svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
+.stat svg.spark { position: absolute; right: 0; bottom: 0; height: 34px; opacity: .55; border-radius: 0; }
 .kv { display: grid; grid-template-columns: minmax(110px, 40%) 1fr; gap: 0; font-size: 14px; }
 .kv > div { padding: 9px 0; border-bottom: .5px solid var(--line); } .kv > div:nth-last-child(-n+2) { border-bottom: 0; }
 .kv > div:nth-child(odd) { color: var(--text2); } .kv > div:nth-child(even) { text-align: right; word-break: break-word; }
@@ -1235,7 +1236,13 @@ html.app-touch input, html.app-touch textarea, html.app-touch [contenteditable],
   --map-rack-frame: var(--card-solid); --map-rack-stroke: var(--line); --map-unit: var(--fill); --map-unit-stroke: var(--line2); }
 [data-skin="net"] .app-bg { background: var(--bg); }
 [data-skin="net"] .topbar::before, [data-skin="net"] .bottombar::before { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; background: var(--dock); border-color: var(--line); }
-[data-skin="net"] .card { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; background: var(--card-solid); border: 1px solid var(--line); }
+/* «Контроллер» + liquid glass (on unless switched off: data-glass="off", Настройки → Оформление): a thin tint, strong blur, a light edge and a sheen on top */
+[data-skin="net"] { --lg-tint: rgba(255,255,255,.42); --lg-edge: rgba(255,255,255,.75); --lg-hi: rgba(255,255,255,.9); --lg-sheen: rgba(255,255,255,.45); --lg-shadow: 0 10px 30px rgba(0,0,0,.12); }
+[data-skin="net"][data-theme="dark"] { --lg-tint: rgba(28,28,32,.42); --lg-edge: rgba(255,255,255,.16); --lg-hi: rgba(255,255,255,.22); --lg-sheen: rgba(255,255,255,.09); --lg-shadow: 0 10px 34px rgba(0,0,0,.5); }
+[data-skin="net"]:not([data-glass="off"]) .bottombar::before {
+  background: linear-gradient(180deg, var(--lg-sheen), transparent 55%), var(--lg-tint);
+  backdrop-filter: blur(22px) saturate(190%); -webkit-backdrop-filter: blur(22px) saturate(190%);
+  border: .5px solid var(--lg-edge); box-shadow: inset 0 1px 0 var(--lg-hi), inset 0 0 14px rgba(255,255,255,.04), var(--lg-shadow); }[data-skin="net"] .card { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; background: var(--card-solid); border: 1px solid var(--line); }
 [data-skin="net"] .modal, [data-skin="net"] .sheet { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--elev); border-color: var(--line2); }
 [data-skin="net"] .overlay { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(0,0,0,.6); }
 [data-skin="net"] .tab.on, [data-skin="net"] .seg button.on { box-shadow: none; }
@@ -1244,6 +1251,11 @@ html.app-touch input, html.app-touch textarea, html.app-touch [contenteditable],
 [data-skin="net"] .btn.primary { color: #fff; }
 [data-skin="net"] .bottombar button.on svg { filter: none; }
 [data-skin="net"] .wg-in { background: var(--bg); border: 1px solid var(--line2); box-shadow: none; }
+/* a skin's own .card look must not reach the card nested inside a widget — there it stays see-through, or it shows as a square block in the rounded widget */
+[data-skin] .wg-body > .card, [data-skin] .wg-full > .card { background: none; border: 0; }
+/* «Контроллер»: a grey inner panel nested in the black rim with a small gap — a sense of depth */
+[data-skin="net"] .wg:not(.size-S) .wg-in { padding: 5px; }
+[data-skin="net"] .wg:not(.size-S) .wg-body { background: var(--card-solid); border-radius: 20px; padding: 11px; }
 /* only the widgets marked flat:true (92_dashboard.jsx WIDGETS) get this treatment — every other widget keeps its original look (picture, colour, gradient) */
 [data-skin="net"] .wg.size-S.flat .wg-in { background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 15%, var(--card-solid)) 0%, var(--card-solid) 62%); border-color: var(--line); }
 [data-skin="net"] .wg.size-S.flat[class*="tone-"] .wg-in { background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 28%, var(--card-solid)) 0%, var(--card-solid) 62%); border-color: color-mix(in srgb, var(--tone) 50%, var(--line)); }

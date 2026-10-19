@@ -355,7 +355,18 @@ def main():
         P({'plugin': 'hydraroute', 'op': 'remove'})
         ow = next(d for d in st['devices'] if d['driver'] == 'demo_openwrt')
         OP = lambda body: api(f"/api/devices/{ow['id']}/plugins", body, 'POST')
-        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem'])
+        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem', 'meshnode'])
+        mj = OP({'plugin': 'meshnode', 'op': 'install'})
+        for _ in range(40):
+            if not mj.get('job'):
+                break
+            jr = OP({'op': 'job', 'job': mj['job']})
+            if jr.get('done'):
+                break
+            time.sleep(0.2)
+        check('openwrt: meshnode installed (demo)', next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'meshnode')['member'])
+        OP({'plugin': 'meshnode', 'op': 'remove'})
+        check('openwrt: meshnode removed (demo)', not next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'meshnode')['installed'])
         OP({'plugin': 'forkop', 'op': 'install', 'extended': True})
         try:
             OP({'plugin': 'podkop', 'op': 'install'}); check('openwrt: podkop refused while forkop installed', False)

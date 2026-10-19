@@ -9,7 +9,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.12.8'
+VERSION = '2.14.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -449,6 +449,51 @@ class App:
         return out
 
     # ───────── «Режим разработчика» (rackd/hostops.py): the system of the machine Rack Live runs on ─────────
+    def meshnode_acquire(self, d, drv):
+        """«Точка Keenetic»: захватить узел через контроллер (команда mws acquire <MAC> eula-accept dpn-accept no-update,
+        с no-update — иначе Keenetic пытается обновить прошивку и захват зависает). Фоновая задача."""
+        from .drivers import REGISTRY
+        job = {'id': secrets.token_hex(6), 'device': d['id'], 'plugin': 'meshnode', 'op': 'acquire', 't': time.time(), 'stage': 'Узнаю MAC роутера…', 'done': False}
+        self.jobs = {k: v for k, v in self.jobs.items() if time.time() - v['t'] < 6 * 3600}
+        self.jobs[job['id']] = job
+
+        def run():
+            try:
+                mac = (drv._ssh(d, 'cat /sys/class/net/br-lan/address 2>/dev/null || cat /sys/class/net/eth0/address 2>/dev/null', 15) or '').strip().lower()
+                if not re.match(r'^[0-9a-f:]{17}$', mac):
+                    raise DriverError('не удалось узнать MAC роутера')
+                kdev = next((x for x in self.store.cfg.get('devices', []) if x.get('driver') == 'keenetic'), None)
+                if not kdev:
+                    raise DriverError('в Rack Live не добавлен роутер Keenetic — добавьте его (как устройство), чтобы захватывать точки')
+                job.update(stage='Связываюсь с Keenetic…')
+                get, cli = REGISTRY['keenetic']._session(kdev)
+                is_mem = lambda: mac in {m.get('mac', '').lower() for m in get('/rci/show/mws/member') if isinstance(m, dict)}
+                if is_mem():
+                    job['result'] = {'ok': True, 'message': 'Этот роутер уже принят в Keenetic как точка Mesh.'}
+                    return
+                cands = {c.get('mac', '').lower() for c in get('/rci/show/mws/candidate') if isinstance(c, dict)}
+                if mac not in cands:
+                    raise DriverError('Keenetic пока не видит этот роутер кандидатом. Подождите ~минуту после установки и попробуйте снова.')
+                job.update(stage='Отправляю команду захвата…')
+                r = cli(['mws acquire %s eula-accept dpn-accept no-update' % mac])
+                st = ((r or [{}])[0].get('parse') or {}).get('status') or []
+                if not any(s.get('status') == 'message' for s in st):
+                    raise DriverError('Keenetic не принял команду: ' + ((st[0].get('message') if st else '') or 'неизвестно'))
+                job.update(stage='Жду, пока Keenetic примет точку…')
+                for _ in range(24):
+                    time.sleep(5)
+                    if is_mem():
+                        self.store.add_event(d['id'], d.get('name'), 'info', 'точка Keenetic: захвачена')
+                        job['result'] = {'ok': True, 'message': 'Готово! Роутер принят в Keenetic как точка Mesh. Через минуту он начнёт раздавать Wi-Fi контроллера.'}
+                        return
+                job['result'] = {'ok': True, 'message': 'Команда захвата отправлена. Точка должна появиться в Mesh в течение минуты — обновите статус.'}
+            except Exception as e:
+                job['error'] = str(e)
+            finally:
+                job['done'], job['dur'] = True, round(time.time() - job['t'])
+        threading.Thread(target=run, daemon=True).start()
+        return job
+
     def start_host_job(self, title, fn):
         """one long operation on the machine at a time (apt does not like two); progress is polled with /api/dev/job"""
         with self.lock:
@@ -1311,7 +1356,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 comm = [{'id': 'x-' + m['id'], 'drivers': [community.TARGETS[t][0] for t in m['targets']], 'title': m['title'], 'icon': m.get('icon') or 'box', 'kind': 'community',
                          'description': m['description'], 'author': m.get('author'), 'home': m.get('home')} for m in APP.community.list() if (m.get('kind') or 'plugin') == 'plugin']
-                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG + [cinstall.RCOS_CARD, cinstall.CARD]] + comm})
+                return self.send({'plugins': [{k: p.get(k) for k in ('id', 'drivers', 'title', 'icon', 'kind', 'description', 'author', 'home', 'experimental')} for p in plugins_mod.CATALOG + vps_mod.CATALOG + agents_mod.CATALOG + [cinstall.RCOS_CARD, cinstall.CARD]] + comm})
             if path == '/api/sites':                        # Инструменты → Удалённые площадки: the sites that report here, agents, and this installation's own collector mode
                 if not self.need_admin():
                     return
@@ -2050,7 +2095,11 @@ class Handler(BaseHTTPRequestHandler):
                             body = APP.collector_prepare(d, body, op)
                         except ValueError as e:
                             return self.err(str(e))
-                    if op in getattr(drv, 'async_ops', ()):
+                    if pid == 'meshnode' and op == 'acquire':       # захват точки через наш Keenetic (команда mws acquire … no-update), фоном
+                        if DEMO:
+                            return self.send({'ok': True, 'message': 'Захвачено (демо): роутер принят в Keenetic как точка Mesh.'})
+                        return self.send({'ok': True, 'job': APP.meshnode_acquire(d, drv)['id']})
+                    if op in getattr(drv, 'async_ops', ()) or (pid == 'meshnode' and op == 'install'):   # долгая установка (ставятся пакеты) — фоном, иначе прокси рвёт по 504
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     try:
                         res = drv.plugin(d, pid, op, body)

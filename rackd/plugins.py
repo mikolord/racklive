@@ -4,7 +4,7 @@ A plugin is described here (what it is, for which drivers); the device driver im
 `plugins(cfg)` → status of each plugin and `plugin(cfg, plugin_id, op, params)` → {ok, log, ...}.
 Shared helpers: the AmneziaWG/WireGuard .conf parser and the domain-list parser.
 """
-import ipaddress, re
+import ipaddress, os, re
 
 # AmneziaWG 3.x (защита заголовков): поля сверх 2.0 (S3/S4/I1-5). Встречаются у некоторых платных провайдеров,
 # в официальных open-source amneziawg-tools/amneziawg-go их нет — такие строки роутер и ReckController не применяют.
@@ -70,6 +70,10 @@ CATALOG += [
      'author': 'itdoginfo', 'home': 'https://github.com/itdoginfo/podkop'},
     {'id': 'modem', 'drivers': ['openwrt'], 'title': 'USB-модем', 'icon': 'modem', 'kind': 'modem',
      'description': 'Драйверы для 4G/LTE-модемов. Rack Live посмотрит, что воткнуто, и подскажет вариант; не подошёл — удалите и поставьте другой.'},
+    {'id': 'meshnode', 'drivers': ['openwrt'], 'title': 'Точка Keenetic (Mesh)', 'icon': 'wifi', 'kind': 'meshnode', 'experimental': True, 'author': 'Сергей Воропаев',
+     'description': 'Сделать OpenWrt-роутер точкой доступа системы Keenetic: он появится в Mesh как «своя» точка и будет раздавать Wi-Fi контроллера. '
+                    'Подготовьте роутер по простой инструкции внутри (та же подсеть, Wi-Fi, DNS и шлюз — адрес основного роутера, кабель в LAN-порт), '
+                    'затем «Сделать точкой» и «Захватить в Keenetic». Неофициальный способ — после обновления прошивки Keenetic может потребовать правок.'},
 ]
 
 OWRT_PKG = r'''PM=opkg; command -v apk >/dev/null 2>&1 && PM=apk
@@ -183,6 +187,126 @@ ENTWARE_INSTALLER = {
 
 def for_driver(driver_id):
     return [dict(p) for p in CATALOG if driver_id in p['drivers']]
+
+
+# ───────── Keenetic mesh node on OpenWrt ─────────
+MESHNODE_DIR = os.path.join(os.path.dirname(__file__), 'meshnode')
+
+
+def meshnode_files():
+    """(stub source, installer source) as text — shipped in rackd/meshnode/."""
+    with open(os.path.join(MESHNODE_DIR, 'mws_stub.py'), encoding='utf-8') as f:
+        stub = f.read()
+    with open(os.path.join(MESHNODE_DIR, 'install.sh'), encoding='utf-8') as f:
+        inst = f.read()
+    return stub, inst
+
+
+MESHNODE_STATUS = OWRT_PKG + r'''. /etc/openwrt_release 2>/dev/null; echo "@@rel $DISTRIB_RELEASE"; echo "@@pm $PM"
+echo "@@arch $(uname -m)"
+echo "@@free $(df /overlay 2>/dev/null | awk 'NR==2{print $4}')"
+[ -x /etc/init.d/mws ] && echo "@@svc 1" || echo "@@svc 0"
+/etc/init.d/mws enabled 2>/dev/null && echo "@@enabled 1"
+pgrep -f mws_stub.py >/dev/null 2>&1 && echo "@@run 1"
+[ -f /etc/mws/cert.pem ] && echo "@@member 1" || echo "@@member 0"
+command -v python3 >/dev/null 2>&1 && echo "@@py 1" || echo "@@py 0"
+command -v openssl >/dev/null 2>&1 && echo "@@ssl 1" || echo "@@ssl 0"
+echo "@@wifi $(iw dev 2>/dev/null | grep -c Interface)"
+if [ $PM = apk ]; then L=$(apk list -I 2>/dev/null); else L=$(opkg list-installed 2>/dev/null); fi
+case "$L" in *wpad-basic-mbedtls*|*wpad-mbedtls*|*wpad-openssl*|*wpad-wolfssl*) echo "@@sae 1";; *) echo "@@sae 0";; esac
+echo "@@ssid $(iw dev 2>/dev/null | sed -n 's/^\s*ssid //p' | sort -u | tr '\n' ',')"
+echo @@end
+'''
+
+
+def parse_meshnode(out):
+    s = {'rel': '', 'pm': 'opkg', 'arch': '', 'free': None, 'svc': False, 'enabled': False,
+         'run': False, 'member': False, 'py': False, 'ssl': False, 'wifi': 0, 'sae': False, 'ssid': []}
+    for l in out.splitlines():
+        k, _, v = l.partition(' ')
+        v = v.strip()
+        if k in ('@@rel', '@@pm', '@@arch'):
+            s[k[2:]] = v
+        elif k == '@@free':
+            s['free'] = int(v) if v.isdigit() else None
+        elif k in ('@@svc', '@@enabled', '@@run', '@@member', '@@py', '@@ssl', '@@sae'):
+            s[k[2:]] = v == '1'
+        elif k == '@@wifi':
+            s['wifi'] = int(v) if v.isdigit() else 0
+        elif k == '@@ssid':
+            s['ssid'] = [x for x in v.split(',') if x]
+    return s
+
+
+def meshnode_install_script(dumb_ap='', gw=''):
+    """Full SSH script: drop the stub + installer on the router, run the installer.
+    base64 is decoded with python3 (installed first) — not every OpenWrt has the base64 util."""
+    import base64
+    stub, inst = meshnode_files()
+    b_stub = base64.b64encode(stub.encode('utf-8')).decode()
+    b_inst = base64.b64encode(inst.encode('utf-8')).decode()
+    arg = ''
+    if dumb_ap:
+        arg = ' --dumb-ap ' + dumb_ap + (' ' + gw if gw else '')
+    return (OWRT_PKG + 'set -e\n'
+            'pupd >/tmp/rl-pkg.log 2>&1 || true\n'
+            'command -v python3 >/dev/null 2>&1 || padd python3-light >>/tmp/rl-pkg.log 2>&1 || true\n'
+            'command -v openssl >/dev/null 2>&1 || padd openssl-util >>/tmp/rl-pkg.log 2>&1 || true\n'
+            # the ssl module is needed for the HTTPS channel with the controller; python3-light does NOT include it
+            'python3 -c "import ssl" >/dev/null 2>&1 || padd python3-openssl >>/tmp/rl-pkg.log 2>&1 || true\n'
+            'if ! command -v python3 >/dev/null 2>&1; then\n'
+            '  NET=нет; ping -c1 -W2 "$(uci -q get network.lan.gateway || echo 192.168.1.1)" >/dev/null 2>&1 && ping -c1 -W2 downloads.openwrt.org >/dev/null 2>&1 && NET=есть\n'
+            '  REASON=$(grep -iE "no space|out of space|not enough" /tmp/rl-pkg.log | head -1); [ -n "$REASON" ] && REASON="мало места на флеше"\n'
+            '  [ -z "$REASON" ] && [ "$NET" = нет ] && REASON="у роутера нет интернета/DNS (проверьте шлюз и DNS в настройках LAN — должны указывать на ваш роутер)"\n'
+            '  [ -z "$REASON" ] && REASON=$(tail -2 /tmp/rl-pkg.log | tr "\\n" " " | cut -c1-160)\n'
+            '  echo "@@fail не удалось поставить python3: ${REASON:-причина неизвестна}"; exit 0\n'
+            'fi\n'
+            'mkdir -p /etc/mws\n'
+            "cat > /tmp/rl-mws.b64 <<'RLSTUB'\n" + b_stub + "\nRLSTUB\n"
+            "cat > /tmp/rl-inst.b64 <<'RLINST'\n" + b_inst + "\nRLINST\n"
+            'python3 -c \'import base64;open("/tmp/mws_stub.py","wb").write(base64.b64decode(open("/tmp/rl-mws.b64","rb").read()))\'\n'
+            'python3 -c \'import base64;open("/tmp/install.sh","wb").write(base64.b64decode(open("/tmp/rl-inst.b64","rb").read()))\'\n'
+            'rm -f /tmp/rl-mws.b64 /tmp/rl-inst.b64\n'
+            'SRC_STUB=/tmp/mws_stub.py sh /tmp/install.sh' + arg + ' 2>&1 | tail -30\n'
+            'rm -f /tmp/install.sh /tmp/mws_stub.py\n')
+
+
+def meshnode_remove_script():
+    stub, inst = meshnode_files()
+    import base64
+    b_inst = base64.b64encode(inst.encode('utf-8')).decode()
+    return ("cat > /tmp/rl-inst.b64 <<'RLINST'\n" + b_inst + "\nRLINST\n"
+            '(command -v python3 >/dev/null 2>&1 && python3 -c \'import base64;open("/tmp/install.sh","wb").write(base64.b64decode(open("/tmp/rl-inst.b64","rb").read()))\') '
+            '|| openssl base64 -d -in /tmp/rl-inst.b64 -out /tmp/install.sh\n'
+            'sh /tmp/install.sh --uninstall 2>&1 | tail -20\n'
+            'rm -f /tmp/install.sh /tmp/rl-inst.b64\n')
+
+
+MESHNODE_FREEIP = r'''GW=$(uci -q get network.lan.gateway)
+[ -n "$GW" ] || GW=$(ip -4 route 2>/dev/null | awk '/default/{print $3; exit}')
+MINE=$(ip -4 addr 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | tr '\n' ' ')
+NET=$(echo "$GW" | cut -d. -f1-3)
+[ -n "$NET" ] || NET=$(echo "$MINE" | awk '{print $1}' | cut -d. -f1-3)
+echo "@@gw $GW"
+[ -n "$NET" ] || { echo "@@freeip"; exit 0; }
+# занятые последние октеты в этой подсети: соседи (ARP) + все адреса самого роутера + шлюз
+USED=" $(ip -4 neigh 2>/dev/null | awk '{print $1}' | grep "^$NET\\." | awk -F. '{print $4}' | tr '\n' ' ') $(for a in $MINE $GW; do echo "$a"; done | grep "^$NET\\." | awk -F. '{print $4}' | tr '\n' ' ') "
+for n in 250 249 248 247 246 245 244 243 242 241 240 239 238 237 236 235 234 233 232 231 230 210 209 208 207 206 205 204 203 202 201 200; do
+  cand="$NET.$n"
+  case "$USED" in *" $n "*) continue ;; esac
+  if ! ping -c1 -W1 "$cand" >/dev/null 2>&1; then echo "@@freeip $cand"; exit 0; fi
+done
+echo "@@freeip"
+'''
+
+
+def meshnode_reset_script(delay=20):
+    """Schedule a FULL factory reset (firstboot) after `delay` s, detached (setsid) so it survives the SSH session closing.
+    The router wipes /overlay and reboots to stock OpenWrt (192.168.1.1) — the UI tells the user to pull the cable."""
+    d = int(delay)
+    return ("command -v firstboot >/dev/null 2>&1 || { echo '@@fail на роутере нет команды firstboot'; exit 0; }\n"
+            "setsid sh -c 'sleep %d; firstboot -y && reboot' </dev/null >/dev/null 2>&1 &\n"
+            "echo @@scheduled %d\n" % (d, d))
 
 
 # ───────── AmneziaWG / WireGuard config ─────────

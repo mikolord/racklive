@@ -327,6 +327,19 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                 p['profiles'] = [dict(m, installed=m['key'] in st['pkgs'], suggested=m['id'] == sug) for m in plugins.MODEM_PROFILES]
                 p['installed'] = any(m['installed'] for m in p['profiles'])
                 p['checks'] = [{'label': 'Модем подключён к USB' + (f": {st['usb'][0]}" if st['usb'] else ''), 'ok': bool(st['usb'])}]
+            elif p['id'] == 'meshnode':
+                ms = plugins.parse_meshnode(self._ssh(cfg, plugins.MESHNODE_STATUS, 30))
+                free_mb = (ms['free'] or 0) // 1024
+                p['installed'] = ms['svc'] and ms['run']
+                p['member'] = ms['member']
+                p['ssids'] = ms['ssid']
+                space_ok = p['installed'] or ms['py'] or free_mb >= 10          # Python уже стоит → место под него не нужно
+                p['checks'] = [{'label': f"Есть Wi-Fi (точек радио: {ms['wifi']})", 'ok': ms['wifi'] > 0},
+                               {'label': 'Python 3 ' + ('установлен' if ms['py'] else 'поставится сам (~10 МБ)'), 'ok': ms['py'] or free_mb >= 10},
+                               {'label': ('Python уже стоит — место не нужно' if ms['py'] else f"Свободно на флеше ≥ 10 МБ (сейчас {free_mb} МБ)"), 'ok': space_ok},
+                               {'label': 'Поддержка WPA3 (wpad с SAE — доставится при необходимости)', 'ok': True}]
+                if ms['svc']:
+                    p['status'] = ('работает, принят в Mesh' if ms['member'] else 'запущен, ждёт приёмки в приложении Keenetic') if ms['run'] else 'установлен, но не запущен'
             out.append(p)
         return {'fw': st['rel'], 'pm': st['pm'], 'plugins': out}
 
@@ -389,6 +402,59 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                 return {'ok': True, 'log': log, 'message': f"Вариант «{prof['title']}» удалён — можно поставить другой"}
             return {'ok': True, 'log': log, 'message': f"Установлено: {prof['title']}. Дальше: {prof['after']} Если модем не заработал — "
                                                          'удалите этот вариант и попробуйте другой (иногда нужно переподключить модем).'}
+        if pid == 'meshnode':
+            if op == 'suggest_ip':
+                out = self._ssh(cfg, plugins.MESHNODE_FREEIP, 40)
+                ip = (re.search(r'@@freeip (\S+)', out) or [None, ''])[1]
+                gw = (re.search(r'@@gw (\S+)', out) or [None, ''])[1]
+                return {'ip': ip, 'gw': gw}
+            if op == 'install':
+                ms = plugins.parse_meshnode(self._ssh(cfg, plugins.MESHNODE_STATUS, 30))
+                if ms['wifi'] < 1:
+                    raise DriverError('на этом роутере нет Wi-Fi (mac80211) — он не может быть точкой доступа')
+                free_mb = (ms['free'] or 0) // 1024
+                if not ms['py'] and free_mb < 10:
+                    raise DriverError(f"мало места на флеше: {free_mb} МБ — не хватит для Python (нужно ~10 МБ)")
+                dumb = (params.get('dumbIp') or '').strip()
+                gw = (params.get('gw') or '').strip()
+                if dumb and not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', dumb):
+                    raise DriverError('неверный адрес для режима точки доступа')
+                prog = params.get('_progress') or (lambda s: None)
+                prog('Ставлю пакеты и службу на роутер… (1–3 минуты)')
+                out = self._ssh(cfg, plugins.meshnode_install_script(dumb, gw) + plugins.MESHNODE_STATUS, timeout=900)
+                body = out.split('@@rel', 1)[0]
+                if '@@fail' in body:
+                    raise DriverError(clean(body).split('@@fail', 1)[1].splitlines()[0].strip())
+                after = plugins.parse_meshnode(out)
+                log = to_log(body)
+                if not (after['svc'] and after['run']):
+                    return {'ok': False, 'log': log, 'error': 'служба не запустилась — посмотрите журнал ниже', 'message': 'Узел не запустился'}
+                return {'ok': True, 'log': log,
+                        'message': 'Готово: роутер стал точкой Keenetic и запущен. Теперь откройте приложение Keenetic '
+                                   '(или веб-интерфейс) → раздел Wi-Fi-системы и примите новую точку — как при обычном добавлении в Mesh. '
+                                   'После приёмки он сам получит настройки Wi-Fi контроллера.'}
+            if op == 'remove':
+                out = self._ssh(cfg, plugins.meshnode_remove_script() + plugins.MESHNODE_STATUS, timeout=300)
+                after = plugins.parse_meshnode(out)
+                log = to_log(out.split('@@rel', 1)[0])
+                if after['svc']:
+                    return {'ok': False, 'log': log, 'error': 'служба осталась — см. журнал', 'message': 'Не удалось убрать'}
+                return {'ok': True, 'log': log,
+                        'message': 'Готово: наша служба Mesh убрана, роутеру возвращён его собственный Wi-Fi. '
+                                   'Адрес, root-пароль и остальные настройки роутера сохранены — он остаётся на связи. '
+                                   'В приложении Keenetic эту точку (станет офлайн) удалите вручную.'}
+            if op == 'factory':
+                delay = 20
+                out = self._ssh(cfg, plugins.meshnode_reset_script(delay), timeout=30)
+                if '@@fail' in out:
+                    raise DriverError(clean(out).split('@@fail', 1)[1].splitlines()[0].strip())
+                if '@@scheduled' not in out:
+                    raise DriverError('не удалось запустить сброс роутера')
+                return {'ok': True, 'reset': True, 'delay': delay,
+                        'message': f'Полный сброс запущен. Через {delay} с роутер сотрёт ВСЕ настройки и перезагрузится в чистый OpenWrt '
+                                   '(адрес станет 192.168.1.1). Когда отсчёт закончится — выньте кабель из коммутатора, '
+                                   'чтобы он не поднялся на 192.168.1.1 в вашей сети.'}
+            raise DriverError('неизвестное действие')
         raise DriverError('неизвестный плагин')
 
 

@@ -80,6 +80,8 @@ function LookCard() {
     } catch (e) { toast('Не удалось применить: ' + e.message, true); }
   };
   const pickAccent = a => { setAccent(a); lsSet('rl_accent', a); const h = document.documentElement; if (a) h.setAttribute('data-accent', a); else h.removeAttribute('data-accent'); };
+  const [glass, setGlass] = useState(() => lsGet('rl_glass', '1') !== '0');
+  const pickGlass = on => { setGlass(on); lsSet('rl_glass', on ? '1' : '0'); const h = document.documentElement; if (on) h.removeAttribute('data-glass'); else h.setAttribute('data-glass', 'off'); };
   const upload = async f => {
     if (!f) return; setBusy(true);
     try {
@@ -126,6 +128,10 @@ function LookCard() {
       </div>
       <div className="dim3" style={{ fontSize: 12.5, marginTop: 10 }}>Как сделать своё: скачайте инструкцию и отдайте её нейросети вместе с описанием желаемого вида — она соберёт архив. Версия оформления (api): {list ? list.api : '…'} · Rack Live {list ? list.version : ''}.
         Иконка приложения на экране «Домой» меняется только при новой установке значка.</div>
+    </Card> : null}
+    {skin === 'net' ? <Card title="Жидкое стекло">
+      <div className="row" style={{ gap: 12 }}><div className="grow" style={{ fontSize: 14 }}>Нижняя панель — полупрозрачная, с размытием того, что под ней (как в iOS)</div><Switch on={glass} onChange={pickGlass} /></div>
+      <div className="dim3" style={{ fontSize: 12.5, marginTop: 10 }}>Запоминается на этом устройстве. На слабых телефонах размытие может немного замедлять прокрутку — тогда его можно выключить.</div>
     </Card> : null}
     <Card title="Цвет акцента">
       <div className="look-accents">{ACCENTS.map(([id, name, col]) => <button type="button" key={id || 'def'} title={name} aria-label={name}

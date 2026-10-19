@@ -29,20 +29,20 @@ function openToolById(ctx, id, cam) {
   setTimeout(() => window.dispatchEvent(new CustomEvent('rl-open-tool', { detail: id })), 120);
 }
 
+const ADD_SEC = { id: 'add', label: () => 'Свой инструмент или из каталога', icon: 'plus', color: '#8e8e93', desc: 'Загрузить .zip или взять из каталога сообщества' };
+
 function ToolsView() {
   const [mine, setMine] = useState([]);              // community tools (uploaded or from the catalog)
-  const [comm, setComm] = useState(false);            // the «plugins & tools» manager window
   const loadMine = () => api('/api/community').then(r => setMine(r.plugins.filter(p => p.kind === 'tool'))).catch(() => { });
   useEffect(() => { loadMine(); }, []);
   const toolRows = [...TOOLS.map(t => ({ id: t.id, label: () => t.title, icon: t.icon, color: t.color, desc: t.text })),
     ...mine.map((t, i) => ({ id: 'x-' + t.id, label: () => t.title, icon: t.icon || 'wrench', color: COMMUNITY_COLORS[i % COMMUNITY_COLORS.length], desc: t.description, tag: t.source === 'community' ? 'сообщество' : 'своё' }))];
-  const secs = [...TOOLS_BASE, ...toolRows];
+  const secs = [...TOOLS_BASE, ...toolRows, ADD_SEC];
   const phone = useMedia('(max-width: 900px)');
   const pendingTool = () => { const q = new URLSearchParams(location.search).get('tsec') || ssGet('rl_pending_tool'); try { sessionStorage.removeItem('rl_pending_tool'); } catch (e) { } return q || ''; };
   const [sec, setSec] = useState(() => pendingTool() || 'devices');
   const [open, setOpen] = useState(() => pendingTool() || null);
   const pick = id => {
-    if (id === 'add') return setComm(true);
     if (phone) { setOpen(id); try { history.pushState({ rltool: id }, ''); } catch (e) { } window.scrollTo({ top: 0 }); return; }
     setSec(id); window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -52,7 +52,7 @@ function ToolsView() {
   useEffect(() => { document.documentElement.classList.toggle('set-detail', !!(phone && open)); return () => document.documentElement.classList.remove('set-detail'); }, [phone, open]);
   const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
   const listMode = phone && !open;
-  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
+  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
   return <div className={'set-layout' + (phone ? ' ios' : '')}>
     {listMode ? <div className="ios-list">{TOOLS_GROUPS.map((g, gi) => { const items = g[0] === 'tools' ? toolRows : g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
       return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" onClick={() => pick(x.id)}>
@@ -79,7 +79,6 @@ function ToolsView() {
         : <div className="set-head"><b>{cur.label()}</b><span>{cur.desc}</span></div>}
       {content}
     </div>
-    {comm ? <CommunityManager onClose={() => { setComm(false); loadMine(); }} /> : null}
   </div>;
 }
 
@@ -121,80 +120,206 @@ function WhereToSearch({ subnets, value, onChange, disabled }) {
   </div>;
 }
 
-/* ───────── plugins: by device ───────── */
+/* ───────── plugins: by plugin, then pick the device ───────── */
 function PluginsOverview() {
-  const { data, openDevice } = useApp(); const toast = useToast();
+  const { data } = useApp(); const toast = useToast();
   const [cat, setCat] = useState(null);
-  const [openId, setOpenId] = useState(null);
   const [comm, setComm] = useState(() => new URLSearchParams(location.search).get('community') === '1');      // ?community=1 opens the manager
-  const [status, setStatus] = useState({});            // deviceId → {pluginId: installed} | 'error' | 'loading'
   useEffect(() => { api('/api/plugins/catalog').then(r => setCat(r.plugins)).catch(e => toast(e.message, true)); }, []);
-  const check = async d => {
-    setStatus(s => ({ ...s, [d.id]: 'loading' }));
-    try { const r = await api(`/api/devices/${d.id}/plugins`, { method: 'POST', body: { op: 'status' } }); setStatus(s => ({ ...s, [d.id]: Object.fromEntries(r.plugins.map(p => [p.id, !!p.installed])) })); }
-    catch (e) { setStatus(s => ({ ...s, [d.id]: 'error' })); }
-  };
   if (!cat) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загрузка…</div>;
-  const devs = data.devices.filter(d => groupOfDriver(d.driver));
-  const missing = PLUGIN_GROUPS.filter(g => !devs.some(d => g.drivers.includes(d.driver)));
-  const open = (d, pid) => { const u = new URL(location.href); u.searchParams.set('plugin', pid); try { history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) { } openDevice(d, 'plugins'); };
-  const toggle = d => { const o = openId === d.id ? null : d.id; setOpenId(o); if (o && !status[d.id]) check(d); };
   return <>
-    <Hint id="tools-plugins2">Здесь устройства, на которые Rack Live умеет ставить дополнения. Нажмите на устройство — раскроется список плагинов; нажмите на плагин — откроется установка с проверкой и журналом.</Hint>
-    <div className="card plug-comm" style={{ marginBottom: 10 }}><div className="row" style={{ gap: 10, alignItems: 'center' }}>
-      <div className="ico-circle"><Icon name="box" size={18} /></div>
-      <div className="grow" style={{ minWidth: 0 }}><b>Плагины сообщества</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.4 }}>Каталог от других пользователей, загрузка своего плагина и инструкция, как его написать. Каждый плагин проверяется и запускается только после вашего подтверждения.</div></div>
-      <Btn onClick={() => { setComm(true); }}>Открыть</Btn></div></div>
+    <Hint id="tools-plugins3">Выберите плагин — потом выберите, на каком устройстве его сделать. Если нужного роутера ещё нет в Rack Live, нажмите «Найти в сети» — Rack Live просканирует сеть и покажет подходящие.</Hint>
+    <CommunityCard reloadCat={() => api('/api/plugins/catalog').then(r => setCat(r.plugins)).catch(() => { })} />
     {comm ? <CommunityManager onClose={() => { setComm(false); api('/api/plugins/catalog').then(r => setCat(r.plugins)).catch(() => { }); }} /> : null}
-    {!devs.length ? <div className="card" style={{ marginBottom: 10 }}><div className="dim" style={{ fontSize: 13.5 }}>Пока нет устройств, для которых есть плагины. Ниже все плагины по типам устройств: откройте нужный тип и добавьте такое устройство.</div></div> : null}
-    <div className="col" style={{ gap: 10 }}>{devs.map(d => {
-      const g = groupOfDriver(d.driver);
-      const list = cat.filter(p => (p.drivers || []).includes(realDriver(g)));
-      const st = status[d.id]; const isOpen = openId === d.id;
-      const inst = st && typeof st === 'object' ? list.filter(p => st[p.id]).length : null;
-      return <div className={'card plugin plug-dev-card' + (isOpen ? ' open' : '')} key={d.id}>
-        <button type="button" className="plugin-head" onClick={() => toggle(d)}>
-          <KindIcon kind={d.kind || 'router'} size={38} round={11} />
-          <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b className="ellipsis" style={{ display: 'block' }}>{d.name}</b>
-            <div className="dim" style={{ fontSize: 12.5 }}>{g.title} · плагинов: {list.length}{inst != null ? ' · установлено: ' + inst : ''}</div></div>
-          {st === 'loading' ? <span className="spin-dot" /> : null}
-          <Icon name="chevron" size={16} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
-        </button>
-        {isOpen ? <div className="plug-list">
-          {st === 'error' ? <div className="cam-warn">Не удалось проверить устройство — статус плагинов неизвестен. <Btn size="sm" onClick={() => check(d)}>Повторить</Btn></div> : null}
-          {list.map(p => { const i = st && typeof st === 'object' ? st[p.id] : undefined;
-            return <button type="button" key={p.id} className="plug-row" onClick={() => open(d, p.id)}>
-              <span className="ico-circle"><Icon name={p.icon || 'box'} size={17} /></span>
-              <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{p.title}</b><small>{p.description}</small></span>
-              {i === true ? <span className="badge online"><Icon name="check" size={11} />установлено</span> : i === false ? <span className="badge">не установлено</span> : null}
-              <Icon name="chevron" size={14} /></button>; })}
-        </div> : null}
+    {PLUGIN_GROUPS.map(g => {
+      const gp = cat.filter(p => (p.drivers || []).includes(realDriver(g)) && !String(p.id).startsWith('x-'));
+      if (!gp.length) return null;
+      const gDevs = data.devices.filter(d => g.drivers.includes(d.driver));
+      const normal = gp.filter(p => !p.experimental), exp = gp.filter(p => p.experimental);
+      return <div key={g.id} style={{ marginBottom: 16 }}>
+        <div className="card-title" style={{ margin: '4px 2px 8px' }}><Icon name={g.icon} size={14} />{g.title}
+          <span className="dim3" style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>· {gDevs.length ? `устройств: ${gDevs.length}` : 'устройств этого типа нет'}</span></div>
+        <div className="col" style={{ gap: 10 }}>{normal.map(p => <PluginRow key={p.id} p={p} g={g} devs={gDevs} />)}</div>
+        {exp.length ? <>
+          <div className="card-title" style={{ margin: '14px 2px 8px', color: 'var(--orange)' }}><Icon name="bulb" size={14} />Экспериментальные</div>
+          <div className="col" style={{ gap: 10 }}>{exp.map(p => <PluginRow key={p.id} p={p} g={g} devs={gDevs} exp />)}</div>
+        </> : null}
       </div>;
-    })}</div>
-    {missing.map(g => <MissingGroup key={g.id} g={g} list={cat.filter(p => (p.drivers || []).includes(realDriver(g)))} />)}
+    })}
   </>;
 }
 
-/* a device type the user has none of: its plugins are still shown (greyed), with the reason they cannot be installed yet */
-function MissingGroup({ g, list }) {
-  const { newDevice } = useApp(); const [open, setOpen] = useState(false);
-  if (!list.length) return null;
-  return <div className={'card plugin plug-dev-card plug-missing' + (open ? ' open' : '')} style={{ marginTop: 10, opacity: .92 }}>
+/* shared body for community plugins / tools: description, blue upload + hints, GitHub catalog, the installed list.
+   kind = 'plugin' | 'tool' — filters the catalog and the installed list, and picks the wording. */
+function CommunityBody({ kind, onChange }) {
+  const toast = useToast(); const confirm = useConfirm();
+  const isTool = kind === 'tool';
+  const noun = isTool ? 'инструмент' : 'плагин';
+  const [busy, setBusy] = useState('');
+  const [rep, setRep] = useState(null);
+  const [mine, setMine] = useState(null);
+  const [idx, setIdx] = useState(null);
+  const [catOpen, setCatOpen] = useState(false);
+  const fileRef = useRef(null);
+  const ofKind = arr => (arr || []).filter(p => (isTool ? p.kind === 'tool' : (p.kind || 'plugin') !== 'tool'));
+  const loadMine = () => api('/api/community').then(r => setMine(ofKind(r.plugins))).catch(() => setMine([]));
+  useEffect(() => { loadMine(); }, []);
+  const loadIdx = (refresh) => { setIdx({}); api('/api/community/index' + (refresh ? '?refresh=1' : '')).then(r => setIdx({ ...r, plugins: ofKind(r.plugins) })).catch(e => setIdx({ ok: false, plugins: [], error: e.message })); };
+  const showCatalog = () => { const n = !catOpen; setCatOpen(n); if (n && (!idx || !idx.plugins)) loadIdx(); };
+  const changed = () => { loadMine(); if (onChange) onChange(); };
+  const upload = async f => {
+    if (!f) return; setBusy('upload'); setRep(null);
+    try {
+      const init = { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/zip' }, body: f };
+      const tok = ssGet('rl_tok'); if (tok) init.headers['X-RL-Session'] = tok;
+      const r = await fetch('/api/community/upload', init); const j = await r.json();
+      if (!r.ok && !j.errors) throw new Error(j.error || 'ошибка ' + r.status);
+      setRep(j); if (j.ok) { toast('Добавлено: ' + j.name); changed(); }
+    } catch (e) { toast(e.message, true); } finally { setBusy(''); if (fileRef.current) fileRef.current.value = ''; }
+  };
+  const install = async p => {
+    setBusy(p.id); setRep(null);
+    try { const r = await api('/api/community/install', { method: 'POST', body: { id: p.id } }); setRep(r); if (r.ok) { toast('Добавлено'); changed(); loadIdx(); } }
+    catch (e) { toast(e.message, true); } finally { setBusy(''); }
+  };
+  const remove = async p => {
+    if (!(await confirm(`Убрать «${p.title}» из Rack Live? На устройствах он не удаляется — только пропадает из списка.`, { danger: true, ok: 'Убрать' }))) return;
+    try { await api('/api/community/' + p.id, { method: 'DELETE' }); changed(); loadIdx(); } catch (e) { toast(e.message, true); }
+  };
+  return <>
+    <div className="dim" style={{ fontSize: 12.8, lineHeight: 1.45, margin: '0 0 10px' }}>{isTool
+      ? 'Инструменты от других пользователей (разовый запуск на устройстве: отчёт, проверка, настройка). Можно загрузить свой из файла .zip или взять из каталога на GitHub.'
+      : 'Плагины от других пользователей. Можно загрузить свой из файла .zip или взять из каталога на GitHub.'} Это только данные (без программ):
+      Rack Live проверяет каждый архив, а запускается он лишь после того, как вы выберете устройство, прочитаете команды и подтвердите.</div>
+    <input ref={fileRef} type="file" accept=".zip,application/zip" style={{ display: 'none' }} onChange={e => upload(e.target.files[0])} />
+    <div className="row wrap" style={{ gap: 8 }}>
+      <Btn kind="primary" icon="plus" busy={busy === 'upload'} onClick={() => fileRef.current && fileRef.current.click()}>Загрузить .zip</Btn>
+      <Btn icon={catOpen ? 'chevron' : 'list'} onClick={showCatalog}>Каталог сообщества (GitHub)</Btn>
+    </div>
+    <div className="row wrap" style={{ gap: 8, marginTop: 8 }}>
+      <a className="btn" href={'/api/community/guide.txt' + (isTool ? '?kind=tool' : '')} download><Icon name="file" size={15} />Инструкция для нейросети</a>
+      <a className="btn" href={'/api/community/template.zip' + (isTool ? '?kind=tool' : '')} download><Icon name="download" size={15} />Пример {noun}а</a>
+    </div>
+    <div className="dim3" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.4 }}>Как сделать свой: скачайте инструкцию, отдайте её нейросети вместе с задачей, загрузите полученный архив — Rack Live проверит и покажет ошибки.</div>
+    {rep ? <div className={'plugin-result' + (rep.ok ? '' : ' bad')} style={{ marginTop: 10 }}>
+      <b>{rep.ok ? 'Добавлено: ' + (rep.name || '') : 'Не принято'}</b>
+      {(rep.errors || []).length ? <div className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>{rep.errors.slice(0, 4).join(' · ')}</div> : null}</div> : null}
+
+    {catOpen ? <div style={{ marginTop: 12 }}>
+      <div className="dim3" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.3px', margin: '0 0 4px' }}>Каталог на GitHub</div>
+      {!idx || !idx.plugins && idx.ok === undefined ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загружаю каталог…</div>
+        : !idx.ok ? <div className="err-note" style={{ marginTop: 0 }}>{idx.error || 'Каталог недоступен.'} <Btn size="sm" onClick={() => loadIdx(true)}>Повторить</Btn></div>
+        : !idx.plugins.length ? <div className="dim" style={{ fontSize: 13 }}>В каталоге пока нет {isTool ? 'инструментов' : 'плагинов'}. Станьте первым — сделайте {noun} и отправьте его в репозиторий racklive-plugins.</div>
+        : idx.plugins.map(p => <div key={p.id} className="plug-row" style={{ cursor: 'default', alignItems: 'flex-start' }}>
+            <span className="ico-circle"><Icon name={p.icon || 'box'} size={16} /></span>
+            <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{p.title}</b> <span className="dim3" style={{ fontSize: 12 }}>{p.version}{p.author ? ' · ' + p.author : ''}</span>
+              {p.description ? <small>{p.description}</small> : null}</span>
+            {(idx.installed || {})[p.id] === p.version ? <span className="badge online" style={{ flexShrink: 0 }}>добавлен</span>
+              : <Btn size="sm" kind="primary" busy={busy === p.id} onClick={() => install(p)}>{(idx.installed || {})[p.id] ? 'Обновить' : 'Добавить'}</Btn>}
+          </div>)}
+    </div> : null}
+
+    <div className="dim3" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.3px', margin: '14px 0 2px' }}>Установленные{mine && mine.length ? ' · ' + mine.length : ''}</div>
+    {mine === null ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />…</div>
+      : !mine.length ? <div className="dim3" style={{ fontSize: 12.5 }}>Пока ничего не добавлено. Загрузите .zip или возьмите из каталога GitHub выше.</div>
+      : mine.map(p => <div key={p.id} className="plug-row" style={{ cursor: 'default', alignItems: 'flex-start' }}>
+          <span className="ico-circle"><Icon name={p.icon || 'box'} size={16} /></span>
+          <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{p.title}</b> <span className="dim3" style={{ fontSize: 12 }}>{noun}{p.version ? ' · ' + p.version : ''}</span>
+            {p.description ? <small>{p.description}</small> : null}</span>
+          <Btn size="sm" kind="danger" icon="trash" onClick={() => remove(p)} />
+        </div>)}
+    {mine && mine.length ? <div className="dim3" style={{ fontSize: 11.5, marginTop: 4 }}>{isTool ? 'Запуск инструмента — в разделе «Инструменты»: выберите устройство и подтвердите команды.' : 'Запуск — в карточке подходящего устройства (вкладка «Плагины»), после выбора устройства и подтверждения команд.'}</div> : null}
+  </>;
+}
+
+/* community plugins: expandable card on the Плагины page */
+function CommunityCard({ reloadCat }) {
+  const [open, setOpen] = useState(false);
+  const [n, setN] = useState(null);
+  useEffect(() => { api('/api/community').then(r => setN(r.plugins.filter(p => (p.kind || 'plugin') !== 'tool').length)).catch(() => { }); }, []);
+  return <div className={'card plugin plug-dev-card' + (open ? ' open' : '')} style={{ marginBottom: 16 }}>
     <button type="button" className="plugin-head" onClick={() => setOpen(!open)}>
-      <div className="ico-circle" style={{ opacity: .6 }}><Icon name={g.icon} size={18} /></div>
-      <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b className="ellipsis" style={{ display: 'block' }}>{g.title}</b>
-        <div className="dim" style={{ fontSize: 12.5 }}>плагинов: {list.length} · устройства этого типа нет</div></div>
-      <span className="badge">недоступно</span>
-      <Icon name="chevron" size={16} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} /></button>
+      <span className="ico-circle"><Icon name="box" size={18} /></span>
+      <b className="grow ellipsis" style={{ minWidth: 0, textAlign: 'left' }}>Плагины сообщества</b>
+      {n ? <span className="badge" style={{ flexShrink: 0 }}>{n}</span> : null}
+      <Icon name="chevron" size={16} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+    </button>
+    {open ? <div className="plug-list"><CommunityBody kind="plugin" onChange={() => { reloadCat(); api('/api/community').then(r => setN(r.plugins.filter(p => (p.kind || 'plugin') !== 'tool').length)).catch(() => { }); }} /></div> : null}
+  </div>;
+}
+
+/* community tools: the «Свой инструмент или из каталога» section of the Инструменты tab */
+function CommunityToolsView({ onChange }) {
+  return <CommunityBody kind="tool" onChange={onChange} />;
+}
+
+/* one plugin: expand → pick the device (added ones + «найти в сети») */
+function PluginRow({ p, g, devs, exp }) {
+  const { openDevice } = useApp();
+  const [open, setOpen] = useState(false);
+  const openOn = (d) => { const u = new URL(location.href); u.searchParams.set('plugin', p.id); try { history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) { } openDevice(d, 'plugins'); };
+  return <div className={'card plugin plug-dev-card' + (open ? ' open' : '')}>
+    <button type="button" className="plugin-head" onClick={() => setOpen(!open)}>
+      <span className="ico-circle"><Icon name={p.icon || 'box'} size={18} /></span>
+      <b className="grow ellipsis" style={{ minWidth: 0, textAlign: 'left' }}>{p.title}</b>
+      {exp ? <span className="badge warning" style={{ flexShrink: 0 }}>эксперимент</span> : null}
+      <Icon name="chevron" size={16} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+    </button>
     {open ? <div className="plug-list">
-      <div className="err-note" style={{ marginTop: 0 }}>Эти плагины сейчас установить нельзя: у вас нет устройства типа «{g.title}» ({g.empty}).
-        Добавьте такое устройство — или, если оно уже есть в Rack Live, но с другим типом, откройте его и выберите тип вручную. После этого плагины станут доступны.</div>
-      <div><Btn size="sm" kind="primary" icon="plus" onClick={() => newDevice({ driver: realDriver(g) })}>Добавить устройство этого типа</Btn></div>
-      {list.map(p => <div key={p.id} className="plug-row" style={{ opacity: .6, cursor: 'default' }}>
-        <span className="ico-circle"><Icon name={p.icon || 'box'} size={17} /></span>
-        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{p.title}</b><small>{p.description}</small></span></div>)}
+      <div className="dim" style={{ fontSize: 12.8, lineHeight: 1.45, margin: '0 0 8px' }}>{p.description}</div>
+      {p.author ? <div className="dim3" style={{ fontSize: 12, margin: '-4px 0 8px' }}>Автор способа: {p.author}</div> : null}
+      <PluginTargets p={p} g={g} devs={devs} openOn={openOn} />
     </div> : null}
   </div>;
+}
+
+/* which device to run the plugin on: the added ones of this type, plus scanning the network for more */
+function PluginTargets({ p, g, devs, openOn }) {
+  const { newDevice } = useApp(); const toast = useToast();
+  const [scan, setScan] = useState(null);          // null | {running, items, done, total} | 'error'
+  const stop = useRef(false);
+  useEffect(() => () => { stop.current = true; }, []);
+  const addrOf = d => (d.fields && (d.fields.host || d.fields.webUrl)) || d.host || '';
+  const found = scan && scan.items ? scan.items.filter(it => g.drivers.includes(it.driver) && !it.added && !devs.some(d => addrOf(d) === it.ip)) : [];
+  const runScan = async () => {
+    stop.current = false; setScan({ running: true, items: [], done: 0, total: 0 });
+    try {
+      await api('/api/netscan/start', { method: 'POST', body: {} });
+      for (let i = 0; i < 90; i++) {
+        if (stop.current) return;
+        await new Promise(r => setTimeout(r, 2000));
+        const s = await api('/api/netscan');
+        setScan({ running: s.running, items: s.items || [], done: s.done, total: s.total });
+        if (!s.running) break;
+      }
+    } catch (e) { setScan('error'); toast(e.message, true); }
+  };
+  return <>
+    {devs.length ? <>
+      <div className="dim3" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.3px', margin: '2px 0 2px' }}>На каком устройстве</div>
+      {devs.map(d => <button type="button" key={d.id} className="plug-row" onClick={() => openOn(d)}>
+        <KindIcon kind={d.kind || 'router'} size={30} round={9} />
+        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b className="ellipsis" style={{ display: 'block' }}>{d.name}</b><small>{addrOf(d) || g.title}</small></span>
+        <Icon name="chevron" size={14} /></button>)}
+    </> : <div className="dim" style={{ fontSize: 13, padding: '2px 0 6px' }}>Устройств типа «{g.title}» в Rack Live пока нет. Найдите роутер в сети или добавьте вручную.</div>}
+    <div className="row wrap" style={{ marginTop: 8 }}>
+      <Btn size="sm" icon="search" busy={!!(scan && scan.running)} onClick={runScan}>{scan && scan.running ? 'Сканирую сеть…' : 'Найти в сети'}</Btn>
+      <Btn size="sm" icon="plus" onClick={() => newDevice({ driver: realDriver(g) })}>Добавить вручную</Btn>
+    </div>
+    {scan === 'error' ? <div className="cam-warn" style={{ marginTop: 8 }}>Не удалось просканировать сеть.</div> : null}
+    {scan && typeof scan === 'object' ? <div style={{ marginTop: 8 }}>
+      {scan.running ? <div className="dim3" style={{ fontSize: 12 }}>Идёт поиск… проверено {scan.done}{scan.total ? ' из ' + scan.total : ''}</div> : null}
+      {found.length ? <>
+        <div className="dim3" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.3px', margin: '6px 0 2px' }}>Найдено в сети</div>
+        {found.map(it => <div key={it.ip} className="plug-row" style={{ cursor: 'default' }}>
+          <span className="ico-circle"><Icon name={g.icon} size={16} /></span>
+          <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>{it.name && it.name !== it.ip ? it.name : it.ip}</b><small>{it.ip}{it.what ? ' · ' + it.what : ''}</small></span>
+          <Btn size="sm" kind="primary" icon="plus" onClick={() => newDevice({ driver: it.driver, kind: it.kind || g.id, name: it.name && it.name !== it.ip ? it.name : (it.what || g.title), fields: { host: it.ip } })}>Добавить</Btn>
+        </div>)}
+        <div className="dim3" style={{ fontSize: 11.5, marginTop: 4 }}>После добавления роутер появится в списке «На каком устройстве» выше — выберите его.</div>
+      </> : !scan.running ? <div className="dim3" style={{ fontSize: 12.5, marginTop: 4 }}>Подходящих роутеров ({g.title}) в сети не найдено. Проверьте, что на роутере включён SSH, или добавьте его вручную.</div> : null}
+    </div> : null}
+  </>;
 }
 
 /* ───────── cameras ───────── */

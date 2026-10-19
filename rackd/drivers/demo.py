@@ -259,6 +259,12 @@ class DemoOpenWrt(DemoBase):
                                  {'label': f"Не установлен {inst['conflict'].capitalize()} — они конфликтуют", 'ok': inst['conflict'] not in self._pkgs}])
                 if p['id'] == 'forkop':
                     p['options'] = [{'id': 'extended', 'label': 'sing-box extended — поддержка XHTTP', 'on': True, 'hint': 'Без него XHTTP-ссылки не заработают.'}]
+            elif p['id'] == 'meshnode':
+                on = 'meshnode' in self._pkgs
+                p.update(installed=on, member=on, ssids=['MIKO', 'IoT'] if on else [],
+                         status='работает, принят в Mesh' if on else '',
+                         checks=[{'label': 'Есть Wi-Fi (точек радио: 2)', 'ok': True}, {'label': 'Python 3 поставится сам (~10 МБ)', 'ok': True},
+                                 {'label': 'Свободно на флеше ≥ 10 МБ (сейчас 84 МБ)', 'ok': True}, {'label': 'Поддержка WPA3 (wpad с SAE — доставится при необходимости)', 'ok': True}])
             else:
                 p.update(usb=['12d1:14dc Huawei E3372h'], drivers=['cdc_ether'], devs=[], suggest='hilink', installed=bool(self._installed),
                          checks=[{'label': 'Модем подключён к USB: 12d1:14dc Huawei E3372h', 'ok': True}],
@@ -271,6 +277,17 @@ class DemoOpenWrt(DemoBase):
         if pid == 'modem':
             (self._installed.add if op == 'install' else self._installed.discard)(params.get('profile'))
             return {'ok': True, 'log': [], 'message': f"{'Установлено' if op == 'install' else 'Удалено'} (демо)"}
+        if pid == 'meshnode':
+            if op == 'suggest_ip':
+                return {'ip': '10.0.0.250', 'gw': '10.0.0.1'}
+            if op == 'install':
+                self._pkgs['meshnode'] = '1'
+                return {'ok': True, 'log': [], 'message': 'Готово (демо): роутер стал точкой Keenetic. Примите его в приложении Keenetic.'}
+            if op == 'factory':
+                self._pkgs.pop('meshnode', None)
+                return {'ok': True, 'reset': True, 'delay': 20, 'message': 'Полный сброс (демо): через 20 с роутер сбросился бы до чистого OpenWrt — выньте кабель по окончании отсчёта.'}
+            self._pkgs.pop('meshnode', None)
+            return {'ok': True, 'log': [], 'message': 'Убрано (демо): наша служба снята, свой Wi-Fi роутера возвращён; адрес и пароль сохранены.'}
         if op == 'remove':
             self._pkgs.pop(pid, None)
             return {'ok': True, 'log': [], 'message': f'{pid} удалён (демо)'}
