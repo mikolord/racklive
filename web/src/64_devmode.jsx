@@ -165,15 +165,23 @@ function VpnCard() {
   </Card>;
 }
 
-/* Settings → «Сеть»: with the developer mode on there are three tabs, «Сеть», «Wi-Fi» and «VPN» */
+/* Settings → «Сеть»: with the developer mode on there are three sub-sections, «Сеть», «Wi-Fi» and «VPN» — a list of rows (icon, name, status), like «Настройки»/«Инструменты», not a thin Seg switcher */
+const NET_TABS = [
+  { id: 'net', label: 'Сеть', icon: 'globe', color: '#30b0c7', desc: 'Адреса, DHCP или постоянный адрес' },
+  { id: 'wifi', label: 'Wi-Fi', icon: 'wifi', color: '#0a84ff', desc: 'Адаптеры, своя точка, подключение к сети' },
+  { id: 'vpn', label: 'VPN', icon: 'shield', color: '#34c759', desc: 'AmneziaWG' },
+];
 function NetworkTabs() {
   const { data } = useApp();
   const [tab, setTab] = useState(() => { const q = new URLSearchParams(location.search).get('nettab'); return ['wifi', 'vpn'].includes(q) ? q : lsGet('rl_net_tab', 'net'); });
   if (!data.devMode) return <NetworkCard />;
   const pick = v => { setTab(v); lsSet('rl_net_tab', v); };
   return <>
-    <Seg value={tab} onChange={pick} options={[{ value: 'net', label: 'Сеть' }, { value: 'wifi', label: 'Wi-Fi', icon: 'wifi' }, { value: 'vpn', label: 'VPN', icon: 'shield' }]} />
-    <div style={{ height: 12 }} />
+    <div className="ios-list" style={{ marginBottom: 14 }}><div className="ios-group">{NET_TABS.map(x => <button type="button" key={x.id} className={'ios-cell' + (tab === x.id ? ' on' : '')} onClick={() => pick(x.id)}>
+      <span className="ios-ico"><span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span></span>
+      <span className="ios-label">{x.label}</span><span className="ios-val">{x.desc}</span>
+      {tab === x.id ? <Icon name="check" size={16} color="var(--accent)" stroke={2.6} /> : <Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} />}
+    </button>)}</div></div>
     {tab === 'wifi' ? <WifiCard /> : tab === 'vpn' ? <VpnCard /> : <NetworkCard />}
   </>;
 }

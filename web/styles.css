@@ -886,6 +886,7 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
 .ios-group { border-radius: 16px; overflow: hidden; background: var(--card); border: .5px solid var(--line); }
 .ios-cell { position: relative; display: flex; align-items: center; gap: 13px; width: 100%; min-height: 54px; padding: 10px 14px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .ios-cell:active { background: var(--fill); }
+.ios-cell.on { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ios-cell + .ios-cell::before { content: ''; position: absolute; top: 0; left: 59px; right: 0; height: .5px; background: var(--line); }
 .ios-ico { width: 32px; height: 32px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 8px; } .ios-ico .set-ic { width: 32px; height: 32px; border-radius: 8px; }
 html.set-detail main.page > .row:first-child, html.set-detail main.page > .hint-box { display: none; }
