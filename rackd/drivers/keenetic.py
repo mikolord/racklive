@@ -7,6 +7,7 @@ from ..util import DriverError, uptime_seconds, guess_kind
 
 
 BAD_LOGIN = {}              # sha256(address, login, password) → time of the last rejected login
+SESSIONS = {}               # sha256(address, login, password) → url opener holding the router's session cookie
 
 
 class Keenetic(Driver):
@@ -22,13 +23,19 @@ class Keenetic(Driver):
                {'id': 'sec_fix', 'label': 'Исправить', 'scope': 'security'}]
 
     def _session(self, cfg, host=None):
-        jar = http.cookiejar.CookieJar()
-        ctx = ssl.create_default_context()                 # remote routers often have a self-signed / KeenDNS cert
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=ctx))
         h = (host or cfg['host']).strip().rstrip('/')
         base = h if '://' in h else 'http://' + h          # allow "https://dom.ru:8080" for remote access
+        user = cfg.get('username') or 'admin'
+        # keep one logged-in session per router: a fresh login on every poll makes the Keenetic/Netcraze app
+        # notify «user admin logged in» every minute
+        skey = hashlib.sha256(f"{base}\0{user}\0{cfg.get('password', '')}".encode()).hexdigest()
+        op = SESSIONS.get(skey)
+        if op is None:
+            ctx = ssl.create_default_context()             # remote routers often have a self-signed / KeenDNS cert
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+                                             urllib.request.HTTPSHandler(context=ctx))
 
         def req(path, data=None):
             r = urllib.request.Request(base + path, data=json.dumps(data).encode() if data is not None else None,
@@ -38,7 +45,12 @@ class Keenetic(Driver):
             except urllib.error.HTTPError as e:
                 return e
 
+        get = lambda p: json.loads(req(p).read() or b'{}')
+        cli = lambda cmds: json.loads(req('/rci/', [{'parse': c} for c in cmds]).read())
         r = req('/auth')
+        if getattr(r, 'status', getattr(r, 'code', 0)) == 200 and skey in SESSIONS:
+            return get, cli                                # still logged in — no new login, no notification
+        SESSIONS.pop(skey, None)
         realm, ch = r.headers.get('X-NDM-Realm'), r.headers.get('X-NDM-Challenge')
         if not realm:
             if base.startswith('http://'):                 # KeenDNS / proxy usually answers only over HTTPS
@@ -46,7 +58,6 @@ class Keenetic(Driver):
                                   'и портом проброса, например https://дом.рф:8080')
             raise DriverError('это не Keenetic, либо доступ к роутеру идёт через облако KeenDNS (оно пускает только браузер). '
                               'Нужен прямой доступ: проброшенный порт на роутере или KeenDNS в режиме «прямой доступ».')
-        user = cfg.get('username') or 'admin'
         # after a wrong password wait 30 min (or until the password is changed): polling every minute would get our IP locked out
         bad_key = hashlib.sha256(f"{base}\0{user}\0{cfg.get('password', '')}".encode()).hexdigest()
         if time.time() - BAD_LOGIN.get(bad_key, 0) < 1800:
@@ -58,8 +69,7 @@ class Keenetic(Driver):
             BAD_LOGIN[bad_key] = time.time()
             raise DriverError('неверный логин или пароль')
         BAD_LOGIN.pop(bad_key, None)
-        get = lambda p: json.loads(req(p).read() or b'{}')
-        cli = lambda cmds: json.loads(req('/rci/', [{'parse': c} for c in cmds]).read())
+        SESSIONS[skey] = op
         return get, cli
 
     _VPN_KIND = {'Wireguard': 'wireguard', 'OpenVPN': 'openvpn', 'L2TP': 'l2tp', 'PPTP': 'pptp',

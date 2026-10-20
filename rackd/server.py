@@ -9,7 +9,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.14.0'
+VERSION = '2.14.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -1174,7 +1174,7 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, path):
         if path in ('', '/'):
             path = '/index.html'
-        if path.rstrip('/') in ('/frank', '/speed', '/terminal'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal
+        if path.rstrip('/') in ('/frank', '/speed', '/terminal', '/scan'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal; /scan = port scanner prototype
             path = path.rstrip('/') + '.html'
         full = os.path.normpath(os.path.join(WEB, path.lstrip('/')))
         root = os.path.normpath(WEB)
