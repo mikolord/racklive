@@ -14,6 +14,7 @@ VENDOR = {
     'xterm.js': 'https://unpkg.com/xterm@5.3.0/lib/xterm.js',                      # the terminal in Settings (MIT)
     'xterm.css': 'https://unpkg.com/xterm@5.3.0/css/xterm.css',
     'xterm-addon-fit.js': 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js',
+    'jsQR.js': 'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',                          # reads the QR sticker in the port scanner (/scan, Apache-2.0)
 }
 
 
@@ -54,7 +55,7 @@ def bust_cache():
     srv = open(os.path.join(ROOT, 'rackd', 'server.py'), encoding='utf-8').read()
     ver = re.search(r"VERSION = '([^']+)'", srv).group(1)
     changed = []
-    for name in ('index.html', 'frank.html', 'speed.html', 'terminal.html'):
+    for name in ('index.html', 'frank.html', 'speed.html', 'terminal.html', 'cards.html'):
         p = os.path.join(WEB, name)
         html = open(p, encoding='utf-8').read()
         new = re.sub(r'(href="/?styles\.css)(\?v=[^"]*)?"', rf'\1?v={ver}"', html)

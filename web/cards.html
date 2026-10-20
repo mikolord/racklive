@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark" class="cards-mode">
+<head>
+  <meta charset="UTF-8">
+  <!-- an app, not a page: no zoom. Status bar «default» painted with theme-color = page background, so it blends in.
+       NOT black-translucent: on iOS 26 it blurs everything under/near the status bar and cuts the viewport short at the bottom -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Сканер">
+  <title>Сканер</title>
+  <link rel="icon" href="/cards-icon.svg?v=1" type="image/svg+xml">
+  <link rel="apple-touch-icon" sizes="180x180" href="/cards-apple-touch-icon.png?v=1">
+  <link rel="manifest" href="/cards-manifest.json">
+  <link rel="stylesheet" href="/styles.css?v=2.15.0">
+  <!-- the same app bundle as Rack Live, started in «cards» mode -->
+  <script>window.RL_APP = 'cards';
+  // Android / desktop Chrome: keep the install prompt for our own «Установить» button
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); window.__bip = e; window.dispatchEvent(new Event('rl-bip')); });
+  // Safari ignores user-scalable=no in places: block pinch (gesture* events, two-finger moves) and double-tap zoom by hand
+  (function(){var no=function(e){e.preventDefault()},o={passive:false};
+   ['gesturestart','gesturechange','gestureend','dblclick'].forEach(function(t){document.addEventListener(t,no,o)});
+   document.addEventListener('touchmove',function(e){if(e.touches.length>1)e.preventDefault()},o);
+   var last=0;document.addEventListener('touchend',function(e){var n=Date.now();if(n-last<300&&!e.target.closest('textarea,input,button,a,[role=button]'))e.preventDefault();last=n},o);})();
+  try{var q=(location.search.match(/theme=(light|dark)/)||[])[1];if(q)localStorage.setItem('rl_theme',q);var t=localStorage.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);var sk=localStorage.getItem('rl_skin')||'net',ac=localStorage.getItem('rl_accent'),H=document.documentElement;if(sk==='graphite'){H.setAttribute('data-skin','graphite');var fl=document.querySelector('link[rel~="icon"]');if(fl)fl.setAttribute('href','icon-graphite.svg?v=1');}else if(sk==='net'){H.setAttribute('data-skin','net');}else if(sk&&sk!=='classic'){var mt=null;try{mt=JSON.parse(localStorage.getItem('rl_theme_meta')||'null')}catch(e){}if(mt&&mt.id===sk&&/^[a-z][a-z0-9-]{2,31}$/.test(sk)){if(mt.base==='graphite')H.setAttribute('data-skin','graphite');H.setAttribute('data-theme-id',sk);document.write('<link rel="stylesheet" id="rl-theme-css" href="/themes/'+sk+'/theme.css?v='+(mt.rev||0)+'">');var o=mt['cards']||{};var f2=document.querySelector('link[rel~="icon"]');if(o.fav&&f2)f2.setAttribute('href',o.fav);var a2=document.querySelector('link[rel="apple-touch-icon"]');if(o.touch&&a2)a2.setAttribute('href',o.touch);var m2=document.querySelector('link[rel="manifest"]');if(o.pwa&&m2)m2.setAttribute('href','/cards-manifest.json?skin='+sk);}else{localStorage.setItem('rl_skin','classic')}}if(ac)H.setAttribute('data-accent',ac);if(localStorage.getItem('rl_glass')==='0')H.setAttribute('data-glass','off');
+  if(t!=='auto'){document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.removeAttribute('media');m.setAttribute('content',r==='dark'?'#000000':'#f2f2f7')})}}catch(e){}</script>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="/vendor/jsQR.js"></script>
+  <script src="/vendor/qrcode.js"></script>
+  <script src="/vendor/react.production.min.js"></script>
+  <script src="/vendor/react-dom.production.min.js"></script>
+  <script src="/app.js?v=2.15.0"></script>
+</body>
+</html>

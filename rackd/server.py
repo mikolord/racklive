@@ -3,13 +3,14 @@ import concurrent.futures, gzip, ipaddress, json, mimetypes, os, queue, re, secr
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import models as models_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.14.1'
+VERSION = '2.15.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -89,6 +90,7 @@ class App:
         self.hostnet = hostnet.HostNet(self, DEMO)
         self.host = hostops.Host(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
+        self.models = models_mod.Library(DATA)            # «Сканер»: the user's own 3D models of devices
         self.community = community.Community(DATA)
         self.updater = updater.Updater(self, VERSION, DEMO)
         self.sites = sites_mod.Sites(self)
@@ -248,6 +250,11 @@ class App:
             for m in st.get('metrics') or []:
                 if m.get('label') in ('Задержка', 'PoE') and isinstance(m.get('value'), (int, float)):
                     point['ms' if m['label'] == 'Задержка' else 'poe'] = m['value']
+            ups = st.get('ups') or {}                          # the UPS card draws consumption and charge over the day
+            if isinstance(ups.get('loadW'), (int, float)):
+                point['w'] = ups['loadW']
+            if isinstance(ups.get('charge'), (int, float)):
+                point['chg'] = ups['charge']
             if len(point) > 1:
                 self.store.add_point(d['id'], point)
 
@@ -764,12 +771,72 @@ class App:
                 'tgLogin': self.tgbot.login_available(), 'loginCodes': self.mfa.login_methods(),
                 'health': health, 'version': VERSION, 'authed': authed, 'setupNeeded': not cfg.get('auth'), 'demo': DEMO, 'devMode': bool(authed and cfg['settings'].get('devMode')),
                 'settings': cfg['settings'] if authed else {k: cfg['settings'].get(k) for k in GUEST_SETTINGS}, 'drivers': [drv.schema() for drv in REGISTRY.values()],
+                'cards': (cfg.get('cards') or []) if authed else [], 'models': self.models.public() if authed else [],            # hand-made device cards (the «Карточки» app) for things that are not in the rack
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
                 'events': self.store.events[-60:][::-1] if authed else [], 'now': time.time()}       # the journal holds admin addresses, logins and host names: not for guests
 
 
 APP = None
+
+
+PHOTO_DIR = lambda: os.path.join(DATA, 'cardphotos')
+
+
+def photo_path(cid):
+    for ext in ('png', 'jpg', 'webp'):
+        f = os.path.join(PHOTO_DIR(), f'{cid}.{ext}')
+        if os.path.isfile(f):
+            return f
+    return None
+
+
+def prune_photos(cards):
+    """pictures of cards that were deleted"""
+    keep = {c.get('of') or c['id'] for c in cards if c.get('photo')}
+    try:
+        for f in os.listdir(PHOTO_DIR()):
+            if f.rsplit('.', 1)[0] not in keep:
+                os.remove(os.path.join(PHOTO_DIR(), f))
+    except OSError:
+        pass
+
+
+def card_photo(st, cid, data, method):
+    """«Сканер»: store (POST) or remove (DELETE) the picture of a card. cid = a device, a rack unit or a hand-made card.
+    The picture lives in data/cardphotos/<cid>.<ext>; the card entry (the hand-made card itself, or the «of» entry of a device) gets photo = time, photoType."""
+    cfg = st.cfg
+    cards = cfg.setdefault('cards', [])
+    dev = next((d for d in cfg['devices'] if d.get('id') == cid), None)
+    unit = next((u for r in cfg['racks'] for u in r.get('units', []) if u.get('id') == cid), None)
+    own = next((c for c in cards if c.get('id') == cid and not c.get('of')), None)
+    if not (dev or unit or own):
+        return {'ok': False, 'error': 'нет такой карточки'}
+    entry = own or next((c for c in cards if c.get('of') == cid), None)
+    for ext in ('png', 'jpg', 'webp'):
+        try:
+            os.remove(os.path.join(PHOTO_DIR(), f'{cid}.{ext}'))
+        except OSError:
+            pass
+    if method == 'DELETE':
+        if entry:
+            entry.pop('photo', None); entry.pop('photoType', None); entry.pop('spots', None)
+            st.save()
+        return {'ok': True, 'cards': cards}
+    if not data:
+        return {'ok': False, 'error': 'файл пустой или больше 8 МБ'}
+    ext = 'png' if data[:8] == b'\x89PNG\r\n\x1a\n' else 'jpg' if data[:3] == b'\xff\xd8\xff' else 'webp' if data[:4] == b'RIFF' and data[8:12] == b'WEBP' else None
+    if not ext:
+        return {'ok': False, 'error': 'нужна картинка PNG, JPEG или WebP'}
+    os.makedirs(PHOTO_DIR(), exist_ok=True)
+    with open(os.path.join(PHOTO_DIR(), f'{cid}.{ext}'), 'wb') as f:
+        f.write(data)
+    if not entry:
+        entry = {'id': secrets.token_hex(4), 'of': cid, 'name': (dev or unit).get('name') or 'Устройство', 'kind': (dev or {}).get('kind') or 'other', 'rows': [], 'notes': ''}
+        cards.append(entry)
+    entry['photo'], entry['photoType'] = int(time.time()), ext
+    st.save()
+    return {'ok': True, 'cards': cards}
 
 # where a device's own web interface lives when no explicit address is set
 WEB_PORTS = {'synology': ('http', 5000), 'homeassistant': ('http', 8123)}
@@ -1174,7 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, path):
         if path in ('', '/'):
             path = '/index.html'
-        if path.rstrip('/') in ('/frank', '/speed', '/terminal', '/scan'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal; /scan = port scanner prototype
+        if path.rstrip('/') in ('/frank', '/speed', '/terminal', '/scan', '/cards'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal, device cards; /scan = port scanner
             path = path.rstrip('/') + '.html'
         full = os.path.normpath(os.path.join(WEB, path.lstrip('/')))
         root = os.path.normpath(WEB)
@@ -1289,6 +1356,16 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/speedtest/who':
                     ip = self.client_ip()
                     return self.send(speedtest.who(APP.store.cfg['devices'], APP.states, ip))
+            m = re.match(r'^/api/cards/photo/([A-Za-z0-9_-]{3,40})$', path)
+            if m:
+                if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
+                    return self.err('нужен вход', 401)
+                f = photo_path(m.group(1))
+                if not f:
+                    return self.err('нет фото', 404)
+                with open(f, 'rb') as fh:
+                    b = fh.read()
+                return self.send_raw(b, {'png': 'image/png', 'jpg': 'image/jpeg', 'webp': 'image/webp'}[f.rsplit('.', 1)[1]], {'Cache-Control': 'private, max-age=604800'})
             m = re.match(r'/api/history/(\w+)$', path)
             if m:
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
@@ -1371,6 +1448,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send({'plugins': [APP.community.public(m) for m in APP.community.list()], 'api': community.PLUGIN_API})
+            if path == '/api/models/guide.txt':              # «Сканер»: the instruction to hand to a neural network that makes a 3D model
+                if not self.need_admin():
+                    return
+                return self.send_raw(models_mod.guide_text(self.query().get('free') == '1').encode('utf-8'), 'text/plain; charset=utf-8', {'Cache-Control': 'no-cache'})
             if path == '/api/community/index':              # the community catalog (a separate GitHub repository)
                 if not self.need_admin():
                     return
@@ -1458,6 +1539,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.can_view():
                     return self.err('нужен вход', 401)
                 return self.speed_up()
+            m = re.match(r'^/api/cards/photo/([A-Za-z0-9_-]{3,40})$', path)
+            if m and method in ('POST', 'DELETE'):                  # «Сканер»: a picture of the device (PNG / JPEG / WebP), the ports are marked on it by hand
+                if not self.need_admin():
+                    return
+                return self.send(card_photo(st, m.group(1), self.rfile.read(int(self.headers.get('Content-Length') or 0)) if method == 'POST' and 0 < int(self.headers.get('Content-Length') or 0) <= 8_000_000 else None, method))
             if path == '/api/themes/upload' and method == 'POST':    # a .zip with a custom look: raw bytes (admin), checked and installed only if it fits
                 if not self.need_admin():
                     return
@@ -1940,6 +2026,73 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['notify'] = new
                 st.save()
                 return self.send({'ok': True, 'menu': menu})
+            if path == '/api/models' and method == 'POST':        # check (dry) or add / replace a 3D model; errors are worded for the neural network
+                model, errors = models_mod.validate(body.get('model'))
+                if errors:
+                    return self.send({'ok': False, 'errors': errors})
+                if body.get('dry'):
+                    return self.send({'ok': True, 'model': model})
+                try:
+                    mid = APP.models.add(model, str(body.get('id') or '')[:24] or None)
+                except ValueError as e:
+                    return self.send({'ok': False, 'errors': [str(e)]})
+                st.add_event(None, 'Сканер', 'info', f"3D-модель «{model['name']}» добавлена")
+                return self.send({'ok': True, 'id': mid, 'models': APP.models.public()})
+            m = re.match(r'^/api/models/([0-9a-f]{8})$', path)
+            if m and method == 'DELETE':
+                APP.models.remove(m.group(1))
+                return self.send({'ok': True, 'models': APP.models.public()})
+            if path == '/api/cards' and method == 'PUT':          # «Карточки»: hand-made cards for devices that are not in the rack (name, kind, facts, free rows, notes)
+                lst = body.get('cards')
+                if not isinstance(lst, list) or len(lst) > 300:
+                    return self.err('неверный список карточек')
+                txt = lambda v, n: str(v if v is not None else '').strip()[:n]
+                clean, seen, ofs = [], set(), set()
+                for c in lst:
+                    if not isinstance(c, dict) or not txt(c.get('name'), 80):
+                        continue
+                    cid = txt(c.get('id'), 24)
+                    of = txt(c.get('of'), 24)                        # «of»: extra rows and notes for a device / rack unit that already has a card (its QR stays RL:<its id>)
+                    if of and (of in ofs or not (any(d.get('id') == of for d in st.cfg['devices']) or any(u.get('id') == of for r in st.cfg['racks'] for u in r.get('units', [])))):
+                        continue
+                    ofs.add(of) if of else None
+                    if not re.match(r'^[A-Za-z0-9_-]{3,24}$', cid) or cid in seen or any(d.get('id') == cid for d in st.cfg['devices']):
+                        cid = secrets.token_hex(4)
+                    seen.add(cid)
+                    rows = [{'k': txt(r.get('k'), 40), 'v': txt(r.get('v'), 200)} for r in (c.get('rows') or [])[:40] if isinstance(r, dict) and (txt(r.get('k'), 40) or txt(r.get('v'), 200))]
+                    spots = []
+                    for sp in (c.get('spots') or [])[:200]:
+                        try:
+                            n, x, y, w, h = int(sp.get('n')), float(sp.get('x')), float(sp.get('y')), float(sp.get('w')), float(sp.get('h'))
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                        if 1 <= n <= 256 and 0 <= x <= 1 and 0 <= y <= 1 and 0 < w <= .6 and 0 < h <= .6:
+                            spots.append({'n': n, 'x': round(x, 4), 'y': round(y, 4), 'w': round(w, 4), 'h': round(h, 4)})
+                    pic = {'photo': int(c['photo']), 'photoType': c.get('photoType')} if isinstance(c.get('photo'), int) and c.get('photoType') in ('png', 'jpg', 'webp') else {}
+                    if isinstance(c.get('model'), str) and re.match(r'^[0-9a-f]{8}$', c['model']):
+                        pic['model'] = c['model']
+                    marks = []                                       # ports marked by hand on the faces of a model (kept even while the model's own numbers are used)
+                    for mk in (c.get('mports') or [])[:256]:
+                        try:
+                            f, n, x, y, w, h = mk.get('face'), int(mk.get('n')), float(mk.get('x')), float(mk.get('y')), float(mk.get('w')), float(mk.get('h'))
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                        if f in models_mod.FACES and 1 <= n <= 256 and all(0 <= v <= 2500 for v in (x, y)) and all(0 < v <= 500 for v in (w, h)):
+                            marks.append({'face': f, 'n': n, 'x': round(x, 1), 'y': round(y, 1), 'w': round(w, 1), 'h': round(h, 1)})
+                    if marks:
+                        pic['mports'] = marks
+                    if c.get('portsMode') == 'manual':                  # the model's own port numbers are ignored; the marks are the ports
+                        pic['portsMode'] = 'manual'
+                    vw = c.get('view')
+                    if isinstance(vw, dict) and all(isinstance(vw.get(k), (int, float)) and not isinstance(vw.get(k), bool) for k in ('rx', 'ry')):
+                        pic['view'] = {'rx': round(max(-90, min(90, vw['rx'])), 1), 'ry': round(max(-180, min(180, vw['ry'])), 1)}
+                    clean.append({**pic, **({'spots': spots} if spots else {}), 'id': cid, 'name': txt(c.get('name'), 80), 'kind': c.get('kind') if c.get('kind') in ('router', 'switch', 'server', 'nas', 'ap', 'camera', 'nvr', 'ups', 'pc', 'laptop', 'phone', 'tv', 'printer', 'iot', 'web', 'modem', 'other') else 'other',
+                                  'vendor': txt(c.get('vendor'), 60), 'model': txt(c.get('model'), 80), 'ip': txt(c.get('ip'), 60), 'mac': txt(c.get('mac'), 30), 'serial': txt(c.get('serial'), 60),
+                                  'location': txt(c.get('location'), 120), 'notes': txt(c.get('notes'), 3000), 'rows': rows, **({'of': of} if of else {})})
+                st.cfg['cards'] = clean
+                st.save()
+                prune_photos(clean)
+                return self.send({'ok': True, 'cards': clean})
             if path == '/api/plan' and method == 'PUT':
                 b = body.get('buildings')
                 if not isinstance(b, list):

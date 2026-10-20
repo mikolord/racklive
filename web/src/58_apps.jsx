@@ -6,6 +6,7 @@ const APPS = [
   // the speed test measures the home network: it is installed by the LAN address — through the domain the traffic would go via the router's https proxy
   { id: 'speed', path: '/speed', name: 'Тест скорости', icon: APP_ICONS.speed, text: 'Замер Wi-Fi и домашней сети с телефона — в каждой комнате', lan: true },
   { id: 'terminal', path: '/terminal', name: 'Терминал', icon: APP_ICONS.terminal, text: 'SSH-терминал к вашим серверам, NAS и роутерам — как отдельное приложение, на телефоне и на компьютере' },
+  { id: 'cards', path: '/cards', name: 'Сканер', icon: APP_ICONS.cards, text: 'Открывается сразу на камере: наведите на QR-наклейку устройства, и появится его карточка (порты, нагрузка ИБП и т. д.). Что показывать в карточках и их наклейки настраиваются здесь.' },
   { id: 'rack', path: '/', name: 'Rack Live', icon: APP_ICONS.rack, text: 'Вся панель: шкафы, карта, устройства, уведомления' },
 ];
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -80,6 +81,24 @@ function InstallModal({ app, base, lanBase, onClose }) {
   </Modal>;
 }
 
+/* one app: expand → what it is, «Установить на телефон», and the app's own menu (for «Сканер»: its cards) — the same look as the plugins */
+function AppAccordion({ a, onInstall }) {
+  const [open, setOpen] = useState(() => new URLSearchParams(location.search).get('app') === a.id);       // ?app=cards opens it
+  return <div className={'card plugin plug-dev-card' + (open ? ' open' : '')}>
+    <button type="button" className="plugin-head" onClick={() => setOpen(!open)}>
+      <img src={a.icon} width="32" height="32" alt="" style={{ borderRadius: 9, flexShrink: 0 }} />
+      <b className="grow ellipsis" style={{ minWidth: 0, textAlign: 'left' }}>{a.name}</b>
+      <Icon name="chevron" size={16} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+    </button>
+    {open ? <div className="plug-list">
+      <div className="dim" style={{ fontSize: 12.8, lineHeight: 1.45, margin: '0 0 8px' }}>{a.text}</div>
+      <button type="button" className="plug-row" onClick={onInstall}><span className="ico-circle"><Icon name="download" size={16} /></span>
+        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>Установить на телефон</b><small>QR-код и пошаговая инструкция</small></span><Icon name="chevron" size={14} /></button>
+      {a.id === 'cards' ? <ScannerMenu /> : null}
+    </div> : null}
+  </div>;
+}
+
 function AppsCard() {
   const { data, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [st, setSt] = useState(null);                         // {apps, router}
@@ -142,12 +161,8 @@ function AppsCard() {
           </div></details>
       </div>
       <div className="col" style={{ gap: 8 }}>
-        <div className="card-title" style={{ marginBottom: 2 }}>Установить</div>
-        {APPS.map(a => <div key={a.id} className="li app-row">
-          <img src={a.icon} width="44" height="44" alt="" style={{ borderRadius: 11, flexShrink: 0 }} />
-          <div className="grow" style={{ minWidth: 0 }}><b style={{ fontSize: 14.5 }}>{a.name}</b><div className="dim" style={{ fontSize: 12.5, lineHeight: 1.35 }}>{a.text}</div></div>
-          <Btn size="sm" kind={a.id === 'rack' ? '' : 'primary'} onClick={() => setInst(a)}>Установить</Btn>
-        </div>)}
+        <div className="card-title" style={{ marginBottom: 2 }}>Приложения</div>
+        {APPS.map(a => <AppAccordion key={a.id} a={a} onInstall={() => setInst(a)} />)}
       </div>
     </div>
     {/* a portal: the card's backdrop-filter would otherwise trap the fixed overlay inside the card */}

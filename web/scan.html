@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<!-- PROTOTYPE «Сканер портов»: камера читает QR-наклейку на коммутаторе, поверх неё рисуется сетка портов с живыми данными.
+     Отдельная страница без React: /vendor/jsQR.js читает код, /vendor/qrcode.js рисует наклейку. Камера работает только по https. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Сканер">
+<title>Сканер портов</title>
+<link rel="icon" href="/icon.svg?v=27" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=27">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:#fff;font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+.bg{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+#ov{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
+.glass{background:rgba(28,28,30,.62);-webkit-backdrop-filter:blur(22px) saturate(1.6);backdrop-filter:blur(22px) saturate(1.6);border:1px solid rgba(255,255,255,.12)}
+#top{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 8px);display:flex;gap:8px;align-items:center;z-index:5}
+.pill{height:42px;border-radius:21px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 16px;color:#fff;font:600 14px/1 inherit;text-decoration:none;border:0;cursor:pointer}
+.pill.round{width:42px;padding:0}
+.pill.on{background:#0a84ff;border-color:#0a84ff}
+#title{flex:1;text-align:center;font-weight:650;font-size:15px;opacity:.95}
+#card{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);border-radius:26px;padding:16px 18px;z-index:5;max-height:46vh;overflow:auto;display:none}
+#card .dev{font-size:12.5px;opacity:.65;margin-bottom:2px}
+#card .big{font-size:21px;font-weight:700;display:flex;align-items:center;gap:10px}
+#card .dot{width:12px;height:12px;border-radius:50%;flex:none}
+#card .sub{opacity:.75;margin-top:2px}
+#card .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin-top:10px;font-size:14px}
+#card .kv span:nth-child(odd){opacity:.6}
+#card .peer{margin-top:10px;padding:9px 12px;border-radius:14px;background:rgba(255,255,255,.1)}
+#card .peer b{display:block;font-size:15px}
+#card .peer small{opacity:.7;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+#mode{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 60px);display:flex;gap:8px;justify-content:center;align-items:center;z-index:5}
+#mode .seg{display:inline-flex;border-radius:19px;padding:3px}
+#mode .seg button{height:32px;border:0;border-radius:16px;padding:0 16px;background:none;color:#fff;font:600 14px/1 inherit;cursor:pointer;opacity:.75}
+#mode .seg button.on{background:#0a84ff;opacity:1}
+#mode .pill{height:38px;font-size:14px}
+#flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:6;transition:opacity .35s}
+#warn{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 108px);z-index:5;max-width:calc(100vw - 24px);padding:8px 14px;border-radius:16px;background:rgba(255,159,10,.92);color:#000;font:600 13px/1.3 inherit;text-align:center;display:none}
+#card.show{display:block}
+/* a phone held sideways: the whole front panel fits, so the controls shrink into one thin strip and the card becomes a low bar */
+@media (orientation:landscape) and (max-height:520px){
+ #top{top:calc(env(safe-area-inset-top) + 4px);left:calc(env(safe-area-inset-left) + 10px);right:auto;gap:6px}
+ #title{display:none}
+ .pill{height:34px;padding:0 12px;font-size:13px}.pill.round{width:34px;padding:0}
+ #mode{top:calc(env(safe-area-inset-top) + 4px);left:auto;right:calc(env(safe-area-inset-right) + 10px);justify-content:flex-end;gap:6px}
+ #mode .seg{padding:2px}#mode .seg button{height:30px;padding:0 13px;font-size:13px}#mode .pill{height:34px}
+ #warn{top:calc(env(safe-area-inset-top) + 46px);font-size:12px;padding:5px 12px}
+ #card{left:calc(env(safe-area-inset-left) + 10px);right:calc(env(safe-area-inset-right) + 10px);bottom:calc(env(safe-area-inset-bottom) + 6px);max-height:40vh;padding:9px 16px;border-radius:20px}
+ #card.show{display:flex;flex-wrap:wrap;align-items:center;gap:2px 22px}
+ #card .dev{font-size:11.5px;margin:0;flex-basis:100%}#card .big{font-size:17px}#card .kv{margin-top:0;font-size:13px;grid-template-columns:repeat(4,auto);gap:1px 10px}
+ #card .peer{margin-top:0;padding:5px 11px;border-radius:12px}#card .peer b{font-size:13.5px}#card .peer small{font-size:11px}#card .peer ~ .peer,#card .sub{display:none}
+ #card .hint{padding:0}#card .hint b{display:inline;font-size:15px;margin:0 8px 0 0}
+ #tune{left:auto;right:calc(env(safe-area-inset-right) + 10px);width:min(430px,54vw);bottom:calc(env(safe-area-inset-bottom) + 6px);max-height:calc(100vh - 52px);padding:10px 14px}
+ #tune .note{display:none}#tune .row{margin:3px 0}
+}
+.hint{text-align:center;opacity:.85;padding:6px 0}
+.hint b{display:block;font-size:17px;margin-bottom:4px}
+#msg{position:fixed;left:24px;right:24px;top:50%;transform:translateY(-50%);z-index:4;text-align:center;border-radius:24px;padding:22px;display:none}
+#msg h3{margin:0 0 8px;font-size:19px}#msg p{margin:0 0 14px;opacity:.8}
+#msg .pill{background:#0a84ff;margin:4px}
+#tune{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);border-radius:26px;padding:14px 18px;z-index:7;display:none;max-height:62vh;overflow:auto}
+#tune h4{margin:0 0 4px;font-size:16px}
+#tune .row{display:grid;grid-template-columns:150px 1fr 46px;gap:8px;align-items:center;margin:6px 0;font-size:13.5px}
+#tune input[type=range]{width:100%;accent-color:#0a84ff}
+#tune .val{text-align:right;font-variant-numeric:tabular-nums;opacity:.8}
+#tune .acts{display:flex;gap:8px;margin-top:10px}
+#tune .acts .pill{flex:1;background:rgba(255,255,255,.14)}
+#tune .acts .pill.main{background:#0a84ff}
+#sticker{position:fixed;inset:0;z-index:9;background:#000;display:none;overflow:auto;padding:calc(env(safe-area-inset-top) + 64px) 16px 40px}
+#sticker .wrap{max-width:520px;margin:0 auto}
+#sticker label{display:block;font-size:13px;opacity:.65;margin:14px 0 5px}
+#sticker select,#sticker input{width:100%;height:46px;border-radius:14px;border:1px solid rgba(255,255,255,.14);background:#1c1c1e;color:#fff;padding:0 14px;font:16px inherit;-webkit-user-select:text;user-select:text}
+#stk-preview{display:flex;gap:18px;align-items:center;margin:20px 0;padding:18px;border-radius:22px;background:#1c1c1e}
+.qrpaper{background:#fff;padding:3mm;display:inline-block;color:#000;text-align:center}
+.qrbox{display:block}.qrbox svg{width:100%;height:100%;display:block}
+.qrcap{font:7pt/1.1 Arial,sans-serif;margin-top:1.2mm;max-width:100%}
+.note{font-size:13.5px;opacity:.7;line-height:1.5}
+#print{display:none}
+@media print{
+ @page{margin:12mm}
+ html,body{background:#fff!important;overflow:visible!important;height:auto!important}
+ body>*:not(#print){display:none!important}
+ #print{display:block!important}
+}
+</style>
+</head>
+<body>
+<video id="v" class="bg" playsinline muted autoplay></video>
+<canvas id="ov"></canvas>
+
+<div id="top">
+  <a class="pill round glass" href="/" title="В Rack Live" aria-label="В Rack Live"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
+  <div id="title">Сканер портов</div>
+  <button class="pill glass" id="btn-tune" type="button">Подстройка</button>
+  <button class="pill glass" id="btn-stk" type="button">Наклейка</button>
+</div>
+
+<div id="mode"><div class="seg glass"><button type="button" id="m-live">Живой</button><button type="button" id="m-photo">Фото</button></div><button type="button" class="pill glass" id="shot" style="display:none"></button></div>
+<div id="flash"></div>
+<div id="warn"></div>
+<div id="msg" class="glass"></div>
+<div id="card" class="glass"></div>
+
+<div id="tune" class="glass">
+  <h4 id="tune-title">Подстройка сетки</h4>
+  <div class="note" style="margin-bottom:6px">Двигайте ползунки, пока рамки не совпадут с настоящими гнёздами. Размеры в миллиметрах, замеряются линейкой по коммутатору. Запоминается на этом телефоне.</div>
+  <div id="tune-rows"></div>
+  <div class="acts"><button class="pill" id="tune-reset" type="button">Сбросить</button><button class="pill main" id="tune-close" type="button">Готово</button></div>
+</div>
+
+<div id="sticker">
+  <div id="stk-top" style="position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 8px);display:flex;align-items:center;gap:8px;z-index:10">
+    <button class="pill round glass" id="stk-back" type="button" aria-label="Назад"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div style="flex:1;text-align:center;font-weight:650">QR-наклейка</div><div style="width:42px"></div>
+  </div>
+  <div class="wrap">
+    <label for="stk-dev">Для какого устройства</label>
+    <select id="stk-dev"></select>
+    <label for="stk-size">Размер кода на бумаге, мм</label>
+    <input id="stk-size" type="number" inputmode="decimal" min="15" max="40" step="1" value="25">
+    <div id="stk-preview"><div id="stk-paper"></div><div class="note" id="stk-info"></div></div>
+    <button class="pill" id="stk-print" type="button" style="width:100%;height:50px;background:#0a84ff;font-size:16px">Печать</button>
+    <p class="note" style="margin-top:18px"><b style="opacity:1">Куда клеить.</b> На ровное место слева от первого порта, примерно на уровне между двумя рядами гнёзд. Наклейка должна лежать плоско, без складок, и не закрываться кабелями.
+    Важно печатать ровно тот размер, что выбран выше (в окне печати поставьте «Масштаб 100%», а не «по размеру страницы»), иначе рамки портов съедут.</p>
+  </div>
+</div>
+
+<div id="print"></div>
+
+<script src="/vendor/jsQR.js"></script>
+<script src="/vendor/qrcode.js"></script>
+<script>
+(function () {
+'use strict';
+var $ = function (id) { return document.getElementById(id); };
+var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+var Q = {};
+try { location.search.replace(/^\?/, '').split('&').forEach(function (kv) { var p = kv.split('='); if (p[0]) Q[p[0]] = decodeURIComponent(p[1] || ''); }); } catch (e) {}
+
+/* ───────── template of the front panel (millimetres from the top-left corner of the code) ───────── */
+var DEF = { size: 25, x0: 39, y0: 0, pitchX: 15.5, pitchY: 17, cellW: 13.5, cellH: 12.5, sfpGap: 12 };
+var TUNE = [['size', 'Размер наклейки', 15, 40, 1], ['x0', 'От наклейки до 1-го порта', 20, 80, 0.5], ['y0', 'Выше / ниже', -15, 15, 0.5],
+  ['pitchX', 'Шаг портов', 12, 20, 0.1], ['pitchY', 'Между рядами', 12, 26, 0.5], ['cellW', 'Ширина гнезда', 8, 18, 0.5], ['cellH', 'Высота гнезда', 8, 18, 0.5], ['sfpGap', 'Отступ до SFP', 0, 30, 1]];
+var TPL_KEY = 'rl_scan_tpl';
+function loadTpl(id) { try { var all = JSON.parse(localStorage.getItem(TPL_KEY) || '{}'); return Object.assign({}, DEF, all[id] || {}); } catch (e) { return Object.assign({}, DEF); } }
+function saveTpl(id, t) { try { var all = JSON.parse(localStorage.getItem(TPL_KEY) || '{}'); all[id] = t; localStorage.setItem(TPL_KEY, JSON.stringify(all)); } catch (e) {} }
+
+/* ports → cells (centre x/y and size, mm). Same order as the faceplate in Rack Live: odd on top, even below; SFP in a block to the right */
+function layout(ports, t) {
+  var rj = ports.filter(function (p) { return p.kind !== 'sfp'; }), sfp = ports.filter(function (p) { return p.kind === 'sfp'; });
+  var two = rj.length > 8, mid = t.size / 2 + t.y0, out = [], cols = two ? Math.ceil(rj.length / 2) : rj.length;
+  rj.forEach(function (p, k) {
+    var c = two ? Math.floor(k / 2) : k, r = two ? k % 2 : 0;
+    out.push({ p: p, x: t.x0 + c * t.pitchX, y: two ? mid + (r ? 1 : -1) * t.pitchY / 2 : mid, w: t.cellW, h: t.cellH });
+  });
+  var sx = t.x0 + (cols - 1) * t.pitchX + t.cellW / 2 + t.sfpGap + 8;
+  sfp.forEach(function (p, k) {
+    var c = Math.floor(k / 2), r = k % 2;
+    out.push({ p: p, x: sx + c * t.pitchX * 1.15, y: mid + (r ? 1 : -1) * t.pitchY / 2, w: t.cellW + 1.5, h: Math.max(6, t.cellH - 3) });
+  });
+  return out;
+}
+
+/* ───────── geometry: unit square → quadrilateral (perspective) ───────── */
+function squareToQuad(q) {      // q = [TL, TR, BR, BL]
+  var x0 = q[0].x, y0 = q[0].y, x1 = q[1].x, y1 = q[1].y, x2 = q[2].x, y2 = q[2].y, x3 = q[3].x, y3 = q[3].y;
+  var dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3, a, b, c, d, e, f, g, h;
+  if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) { a = x1 - x0; b = x3 - x0; c = x0; d = y1 - y0; e = y3 - y0; f = y0; g = 0; h = 0; }
+  else { var den = dx1 * dy2 - dx2 * dy1; g = (dx3 * dy2 - dx2 * dy3) / den; h = (dx1 * dy3 - dx3 * dy1) / den;
+    a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; c = x0; d = y1 - y0 + g * y1; e = y3 - y0 + h * y3; f = y0; }
+  return function (u, v) { var w = g * u + h * v + 1; return { x: (a * u + b * v + c) / w, y: (d * u + e * v + f) / w }; };
+}
+function inQuad(pt, q) {
+  var s = 0;
+  for (var i = 0; i < 4; i++) { var a = q[i], b = q[(i + 1) % 4], cr = (b.x - a.x) * (pt.y - a.y) - (b.y - a.y) * (pt.x - a.x); if (cr !== 0) { if (!s) s = cr > 0 ? 1 : -1; else if ((cr > 0 ? 1 : -1) !== s) return false; } }
+  return true;
+}
+
+/* ───────── data ───────── */
+var data = null, devices = [];
+function colorOf(p) { if (p.disabled) return '#ff453a'; if (!p.link) return '#8e8e93'; if (p.speed >= 1000) return '#30d158'; if (p.speed >= 100) return '#ffd60a'; return '#ff9f0a'; }
+function speedText(p) { if (!p.link) return 'нет линка'; var s = p.speed; return s >= 1000 ? (s / 1000) + ' Гбит' : s + ' Мбит'; }
+function loadState() {
+  return fetch('/api/state', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    data = j; devices = (j.devices || []);
+    if (!j.authed && !devices.length) showMsg('Нужно войти', 'Откройте Rack Live, войдите в свой аккаунт и вернитесь сюда.', [['Открыть Rack Live', function () { location.href = '/'; }]]);
+    else if ($('msg').dataset.kind === 'auth') hideMsg();
+  }).catch(function () {});
+}
+function devById(id) { return devices.filter(function (d) { return d.id === id; })[0]; }
+function withPorts() { return devices.filter(function (d) { return d.state && d.state.ports && d.state.ports.length; }).sort(function (a, b) { return b.state.ports.length - a.state.ports.length; }); }   // the biggest switch first
+
+/* ───────── messages / card ───────── */
+function showMsg(title, text, btns, kind) {
+  var m = $('msg'); m.dataset.kind = kind || 'auth'; m.innerHTML = '<h3>' + esc(title) + '</h3><p>' + esc(text) + '</p>'; m.style.display = 'block';
+  (btns || []).forEach(function (b) { var e = document.createElement('button'); e.className = 'pill'; e.type = 'button'; e.textContent = b[0]; e.onclick = b[1]; m.appendChild(e); });
+}
+function hideMsg() { $('msg').style.display = 'none'; }
+var lastCard = '', tuneOpen = false;
+function setCard(key, html) { if (key === lastCard) return; lastCard = key; var c = $('card'); c.innerHTML = html; c.classList.toggle('show', !!html && !tuneOpen); }
+function hintCard() { setCard('hint', '<div class="hint"><b>Наведите камеру на QR-наклейку</b>Она на коммутаторе слева от портов. Рамки портов появятся сами, а касание порта покажет, что в нём.</div>'); }
+function portCard(dev, c) {
+  var p = c.p, peers = p.peers || [], title = (p.label ? p.label : 'Порт ' + p.n);
+  var kv = [['Скорость', speedText(p)]];
+  if (p.poe) kv.push(['PoE', p.poeW ? p.poeW + ' Вт' : 'нет потребителя']);
+  var vl = (p.vlansU || []).join(', '); if (vl) kv.push(['VLAN', vl + (p.vlansT && p.vlansT.length ? ' (+ ' + p.vlansT.length + ' tagged)' : '')]);
+  if (p.lldp) kv.push(['Сосед (LLDP)', p.lldp]);
+  if (p.errDay) kv.push(['Ошибки', p.errDay + ' за сутки']);
+  if (p.disabled) kv.push(['Состояние', 'порт выключен']);
+  var h = '<div class="dev">' + esc(dev.name) + ' · порт ' + p.n + '</div><div class="big"><i class="dot" style="background:' + colorOf(p) + '"></i><span>' + esc(title) + '</span></div>';
+  h += '<div class="kv">' + kv.map(function (r) { return '<span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span>'; }).join('') + '</div>';
+  if (peers.length) h += peers.slice(0, 3).map(function (x) { return '<div class="peer"><b>' + esc(x.name || 'Неизвестное устройство') + '</b><small>' + esc([x.ip, x.mac].filter(Boolean).join(' · ')) + '</small></div>'; }).join('') + (peers.length > 3 ? '<div class="sub">и ещё ' + (peers.length - 3) + '</div>' : '');
+  else if (p.link) h += '<div class="sub" style="margin-top:8px">Устройство за портом не опознано.</div>';
+  else h += '<div class="sub" style="margin-top:8px">В порт ничего не воткнуто.</div>';
+  return h;
+}
+function deviceCard(dev) {
+  var s = dev.state || {}, sm = s.summary || {};
+  return '<div class="dev">Устройство</div><div class="big"><i class="dot" style="background:' + (s.status === 'offline' ? '#ff453a' : s.status === 'warning' ? '#ffd60a' : '#30d158') + '"></i><span>' + esc(dev.name) + '</span></div>'
+    + '<div class="kv">' + [['Модель', sm.model], ['IP', sm.ip || dev.host], ['Прошивка', sm.fw]].filter(function (r) { return r[1]; }).map(function (r) { return '<span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span>'; }).join('') + '</div>'
+    + '<div class="sub" style="margin-top:8px">У этого устройства нет портов для показа.</div>';
+}
+
+/* ───────── camera / test scene ───────── */
+var video = $('v'), ov = $('ov'), octx = ov.getContext('2d'), src = null, test = null, stream = null;
+function startCam() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showMsg('Камера доступна только по https', 'Откройте Rack Live по защищённому адресу (https://…), а не по домашнему http://IP. Пока можно посмотреть, как это работает, на тестовой картинке.', [['Тестовая сцена', startTest]], 'cam'); return Promise.resolve(false);
+  }
+  return navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).then(function (s) {
+    stream = s; video.srcObject = s; return video.play().then(function () { src = video; hideMsg(); return true; });
+  }).catch(function (e) {
+    showMsg('Нет доступа к камере', 'Разрешите камеру для этого сайта (на iPhone: Настройки → Safari → Камера, либо «аА» в адресной строке → Настройки веб-сайта).', [['Повторить', function () { startCam(); }], ['Тестовая сцена', startTest]], 'cam'); return false;
+  });
+}
+function qrSvg(text, scalable) {
+  if (qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF-8']) qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+  var q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 6, margin: 0, scalable: scalable !== false });
+}
+function startTest() {
+  hideMsg(); video.style.display = 'none';
+  var cand = withPorts().sort(function (a, b) { return b.state.ports.length - a.state.ports.length; })[0];
+  if (!cand) { showMsg('Нет коммутатора с портами', 'Добавьте в Rack Live коммутатор — тогда тестовая сцена сможет показать его порты.', [], 'cam'); return; }
+  var t = loadTpl(cand.id), cells = layout(cand.state.ports, t);
+  var c = document.createElement('canvas'); c.width = 1080; c.height = Math.round(1080 * H / W); c.className = 'bg'; c.id = 'testbg'; document.body.insertBefore(c, ov);      // the size of the screen, like a phone camera held the same way
+  var qr = qrcode(0, 'M'); qr.addData('RL:' + cand.id); qr.make();
+  test = { dev: cand, t: t, cells: cells, qr: qr, c: c, g: c.getContext('2d') }; src = c;
+}
+function drawTest(now) {
+  var T = test, g = T.g, t = T.t, cells = T.cells, c = T.c;
+  var minX = -8, maxX = 0, minY = 1e9, maxY = -1e9;
+  cells.forEach(function (k) { maxX = Math.max(maxX, k.x + k.w / 2 + 6); minY = Math.min(minY, k.y - k.h / 2 - 8); maxY = Math.max(maxY, k.y + k.h / 2 + 8); });
+  minY = Math.min(minY, -4); maxY = Math.max(maxY, t.size + 4);
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#26282c'; g.fillRect(0, 0, c.width, c.height);
+  var k = c.width * 0.94 / (maxX - minX) * (1 + 0.04 * Math.sin(now / 2300)) * (+Q.zoom || 1);          // ?zoom=1.4: come closer, for tests
+  g.save(); g.translate(c.width / 2 + (+Q.shift || 0) + 20 * Math.sin(now / 1900),c.height / 2 + 14 * Math.sin(now / 1400)); g.rotate(0.05 * Math.sin(now / 1700)); g.transform(k, 0, 0.04 * Math.sin(now / 2100) * k, k, 0, 0);
+  g.translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+  g.fillStyle = '#c9ccd1'; g.fillRect(minX, minY, maxX - minX, maxY - minY);
+  g.fillStyle = '#fff'; g.fillRect(-3, -3, t.size + 6, t.size + 6);
+  var n = T.qr.getModuleCount(), m = t.size / n; g.fillStyle = '#000';          // the code itself, module by module
+  for (var r = 0; r < n; r++) for (var cc = 0; cc < n; cc++) if (T.qr.isDark(r, cc)) g.fillRect(cc * m - 0.01, r * m - 0.01, m + 0.02, m + 0.02);
+  cells.forEach(function (k2) { g.fillStyle = '#16171a'; g.fillRect(k2.x - k2.w / 2, k2.y - k2.h / 2, k2.w, k2.h);
+    if (k2.p.link) { g.fillStyle = k2.p.speed >= 1000 ? '#3ddc69' : '#ffd60a'; g.fillRect(k2.x - k2.w / 2 + 1, k2.y - k2.h / 2 - 2.2, 3, 1.6); }
+    if (k2.p.peers && k2.p.peers.length) { g.fillStyle = '#4a4d54'; g.fillRect(k2.x - k2.w / 2 + 2, k2.y - k2.h / 2 + 2, k2.w - 4, k2.h - 4); } });
+  g.restore();
+}
+
+/* ───────── detection ───────── */
+var work = document.createElement('canvas'), wctx = work.getContext('2d', { willReadFrequently: true });
+var trk = null;          // {q:[4 points, video px], t, id}
+var lastScan = 0, miss = 0;
+var frozen = null;          // photo mode: {c: the snapshot, q: the code's corners on it, id}
+var mode = 'live';
+try { mode = localStorage.getItem('rl_scan_mode') === 'photo' ? 'photo' : 'live'; } catch (e) {}
+if (Q.mode === 'photo' || Q.mode === 'live') mode = Q.mode;
+function srcSize() { if (frozen) return [frozen.c.width, frozen.c.height]; return src === video ? [video.videoWidth, video.videoHeight] : [src.width, src.height]; }
+function parsePayload(s) { var m = String(s || '').match(/[?&]d=([\w-]+)/) || String(s || '').match(/^RL:([\w-]+)/); return m ? m[1] : null; }
+function scan(now) {
+  var sz = srcSize(), vw = sz[0], vh = sz[1]; if (!vw || !vh) return;
+  var sx = 0, sy = 0, sw = vw, sh = vh, roi = false;
+  if (trk && now - trk.t < 800 && miss < 3) {
+    var xs = trk.q.map(function (p) { return p.x; }), ys = trk.q.map(function (p) { return p.y; });
+    var x1 = Math.min.apply(0, xs), x2 = Math.max.apply(0, xs), y1 = Math.min.apply(0, ys), y2 = Math.max.apply(0, ys), pad = Math.max(x2 - x1, y2 - y1) * 0.7 + 8;
+    sx = Math.max(0, Math.floor(x1 - pad)); sy = Math.max(0, Math.floor(y1 - pad)); sw = Math.min(vw, Math.ceil(x2 + pad)) - sx; sh = Math.min(vh, Math.ceil(y2 + pad)) - sy; roi = true;
+  }
+  var k = Math.min(1, 900 / Math.max(sw, sh));
+  work.width = Math.max(8, Math.round(sw * k)); work.height = Math.max(8, Math.round(sh * k));
+  wctx.drawImage(src, sx, sy, sw, sh, 0, 0, work.width, work.height);
+  var im = wctx.getImageData(0, 0, work.width, work.height), code = jsQR(im.data, work.width, work.height, { inversionAttempts: 'dontInvert' });
+  if (!code) { miss++; if (roi && miss >= 3) { trk = trk && now - trk.t < 800 ? trk : null; } return; }
+  var id = parsePayload(code.data); if (!id) return;
+  var L = code.location, raw = [L.topLeftCorner, L.topRightCorner, L.bottomRightCorner, L.bottomLeftCorner].map(function (p) { return { x: p.x / k + sx, y: p.y / k + sy }; });
+  miss = 0;
+  var side = Math.hypot(raw[1].x - raw[0].x, raw[1].y - raw[0].y), still = now, rawNow = raw;
+  if (trk && trk.id === id) {
+    var moved = Math.max.apply(0, rawNow.map(function (p, i) { return Math.hypot(p.x - trk.raw[i].x, p.y - trk.raw[i].y); }));
+    still = moved < side * 0.05 ? trk.still : now;          // the code hasn't moved: the hand is steady
+    var jump = Math.hypot(raw[0].x - trk.q[0].x, raw[0].y - trk.q[0].y), a = jump > side * 0.8 ? 1 : 0.55;
+    raw = raw.map(function (p, i) { return { x: trk.q[i].x + (p.x - trk.q[i].x) * a, y: trk.q[i].y + (p.y - trk.q[i].y) * a }; });
+  }
+  trk = { q: raw, raw: rawNow, t: now, id: id, still: still, side: side };
+  if (mode === 'photo' && !frozen && now - still > 600 && side > 30) capture();          // steady for ~0.6 s: take the picture
+}
+var snap = null;
+function capture() {
+  if (!trk || !src || frozen) return;
+  var sz = srcSize(); if (!sz[0]) return;
+  var c = document.createElement('canvas'); c.width = sz[0]; c.height = sz[1]; c.className = 'bg'; c.id = 'snapbg'; c.getContext('2d').drawImage(src, 0, 0, sz[0], sz[1]);
+  document.body.insertBefore(c, ov); snap = c;
+  frozen = { c: c, q: trk.q.map(function (p) { return { x: p.x, y: p.y }; }), id: trk.id };
+  video.style.visibility = 'hidden'; var tb = $('testbg'); if (tb) tb.style.visibility = 'hidden';
+  sel = Q.pick != null ? +Q.pick : null; Q.pick = null; lastCard = ''; document.body.dataset.frozen = '1';      // ?pick= is for tests: a port «touched» right after the snapshot
+  var f = $('flash'); f.style.transition = 'none'; f.style.opacity = '.8'; void f.offsetWidth; f.style.transition = 'opacity .35s'; f.style.opacity = '0';
+}
+function release() {
+  if (snap) { snap.remove(); snap = null; }
+  frozen = null; trk = null; sel = null; lastCard = ''; video.style.visibility = ''; var tb = $('testbg'); if (tb) tb.style.visibility = ''; delete document.body.dataset.frozen;
+}
+
+/* ───────── drawing ───────── */
+var sel = null, cur = null, cells2 = [], W = 0, H = 0, DPR = 1;
+function resize() { DPR = Math.min(3, window.devicePixelRatio || 1); W = window.innerWidth; H = window.innerHeight; ov.width = Math.round(W * DPR); ov.height = Math.round(H * DPR); }
+window.addEventListener('resize', resize); resize();
+function toScreen(p) {
+  var sz = srcSize(), s = Math.max(W / sz[0], H / sz[1]);
+  return { x: (p.x - sz[0] / 2) * s + W / 2, y: (p.y - sz[1] / 2) * s + H / 2 };
+}
+function next() { if (Q.test) setTimeout(function () { frame(performance.now()); }, 40); else requestAnimationFrame(frame); }      // the test scene runs on a timer: headless browsers under test don't tick animation frames reliably
+function frame(now) {
+  next();
+  if (test && !frozen) { try { drawTest(Q.still ? 1500 : now); } catch (e) { document.body.dataset.err = 'draw: ' + String(e && e.message || e); } }
+  if (src && !frozen && now - lastScan > 45) { lastScan = now; try { scan(now); } catch (e) { document.body.dataset.err = String(e && e.message || e); } }      // data-* are for the tests
+  octx.setTransform(DPR, 0, 0, DPR, 0, 0); octx.clearRect(0, 0, W, H);
+  updateShot();
+  var T = frozen ? { q: frozen.q, id: frozen.id, t: now } : trk;
+  var live = frozen || (trk && now - trk.t < 700 && src);
+  if (!live) { setWarn(''); cells2 = []; cur = null; if (src) { if (mode === 'photo') setCard('hintp', '<div class="hint"><b>Наведите на QR-наклейку и подержите ровно</b>Камера сама сделает снимок, и рамки останутся на нём. Потом касайтесь портов.</div>'); else hintCard(); } return; }
+  var dev = devById(T.id);
+  if (!dev) { setWarn(''); cells2 = []; setCard('unk', '<div class="hint"><b>Это наклейка другого Rack Live</b>Такого устройства здесь нет. Если вы только что его добавили, подождите несколько секунд.</div>'); return; }
+  var alpha = frozen ? 1 : Math.max(0, Math.min(1, 1 - (now - T.t - 300) / 400)), q = T.q.map(toScreen);
+  octx.globalAlpha = alpha;
+  octx.strokeStyle = '#0a84ff'; octx.lineWidth = 2; octx.beginPath(); q.forEach(function (p, i) { i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y); }); octx.closePath(); octx.stroke();
+  var ports = (dev.state && dev.state.ports) || [];
+  if (!ports.length) { setWarn(''); cells2 = []; setCard('d:' + dev.id, deviceCard(dev)); octx.globalAlpha = 1; return; }
+  var t = loadTpl(dev.id), M = squareToQuad(q), S = t.size, out = [];
+  layout(ports, t).forEach(function (c) {
+    var hw = c.w / 2, hh = c.h / 2;
+    var cn = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(function (o) { return M((c.x + o[0]) / S, (c.y + o[1]) / S); });
+    out.push({ c: c, q: cn, mid: M(c.x / S, c.y / S) });
+  });
+  cells2 = out; cur = dev;
+  var cut = out.filter(function (o) { return o.q.some(function (pt) { return pt.x < -2 || pt.x > W + 2 || pt.y < -2 || pt.y > H + 2; }); }).length;          // ports that don't fit on the screen (even partly)
+  if (Q.dbg) document.body.dataset.cut = cut + '/' + out.length + ' W' + W;
+  setWarn(cut ? (W < H ? 'Часть портов не поместилась (' + cut + '). Отойдите чуть дальше или переверните телефон.' : 'Часть портов не поместилась (' + cut + '). Отойдите чуть дальше.') + (frozen ? ' Потом нажмите «Переснять».' : '') : '');
+  var aim = { x: W / 2, y: H / 2 }, hit = null;
+  if (sel != null) hit = out.filter(function (o) { return o.c.p.n === sel; })[0] || null;
+  else if (!frozen) { hit = out.filter(function (o) { return inQuad(aim, o.q); })[0] || null;
+    if (!hit) { var best = 1e9; out.forEach(function (o) { var d = Math.hypot(o.mid.x - aim.x, o.mid.y - aim.y), w = Math.hypot(o.q[1].x - o.q[0].x, o.q[1].y - o.q[0].y); if (d < w * 1.1 && d < best) { best = d; hit = o; } }); } }
+  out.forEach(function (o) {
+    var p = o.c.p, col = colorOf(p), w = Math.hypot(o.q[1].x - o.q[0].x, o.q[1].y - o.q[0].y), isHit = hit === o;
+    octx.beginPath(); o.q.forEach(function (pt, i) { i ? octx.lineTo(pt.x, pt.y) : octx.moveTo(pt.x, pt.y); }); octx.closePath();
+    octx.fillStyle = col + (p.link ? '55' : '2a'); octx.fill(); octx.lineWidth = isHit ? 3.2 : 1.6; octx.strokeStyle = isHit ? '#fff' : col; octx.stroke();
+    if (w > 15) { octx.fillStyle = '#fff'; octx.font = '700 ' + Math.max(9, Math.min(15, w * 0.34)) + 'px -apple-system,Segoe UI,sans-serif'; octx.textAlign = 'center'; octx.textBaseline = 'middle';
+      octx.shadowColor = 'rgba(0,0,0,.8)'; octx.shadowBlur = 3; octx.fillText(String(p.n), o.mid.x, o.mid.y); octx.shadowBlur = 0; }
+    if (w > 46 && (p.label || (p.peers && p.peers[0]))) { var nm = String(p.label || p.peers[0].name || ''); if (nm.length > 12) nm = nm.slice(0, 11) + '…';
+      octx.font = '600 ' + Math.max(8, Math.min(12, w * 0.2)) + 'px -apple-system,Segoe UI,sans-serif'; octx.fillStyle = '#fff'; octx.shadowColor = 'rgba(0,0,0,.9)'; octx.shadowBlur = 3; octx.fillText(nm, o.mid.x, o.mid.y + w * 0.36); octx.shadowBlur = 0; }
+  });
+  octx.globalAlpha = 1;
+  if (!frozen) { octx.strokeStyle = 'rgba(255,255,255,.75)'; octx.lineWidth = 1.5; octx.beginPath(); octx.arc(aim.x, aim.y, 14, 0, 6.2832); octx.moveTo(aim.x - 20, aim.y); octx.lineTo(aim.x - 8, aim.y); octx.moveTo(aim.x + 8, aim.y); octx.lineTo(aim.x + 20, aim.y); octx.stroke(); }
+  if (hit) { var p2 = hit.c.p; setCard(dev.id + ':' + p2.n + ':' + (p2.link ? p2.speed : 'x') + ':' + (p2.poeW || 0) + ':' + ((p2.peers || []).map(function (x) { return x.mac; }).join()) + ':' + (p2.label || ''), portCard(dev, hit.c)); }
+  else setCard((frozen ? 'tap:' : 'aim:') + dev.id, '<div class="dev">' + esc(dev.name) + '</div><div class="big">' + (frozen ? 'Коснитесь порта на снимке' : 'Наведите перекрестие на порт') + '</div><div class="sub">' + (frozen ? 'Снимок можно рассматривать сколько угодно. «Переснять» вернёт камеру.' : 'или коснитесь порта на экране') + '</div>');
+}
+var warnText = '';
+function setWarn(t) { if (t === warnText) return; warnText = t; var w = $('warn'); w.textContent = t; w.style.display = t ? 'block' : 'none'; }
+function updateShot() {
+  var b = $('shot'), show = frozen || (trk && src && performance.now() - trk.t < 700), want = frozen ? 'Переснять' : 'Снимок';
+  b.style.display = show ? '' : 'none'; if (b.textContent !== want) b.textContent = want;
+}
+$('shot').onclick = function () { if (frozen) release(); else capture(); };
+function setMode(m) { mode = m; try { localStorage.setItem('rl_scan_mode', m); } catch (e) {} $('m-live').className = m === 'live' ? 'on' : ''; $('m-photo').className = m === 'photo' ? 'on' : ''; if (frozen) release(); lastCard = ''; }
+$('m-live').onclick = function () { setMode('live'); }; $('m-photo').onclick = function () { setMode('photo'); }; setMode(mode);
+ov.addEventListener('click', function (e) {
+  var pt = { x: e.clientX, y: e.clientY }, hit = cells2.filter(function (o) { return inQuad(pt, o.q); })[0];
+  if (!hit) { var best = 1e9; cells2.forEach(function (o) { var d = Math.hypot(o.mid.x - pt.x, o.mid.y - pt.y), w = Math.hypot(o.q[1].x - o.q[0].x, o.q[1].y - o.q[0].y); if (d < w * 0.9 && d < best) { best = d; hit = o; } }); }
+  sel = hit && sel !== hit.c.p.n ? hit.c.p.n : null;
+});
+
+/* ───────── tuning sliders ───────── */
+function openTune() {
+  var dev = cur || (test && test.dev) || withPorts()[0]; if (!dev) { showMsg('Нет коммутатора', 'Подстройка нужна для устройств с портами.', [['Понятно', hideMsg]], 'cam'); return; }
+  var t = loadTpl(dev.id); $('tune-title').textContent = 'Подстройка: ' + dev.name;
+  var rows = $('tune-rows'); rows.innerHTML = '';
+  TUNE.forEach(function (r) {
+    var row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<span>' + r[1] + '</span><input type="range" min="' + r[2] + '" max="' + r[3] + '" step="' + r[4] + '" value="' + t[r[0]] + '"><span class="val">' + t[r[0]] + '</span>';
+    var inp = row.querySelector('input'), val = row.querySelector('.val');
+    inp.oninput = function () { t[r[0]] = +inp.value; val.textContent = inp.value; saveTpl(dev.id, t); };
+    rows.appendChild(row);
+  });
+  $('tune-reset').onclick = function () { saveTpl(dev.id, Object.assign({}, DEF)); openTune(); };
+  tuneOpen = true; $('tune').style.display = 'block'; $('card').classList.remove('show');
+}
+$('btn-tune').onclick = function () { if ($('tune').style.display === 'block') closeTune(); else openTune(); };
+function closeTune() { tuneOpen = false; $('tune').style.display = 'none'; $('card').classList.toggle('show', !!lastCard); }
+$('tune-close').onclick = closeTune;
+
+/* ───────── sticker ───────── */
+function stickerFill() {
+  var sel2 = $('stk-dev'); if (!sel2.options.length) {
+    devices.slice().sort(function (a, b) { return (b.state && b.state.ports ? b.state.ports.length : 0) - (a.state && a.state.ports ? a.state.ports.length : 0); }).forEach(function (d) {
+      var o = document.createElement('option'); o.value = d.id; o.textContent = d.name + (d.state && d.state.ports ? ' · ' + d.state.ports.length + ' портов' : ''); sel2.appendChild(o); });
+    if (cur) sel2.value = cur.id;
+  }
+  var id = sel2.value, dev = devById(id), mm = Math.max(15, Math.min(40, +$('stk-size').value || 25));
+  if (!dev) { $('stk-paper').innerHTML = ''; $('stk-info').textContent = 'Нет устройств. Войдите в Rack Live.'; return; }
+  var t = loadTpl(id); if (t.size !== mm) { t.size = mm; saveTpl(id, t); }
+  var html = '<div class="qrpaper"><div class="qrbox" style="width:' + mm + 'mm;height:' + mm + 'mm">' + qrSvg('RL:' + id) + '</div><div class="qrcap">' + esc(dev.name) + '</div></div>';
+  $('stk-paper').innerHTML = html; $('print').innerHTML = html;
+  $('stk-info').innerHTML = 'Код: <b style="color:#fff">RL:' + esc(id) + '</b><br>Размер ' + mm + ' мм. Короткий код читается с большего расстояния.';
+}
+$('btn-stk').onclick = function () { $('sticker').style.display = 'block'; stickerFill(); };
+$('stk-back').onclick = function () { $('sticker').style.display = 'none'; };
+$('stk-dev').onchange = stickerFill; $('stk-size').oninput = stickerFill;
+$('stk-print').onclick = function () { stickerFill(); window.print(); };
+
+/* ───────── start ───────── */
+loadState().then(function () {
+  setInterval(loadState, 10000);
+  if (Q.sticker) { $('btn-stk').click(); return; }
+  if (Q.test) startTest(); else { startCam(); setTimeout(function () { if (!src && $('msg').style.display !== 'block') showMsg('Жду доступа к камере', 'Нажмите «Разрешить» в запросе браузера. Если запроса нет — разрешите камеру для этого сайта в настройках Safari.', [['Тестовая сцена', startTest]], 'cam'); }, 3500); }
+  if (Q.tune) setTimeout(openTune, 600);
+  if (Q.pick != null) sel = +Q.pick;
+});
+next();
+})();
+</script>
+</body>
+</html>
