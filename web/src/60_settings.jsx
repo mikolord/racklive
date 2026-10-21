@@ -343,7 +343,7 @@ function SystemEvents() {
     const t = x => new Date(x * 1000).toLocaleString('ru-RU');
     const head = [`Rack Live ${data.version} · отчёт ${new Date().toLocaleString('ru-RU')}`,
       `Устройство: ${/iPhone|iPad|iPod/.test(navigator.userAgent) ? 'iPhone/iPad' : 'компьютер/другое'}${navigator.standalone ? ' (приложение «Домой»)' : ''} · экран ${innerWidth}×${innerHeight}`,
-      `Адрес: ${location.origin} · оформление: ${lsGet('rl_skin', 'net')} · User-Agent: ${navigator.userAgent}`];
+      `Адрес: ${location.origin} · оформление: ${lsGet('rl_skin', 'test')} · User-Agent: ${navigator.userAgent}`];
     const body = list.map(e => `${t(e.t)} [${e.name}] ${e.text}`);
     const tail = pend.length ? ['', 'Ещё не отправлено с этого устройства:', ...pend.map(x => `${new Date(x.t).toLocaleTimeString('ru-RU')} ${x.s}`)] : [];
     return [...head, '', `Системные события (${list.length}):`, ...(body.length ? body : ['— пока пусто']), ...tail].join('\n');

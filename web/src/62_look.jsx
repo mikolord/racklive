@@ -1,18 +1,21 @@
-/* Настройки → Оформление: the look of the interface. Three built-in looks — «Контроллер» (the default, blue accent, flat UniFi-style icons), «Rack Live» (the original, glass/iOS)
-   and «Графит» (flat, black, thin outlines, green accent) — and CUSTOM looks: a .zip with plain data (colours, texts, icons, css, pictures) that the administrator uploads
+/* Настройки → Оформление: the look of the interface. Four built-in looks — «Test» (the default since 2.16.1: the strict «Витрина» language, black aluminium in the dark
+   theme, white in the light one, hairlines, mono labels), «Контроллер» (blue accent, flat UniFi-style icons), «Rack Live» (the original, glass/iOS) and «Графит»
+   (flat, black, thin outlines, green accent) — and CUSTOM looks: a .zip with plain data (colours, texts, icons, css, pictures) that the administrator uploads
    («Добавить своё»); Rack Live checks it (rackd/themes.py) and keeps the verdict up to date after every update. An accent colour and the light / dark theme work with all of them.
-   The choice is kept per device in localStorage (rl_skin = net | classic | graphite | <id of a custom look>, default net, rl_theme_meta, rl_accent, rl_theme); the page applies it before the first paint (index.html). */
+   The choice is kept per device in localStorage (rl_skin = test | net | classic | graphite | <id of a custom look>, default test, rl_theme_meta, rl_accent, rl_theme);
+   the page applies it before the first paint (index.html). */
 const SKINS = [
-  { id: 'net', name: 'Контроллер', text: 'Яркий синий акцент как у сетевых контроллеров, без оранжевого (жёлтый вместо него) и фиолетового, плоские иконки без картинок на плитках. Основное оформление.', rows: ['Сводка', 'Роутер'] },
+  { id: 'test', name: 'Test', text: 'Строгий стиль «Витрина»: в тёмной теме чёрный алюминий, в светлой белый, тонкие линии вместо теней, моно-подписи, монохромные иконки, приборы вместо кругов. Основное оформление.', rows: ['Сводка', 'Роутер'] },
+  { id: 'net', name: 'Контроллер', text: 'Яркий синий акцент как у сетевых контроллеров, без оранжевого (жёлтый вместо него) и фиолетового, плоские иконки без картинок на плитках.', rows: ['Сводка', 'Роутер'] },
   { id: 'classic', name: 'Rack Live', text: 'Стекло, мягкие градиенты и синий акцент — как в iOS.', rows: ['Сводка', 'Роутер'] },
-  { id: 'test', name: 'Test', text: 'Строгий стиль «Витрина», как в карточках «Сканера»: в тёмной теме чёрный алюминий, в светлой белый, тонкие линии вместо теней, моно-подписи, монохромные иконки. Экспериментальное.', rows: ['Сводка', 'Роутер'] },
   { id: 'graphite', name: 'Графит', text: 'Чёрный фон, плоские серые карточки, тонкие рамки, зелёный акцент — без размытия и теней.', rows: ['Сводка', 'Роутер'] },
 ];
 const ACCENTS = [['', 'По умолчанию у оформления', null], ['blue', 'Синий', '#0a84ff'], ['green', 'Зелёный', '#30b455'], ['purple', 'Фиолетовый', '#a259e6'],
   ['orange', 'Оранжевый', '#f5870a'], ['red', 'Красный', '#f2453d'], ['teal', 'Бирюзовый', '#20b4cc'], ['pink', 'Розовый', '#ee3d73']];
 
 const BUILTIN_SKINS = ['classic', 'graphite', 'net', 'test'];
-const getSkin = () => lsGet('rl_skin', 'net') || 'net';
+const DEFAULT_SKIN = 'test';                                    // the flagship look: shown on a fresh device and after a custom look goes away
+const getSkin = () => lsGet('rl_skin', DEFAULT_SKIN) || DEFAULT_SKIN;
 const getAccent = () => { const a = lsGet('rl_accent', ''); return ACCENTS.some(x => x[0] === a) ? a : ''; };
 const themeMeta = () => { try { return JSON.parse(lsGet('rl_theme_meta', '') || 'null'); } catch (e) { return null; } };
 function applyLook(skin, accent) {                              // built-in looks only (a custom look needs its css: a page reload does it, see pickCustom)
@@ -57,6 +60,29 @@ function ThemeReport({ rep, onClose }) {
   </Modal>;
 }
 
+/* The preview picture of «Test» — the look's own language in miniature, not a generic mock: a mono caption row, a rack of aluminium units with ports and LEDs,
+   a big tabular number with a hairline gauge, and the inverse primary button. Everything is drawn with the look's tokens (so it follows the light / dark theme
+   and the chosen accent), which keeps the card honest: what you see is what the app really looks like. */
+const TP_UNITS = [
+  { name: 'Patch · CAT6', hi: false, ports: 8, led: '' },
+  { name: 'Keenetic', hi: true, ports: 5, led: 'on' },
+  { name: 'NAS DS918+', hi: true, ports: 4, led: 'on' },
+  { name: 'PoE · 24', hi: false, ports: 11, led: 'on' },
+];
+function TestPreview() {
+  return <div className="tp">
+    <div className="tp-h"><span>Rack Live</span><span>12 U · 45 °C</span></div>
+    <div className="tp-rack">{TP_UNITS.map((u, i) => <div key={i} className={'tp-u' + (u.hi ? ' hi' : '')}>
+      <span className="tp-name">{u.name}</span>
+      {u.led ? <i className="tp-led" /> : null}
+      <span className="tp-ports">{Array.from({ length: u.ports }, (_, k) => <i key={k} />)}</span>
+    </div>)}</div>
+    <div className="tp-nums"><span className="tp-v">10<small>/11</small></span><span className="tp-k">В сети</span><span className="tp-side">PoE · 96 Вт</span></div>
+    <div className="tp-scale"><i style={{ width: '72%' }} /><b style={{ left: '72%' }} /></div>
+    <div className="tp-foot"><span className="tp-mono">Интернет · 234 ↓</span><span className="tp-btn">Открыть</span></div>
+  </div>;
+}
+
 function LookCard() {
   const [skin, setSkin] = useState(getSkin); const [accent, setAccent] = useState(getAccent);
   const { theme, setTheme, admin } = useApp(); const toast = useToast(); const confirm = useConfirm();
@@ -96,16 +122,16 @@ function LookCard() {
   };
   const remove = async t => {
     if (!(await confirm(`Удалить оформление «${t.name}»?`, { danger: true, ok: 'Удалить' }))) return;
-    try { await api('/api/themes/' + t.id, { method: 'DELETE' }); if (skin === t.id) { pickBuiltin('net'); return; } reload(); } catch (e) { toast(e.message, true); }
+    try { await api('/api/themes/' + t.id, { method: 'DELETE' }); if (skin === t.id) { pickBuiltin(DEFAULT_SKIN); return; } reload(); } catch (e) { toast(e.message, true); }
   };
   const customs = (list && list.themes) || [];
   const card = (id, name, text, ok = true, base = 'classic', meta = null) => <div key={id} className={'look-skin' + (skin === id ? ' on' : '') + (ok ? '' : ' off')} role="button" tabIndex={0}
     onClick={() => ok && (meta ? pickCustom(meta) : pickBuiltin(id))}>
     <div className="look-prev" data-skin={meta ? (base === 'graphite' ? 'graphite' : 'classic') : id === 'test' ? 'net' : id} data-look={id === 'test' ? 'test' : undefined} data-theme-id={meta ? id : undefined} data-theme={th} data-accent={accent || undefined}>
-      {meta && meta.preview ? <img src={meta.preview} alt="" style={{ width: '100%', borderRadius: 8, display: 'block' }} /> : <>
+      {id === 'test' ? <TestPreview /> : meta && meta.preview ? <img src={meta.preview} alt="" style={{ width: '100%', borderRadius: 8, display: 'block' }} /> : <>
         <div className="lp-card"><i /><span>Сводка</span><small>10/11</small></div><div className="lp-ok">Всё работает</div><span className="lp-btn">Кнопка</span></>}
     </div>
-    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}><b>{name}</b>{skin === id ? <span className="badge online">выбрано</span> : null}{!ok ? <span className="badge offline">не подходит</span> : null}</div>
+    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}><b>{name}</b>{id === DEFAULT_SKIN ? <span className="badge">основное</span> : null}{skin === id ? <span className="badge online">выбрано</span> : null}{!ok ? <span className="badge offline">не подходит</span> : null}</div>
     <small>{text}</small>
     {meta && !ok ? <small style={{ color: 'var(--orange)' }}>{(meta.problems || []).slice(0, 2).join(' · ')}</small> : null}
     {meta ? <div className="row" style={{ gap: 6 }} onClick={e => e.stopPropagation()}>{admin ? <Btn size="sm" onClick={() => remove(meta)}>Удалить</Btn> : null}</div> : null}

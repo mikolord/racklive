@@ -679,7 +679,7 @@ def main():
             if name == 'Размещение':
                 check('подсказка на вкладке', 'hint-box' in out)
                 check('главная из виджетов', out.count('data-wid=') >= 5)
-                check('виджет ИБП: широкий и квадрат', 'upsw-bat' in out and 't-ups' in out and 'хватит при отключении света' in out)
+                check('виджет ИБП: широкий и квадрат', out.count('t-ups') >= 2 and 'хватит при отключении света' in out)   # wide + square; the drawing itself belongs to the look (classic battery art or the «Test» instrument)
             if name == 'Блок розеток — нагрузка':
                 check('розетки блока и ИБП кружками на шкафу', 'leds round' in out and '<i class="r">' in out)
             if name == 'План — дом':
@@ -717,6 +717,7 @@ def main():
                 check('сканирование: то, что уже в дереве сети, не предлагается как новое, а показано отдельно', 'ничего добавлять не нужно' in out and 'в дереве сети' in out and 'Камеры: вход, пароль, кадр' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
             if name == 'Настройки — оформление':
                 check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Контроллер' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
+                check('оформление: «Test» — основное, со своим превью', 'class="tp"' in out and 'tp-rack' in out and 'tp-scale' in out and 'основное' in out)
             if name == 'Главная — стиль «Графит»':
                 check('стиль «Графит» включается атрибутами на <html>', 'data-skin="graphite"' in out and 'data-accent="green"' in out)
             if name == 'Главная — стиль «Контроллер»':
@@ -739,7 +740,7 @@ def main():
             if name == 'ONT — настройка':
                 check('ONT: провайдер, кросс, LAN-порты', 'ont-setup' in out and 'Оптика-Демо' in out and 'Волокно 1' in out)
             if name == 'Кросс — живые порты':
-                check('порт кросса светится через ONT', 'pm-port g' in out)
+                check('порт кросса светится через ONT', 'pm-port g' in out or re.search(r'class="m3-port sfp"[^>]*--led: var\(--s3-led\)', out) is not None)   # the flat panel, or the 3D model of «Test» (a lit LED on the port)
             if name == 'Переезд места':
                 check('окно «Переезд»', 'Переезд' in out and out.count('place-opt') == 2)
             if name == 'Доступность':

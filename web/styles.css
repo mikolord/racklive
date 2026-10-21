@@ -2434,3 +2434,38 @@ html[data-look="test"] .cd-cam-err { border-radius: 10px; background: rgba(13,14
 .s3-stage .m3-tools, .ph-stage .m3-tools { z-index: 20; transform: translateZ(0); }
 .m3-tool.zoom { background: var(--card-solid, #111214) !important; color: var(--text) !important; border: 1px solid var(--line2) !important; opacity: 1 !important; }
 .m3-tool.zoom.pri { background: var(--text) !important; color: var(--bg) !important; border-color: var(--text) !important; }
+
+/* ── «Test»: the preview picture in Настройки → Оформление. A miniature of the look itself (mono captions, hairlines, aluminium units with ports and LEDs,
+   a tabular number and a linear gauge) drawn with the look's own tokens, so the card always shows the real thing — in both themes and with any accent. ── */
+.look-prev[data-look="test"] { padding: 12px; border-radius: 12px; }
+.tp { display: flex; flex-direction: column; gap: 9px; }
+.tp-h { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font: 500 9px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--text3); }
+.tp-h span:first-child { color: var(--text2); }
+.tp-rack { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 5px 8px; border: 1px solid var(--line2); border-radius: 6px; background: var(--card);
+  box-shadow: inset 0 1px 0 var(--t-hl); }
+/* rack rails: two dashed strips inside the frame, like the uprights of a real cabinet */
+.tp-rack::before, .tp-rack::after { content: ""; position: absolute; top: 5px; bottom: 5px; width: 2px; border-radius: 1px;
+  background: repeating-linear-gradient(180deg, var(--line2) 0 2px, transparent 2px 5px); }
+.tp-rack::before { left: 2px; } .tp-rack::after { right: 2px; }
+.tp-u { display: flex; align-items: center; gap: 4px; height: 9px; padding: 0 4px; border-radius: 2px; border: 1px solid var(--line); overflow: hidden;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--fill2) 86%, #fff 14%), var(--fill2)); }
+.tp-u.hi { height: 13px; }
+.tp-name { font: 500 6.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-led { width: 3px; height: 3px; border-radius: 50%; flex: none; background: var(--green); box-shadow: 0 0 5px var(--green); }
+.tp-ports { display: flex; gap: 2px; margin-left: auto; flex: none; }
+.tp-ports i { display: block; width: 6px; height: 5px; border-radius: 1px; border: 1px solid color-mix(in srgb, var(--line2) 70%, var(--text3)); background: var(--port-bg, #1a1c1e); }
+.tp-nums { display: flex; align-items: flex-end; gap: 7px; }
+.tp-v { font: 600 24px/.9 var(--mono); letter-spacing: -.04em; font-variant-numeric: tabular-nums; color: var(--text); }
+.tp-v small { font-size: 11px; font-weight: 500; letter-spacing: 0; color: var(--text3); }
+.tp-k { font: 500 8.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text2); padding-bottom: 3px; }
+.tp-side { margin-left: auto; font: 500 8.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text3); padding-bottom: 3px; white-space: nowrap; }
+.tp-scale { position: relative; height: 13px; border-bottom: 1px solid var(--line2); }
+.tp-scale::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px;
+  background-image: repeating-linear-gradient(90deg, var(--line2) 0 1px, transparent 1px 7px); }
+.tp-scale i { position: absolute; left: 0; bottom: 0; height: 2px; border-radius: 0 2px 2px 0; background: var(--text); }
+.tp-scale b { position: absolute; bottom: -4px; width: 1.5px; height: 8px; margin-left: -.75px; background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 65%, transparent); }
+.tp-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tp-mono { font: 500 8.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-btn { flex: none; font: 600 8.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; padding: 5px 8px; border-radius: 5px;
+  background: var(--text); color: var(--t-inv); border: 1px solid var(--text); }
+@media (max-width: 520px) { .tp-v { font-size: 26px; } .look-prev[data-look="test"] { padding: 14px; } }
