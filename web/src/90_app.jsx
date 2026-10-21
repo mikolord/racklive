@@ -61,6 +61,10 @@ function App() {
   const [speed, setSpeed] = useState(() => new URLSearchParams(location.search).get('speedtest'));      // '1' open · 'run' open and start
   const [pinTest, setPinTest] = useState(null);             // speed test id waiting for a tap on the plan
   const [menu, setMenu] = useState(() => new URLSearchParams(location.search).get('hmenu') === '1');   // phone header menu «⋯»
+  const [nav, setNav] = useState(() => new URLSearchParams(location.search).get('nav') === '1');        // «Test»: the side menu
+  const [navKey, setNavKey] = useState(0); const tourNav = useRef(false);      // the welcome tour can hold the menu open between its steps
+  useEffect(() => { const h = e => { tourNav.current = !!e.detail; if (e.detail) { setNav(true); setNavKey(k => k + 1); } else setNav(false); };
+    window.addEventListener('rl-tour-nav', h); return () => window.removeEventListener('rl-tour-nav', h); }, []);
   const [ai, setAi] = useState(() => new URLSearchParams(location.search).get('ai') ? { n: 0 } : null);     // assistant panel: {q, n}
   const [tour, setTour] = useState(() => new URLSearchParams(location.search).get('tour') === '1' || tourResume());      // Frank's welcome tour (95_tour.jsx); ?tour=1 starts it; a tour that was in progress when the page blinked continues
   const [theme, setTheme] = useTheme();
@@ -166,6 +170,7 @@ function App() {
   return <AppCtx.Provider value={ctx}>
     <div className="app-bg" />
     <header className="topbar">
+      {isTestLook() ? <button type="button" className="tl-burger" aria-label="Меню" onClick={() => setNav(true)}><i /><i /><i /></button> : null}
       <div className="brand"><AppIcon size={34} radius={10} style={{ boxShadow: '0 4px 14px rgba(0,60,200,.25)' }} />
         <div className="brand-text"><div className="brand-title ellipsis">{data.settings.title}</div>
           <div className={'live' + (stale ? ' stale' : '')}><i />{stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)}</div></div></div>
@@ -183,7 +188,10 @@ function App() {
       </div>
       {/* phones: everything above folds into one «⋯» button with a menu, like iOS */}
       <button type="button" data-tour="hdr-more" className={'hdr-more only-sm' + (edit ? ' editing' : '')} title="Меню" onClick={() => setMenu(true)}><Icon name="more" size={22} stroke={2.6} /></button>
+      {isTestLook() && admin ? <button type="button" className="tl-frank" data-tour="frank-btn" title="Frank — помощник" onClick={() => setAi({ n: Date.now() })}><FrankEye size={34} /></button> : null}
     </header>
+    {nav ? <SideNav key={navKey} tabs={tabs} cur={cur} setTab={setTab} problems={problems} admin={admin} edit={edit} mode={mode} setMode={setMode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange}
+      theme={theme} setTheme={setTheme} onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} onClose={() => { if (tourNav.current) setNavKey(k => k + 1); else setNav(false); }} title={data.settings.title} stale={stale} live={stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)} /> : null}
     {menu ? <HeaderMenu admin={admin} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
       onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
     <main className="page">

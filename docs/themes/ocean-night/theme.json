@@ -162,7 +162,7 @@
   "tileColors": {
     "stats": "#33b6ff",
     "internet": "#3ddc97",
-    "problems": "#ffb454"
+    "uptime": "#ffb454"
   },
   "preview": "assets/preview.svg"
 }

@@ -95,11 +95,16 @@ function StateCard() {
   </button>;
   return <>
     <Card title="Состояние сети" right={<Btn size="sm" onClick={() => setOpen(h ? 'health' : 'security')}>Подробнее</Btn>}>
-      <div className="state-tiles">
+      {isTestLook() ? <div className="sr-row">
+        <button type="button" className="sr-fw" onClick={() => setOpen('health')} title="Сетевой экран: цел, пока сеть здорова"><FirewallMark score={h ? h.score : null} /></button>
+        {h ? <button type="button" className="sr-btn" onClick={() => setOpen('health')}><ScoreReading k="Здоровье" score={h.score} title={h.type.name + (hWarn ? ` · ${hWarn} ${ruPlural(hWarn, 'замечание', 'замечания', 'замечаний')}` : '')} /></button> : null}
+        {s ? <button type="button" className="sr-btn" onClick={() => setOpen('security')}><ScoreReading k="Безопасность" score={s.score} warn={!!s.counts.bad}
+          title={s.counts.bad ? `Критично: ${s.counts.bad}` : s.counts.warn ? `${s.counts.warn} ${ruPlural(s.counts.warn, 'совет', 'совета', 'советов')}` : 'Проблем нет'} /></button> : null}
+      </div> : <div className="state-tiles">
         {h ? tile('health', h.score, h.type.name, hWarn ? `${hWarn} ${ruPlural(hWarn, 'замечание', 'замечания', 'замечаний')}` : 'серьёзных замечаний нет', false) : null}
         {s ? tile('security', s.score, s.counts.bad ? `Критично: ${s.counts.bad}` : s.counts.warn ? 'Есть что улучшить' : 'Проблем нет',
           s.counts.warn ? `${s.counts.warn} ${ruPlural(s.counts.warn, 'совет', 'совета', 'советов')}` : 'порты, пароли, прошивки', !!s.counts.bad) : null}
-      </div>
+      </div>}
     </Card>
     {open ? <Modal title="Состояние сети" wide onClose={() => setOpen(null)} icon={<Icon name={open === 'health' ? 'pulse' : 'shield'} size={20} color="var(--accent)" />}>
       {h && s ? <Seg value={open} onChange={setOpen} options={[{ value: 'health', label: `Здоровье · ${h.score}` }, { value: 'security', label: `Безопасность · ${s.score}` }]} /> : null}

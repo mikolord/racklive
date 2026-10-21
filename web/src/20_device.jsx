@@ -142,6 +142,7 @@ function Overview({ device, drv }) {
   const devActions = (drv?.actions || []).filter(a => a.scope === 'device' && a.kind !== 'speed' && !/^loop_/.test(a.id));      // loop protection has its own card
   const speedAction = (drv?.actions || []).find(a => a.kind === 'speed');
   return <>
+    {isTestLook() ? <DeviceVisual device={device} /> : null}
     {st.error ? <div className="card pad" style={{ borderColor: 'var(--red)', color: 'var(--red)' }}><b>Нет связи:</b> {st.error}
       {st.updated && st.summary ? <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>Показаны последние известные данные</div> : null}</div> : null}
     {stats.length ? <div className="stats">{stats}</div> : null}
@@ -296,6 +297,28 @@ function CableResult({ c, now }) {
 const errLevel = p => (p.errHour || 0) >= 10 ? 'bad' : (p.errDay || 0) >= 10 ? 'warn' : (p.errDay || 0) > 0 ? 'low' : 'ok';
 const ERR_COLOR = { bad: 'var(--red)', warn: 'var(--orange)', low: 'var(--text2)', ok: 'var(--text3)' };
 
+/* «Test»: the device itself, the same as in the «Сканер» app — its photo with port buttons, its own 3D model, or the model made from its ports.
+   «Вид» opens the same window as Настройки → Приложения → Сканер → «Вид» (choose a model, add one, upload a photo, mark the ports). */
+const isTestLook = () => document.documentElement.getAttribute('data-look') === 'test';
+function DeviceVisual({ device, sel, onSel, compact }) {
+  const { data, admin } = useApp(); const [look, setLook] = useState(false);
+  const ports = (device.state || {}).ports || [];
+  const ent = (data.cards || []).find(c => c.of === device.id) || {};
+  const own = ent.model && (data.models || []).find(m => m.id === ent.model);
+  const purl = photoUrl(device.id, ent);
+  const auto = useMemo(() => (ports.length ? autoModel(ports, ((device.state || {}).summary || {}).model || device.name) : null), [ports.length, device.name]);
+  const item = useMemo(() => cardList(data).find(x => x.id === device.id), [data, device.id]);
+  const pick = n => onSel && onSel(n);
+  const body = purl ? <PhotoPorts url={purl} spots={ent.spots || []} sel={sel} onPick={pick} zoom={ent.pzoom} />
+    : own || auto ? <Model3D model={own ? own.model : auto} ports={ports} sel={sel} onPick={pick} view={ent.view} manual={!!own && ent.portsMode === 'manual'} marks={ent.mports} zoom={ent.zoom} /> : null;
+  if (!body && !admin) return null;
+  return <div className={'vt-inline' + (body ? '' : ' empty')}>
+    {body || <div className="dim" style={{ padding: '16px 18px', fontSize: 13 }}>Нет фото и 3D-модели — карточка показывает значок.</div>}
+    {admin && item ? <button type="button" className="m3-tool vt-look" onClick={() => setLook(true)}><Icon name="box" size={14} />Вид</button> : null}
+    {look ? <AppearanceModal item={item} onClose={() => setLook(false)} /> : null}
+  </div>;
+}
+
 function PortsTab({ device, drv, initialPort }) {
   const { data, admin } = useApp();
   const ports = device.state.ports || [];
@@ -324,7 +347,8 @@ function PortsTab({ device, drv, initialPort }) {
   return <>
     <Hint id="ports">Нажмите на порт: скорость, VLAN, кто подключён, трафик. Зелёный — 1 Гбит, жёлтый — 100 Мбит (у гигабитных устройств это часто плохой кабель),
       серый — ничего не подключено. Колонка «Ошибки» — повреждённые кадры: у исправного кабеля их нет.</Hint>
-    <Faceplate ports={ports} sel={sel} onSel={setSel} vlans={vlans} />
+    {isTestLook() ? <DeviceVisual device={device} sel={sel} onSel={setSel} />
+      : <Faceplate ports={ports} sel={sel} onSel={setSel} vlans={vlans} />}
     <div className="legend">
       <span><i style={{ background: 'var(--green)' }} />1 Гбит+</span><span><i style={{ background: '#ffd60a' }} />100 Мбит</span>
       <span><i style={{ background: '#ff9f0a' }} />10 Мбит</span><span><i style={{ background: '#48484a' }} />нет линка</span>

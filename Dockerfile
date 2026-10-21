@@ -7,6 +7,7 @@ RUN case "$(uname -m)" in x86_64) a=x86_64;; aarch64) a=aarch64;; armv7l) a=armh
 WORKDIR /app
 COPY rackd ./rackd
 COPY web/index.html web/theme-defaults.json web/styles.css web/app.js web/agent.py web/icon.svg web/icon-graphite.svg web/icon-net.svg web/icon-512.png web/icon-192.png web/apple-touch-icon.png web/manifest.json web/frank.html web/frank-manifest.json web/frank-icon.svg web/frank-icon-graphite.svg web/frank-icon-net.svg web/frank-icon-512.png web/frank-icon-192.png web/frank-apple-touch-icon.png web/speed.html web/speed-manifest.json web/speed-icon.svg web/speed-icon-graphite.svg web/speed-icon-net.svg web/speed-icon-512.png web/speed-icon-192.png web/speed-apple-touch-icon.png web/scan.html web/cards.html web/cards-manifest.json web/cards-icon.svg web/cards-icon-512.png web/cards-icon-192.png web/cards-apple-touch-icon.png web/terminal.html web/terminal-manifest.json web/terminal-icon.svg web/terminal-icon-512.png web/terminal-icon-192.png web/terminal-apple-touch-icon.png ./web/
+COPY web/look-test ./web/look-test/
 COPY web/vendor ./web/vendor
 ENV RL_DATA=/data RL_WEB=/app/web RL_PORT=8080 PYTHONUNBUFFERED=1
 VOLUME /data

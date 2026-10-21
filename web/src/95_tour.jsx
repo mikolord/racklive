@@ -123,7 +123,7 @@ function Tour({ onDone }) {
     window.addEventListener('keydown', k);
     document.documentElement.classList.add('tour-on');
     return () => { document.removeEventListener('click', h, true); document.removeEventListener('pointerdown', shield, true); document.removeEventListener('mousedown', shield, true);
-      window.removeEventListener('keydown', k); document.documentElement.classList.remove('tour-on'); };
+      window.removeEventListener('keydown', k); document.documentElement.classList.remove('tour-on'); window.dispatchEvent(new CustomEvent('rl-tour-nav', { detail: false })); };
   }, []);
 
   useEffect(() => {
@@ -134,7 +134,8 @@ function Tour({ onDone }) {
       raf = requestAnimationFrame(frame);
       const st = TOUR_STEPS[iRef.current], s = S.current, e = el.current, vw = innerWidth, vh = innerHeight;
       if (!e.card) return;
-      if (s.si !== iRef.current) { Object.assign(s, { si: iRef.current, tgt: null, chk: 0, scrolled: false, lost: false, advancing: false, stepAt: Date.now(), tries: 0, offAt: 0 }); lostRef.current(false); }      // a new step: forget the old target at once
+      if (s.si !== iRef.current) { Object.assign(s, { si: iRef.current, tgt: null, chk: 0, scrolled: false, lost: false, advancing: false, stepAt: Date.now(), tries: 0, offAt: 0 }); lostRef.current(false);
+        if (isTestLook()) window.dispatchEvent(new CustomEvent('rl-tour-nav', { detail: (st.t || []).some(x => /tab-|edit-toggle/.test(x)) })); }      // «Test» has no dock: the side menu opens for steps about sections      // a new step: forget the old target at once
       if (st.t) { if (!s.tgt || !document.contains(s.tgt) || t - s.chk > 200) { s.tgt = pick(st.t); s.chk = t; } } else s.tgt = null;
       // that button is not on this screen: do NOT skip (a skipped step breaks the next ones and the whole tour falls apart) — say so, write it to the journal, let the person press «Дальше»
       const lose = why => { if (s.lost) return; s.lost = true; lostRef.current(true); logRef.current(`${why}: шаг ${iRef.current + 1} «${st.title || ''}» · экран ${vw}×${vh}`); };
@@ -188,17 +189,18 @@ function Tour({ onDone }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const fsz = step.big ? 112 : 84, last = i === TOUR_STEPS.length - 1;
+  const fsz = step.big ? 112 : 84, last = i === TOUR_STEPS.length - 1, TEST = isTestLook();
   const put = k => n => { el.current[k] = n; };
   return ReactDOM.createPortal(<div className={'tour-layer' + (FAST ? ' tour-fast' : '')}>
     <svg className="tour-dim" width="100%" height="100%">
       <defs>
-        <linearGradient id="tourG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#070b22" style={{ stopOpacity: 'var(--tour-a1)' }} /><stop offset=".55" stopColor="#0e0a28" style={{ stopOpacity: 'var(--tour-a2)' }} /><stop offset="1" stopColor="#05121c" style={{ stopOpacity: 'var(--tour-a3)' }} /></linearGradient>
+        <linearGradient id="tourG" x1="0" y1="0" x2="1" y2="1">{TEST ? <><stop offset="0" stopColor="#000" style={{ stopOpacity: 'var(--tour-a1)' }} /><stop offset="1" stopColor="#08090a" style={{ stopOpacity: 'var(--tour-a3)' }} /></>
+          : <><stop offset="0" stopColor="#070b22" style={{ stopOpacity: 'var(--tour-a1)' }} /><stop offset=".55" stopColor="#0e0a28" style={{ stopOpacity: 'var(--tour-a2)' }} /><stop offset="1" stopColor="#05121c" style={{ stopOpacity: 'var(--tour-a3)' }} /></>}</linearGradient>
         <radialGradient id="tourB" cx=".12" cy=".08" r=".75"><stop offset="0" stopColor="#0a84ff" stopOpacity=".42" /><stop offset="1" stopColor="#0a84ff" stopOpacity="0" /></radialGradient>
         <radialGradient id="tourP" cx=".92" cy=".95" r=".7"><stop offset="0" stopColor="#bf5af2" stopOpacity=".34" /><stop offset="1" stopColor="#bf5af2" stopOpacity="0" /></radialGradient>
         <mask id="tourM"><rect width="100%" height="100%" fill="#fff" /><rect ref={put('mask')} fill="#000" /></mask>
       </defs>
-      <g mask="url(#tourM)"><rect width="100%" height="100%" fill="url(#tourG)" /><rect width="100%" height="100%" fill="url(#tourB)" /><rect width="100%" height="100%" fill="url(#tourP)" /></g>
+      <g mask="url(#tourM)"><rect width="100%" height="100%" fill="url(#tourG)" />{TEST ? null : <><rect width="100%" height="100%" fill="url(#tourB)" /><rect width="100%" height="100%" fill="url(#tourP)" /></>}</g>
     </svg>
     {['bT', 'bB', 'bL', 'bR'].map(k => <div key={k} ref={put(k)} className="tour-block" />)}
     <div ref={put('ring')} className="tour-ring" />
@@ -206,6 +208,7 @@ function Tour({ onDone }) {
     <div ref={put('card')} className={'tour-card' + (step.t ? '' : ' center') + (step.big ? ' big' : '')}>
       <div className="tour-frank-wrap" style={{ width: fsz, height: fsz }}><FrankHero size={fsz} mode={step.hand || 'point'} refs={fr.current} /></div>
       <div className="tour-bubble" key={i}>
+        {TEST ? <div className="tour-step">Шаг {i + 1} / {TOUR_STEPS.length}</div> : null}
         {step.title ? <b className="tour-title">{T(`tour.${step.id}.title`, step.title)}</b> : null}
         <div className="tour-text">{T(`tour.${step.id}.text`, step.text)}</div>
         {step.click && !lost ? <div className="tour-hint"><i />{T('tour.press', 'Нажмите на подсвеченное')}</div> : null}

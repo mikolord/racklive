@@ -149,13 +149,16 @@ const T = (key, def) => { const v = THEME.strings[key]; return typeof v === 'str
 const APP_ICONS = { rack: '/icon.svg?v=27', frank: '/frank-icon.svg?v=27', speed: '/speed-icon.svg?v=27', terminal: '/terminal-icon.svg?v=27', cards: '/cards-icon.svg?v=1' };
 const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1', terminal: '/terminal-icon.svg?v=27', cards: '/cards-icon.svg?v=1' };
 const APP_ICONS_N = { rack: '/icon-net.svg?v=1', frank: '/frank-icon-net.svg?v=1', speed: '/speed-icon-net.svg?v=1', terminal: '/terminal-icon.svg?v=27', cards: '/cards-icon.svg?v=1' };
+const APP_ICONS_T = { rack: '/look-test/rack.svg?v=3', frank: '/look-test/frank.svg?v=3', speed: '/look-test/speed.svg?v=3', terminal: '/look-test/terminal.svg?v=3', cards: '/look-test/cards.svg?v=3' };      // «Test»: black aluminium, hairline glyphs
+const APP_ICON_SET = document.documentElement.getAttribute('data-look') === 'test' ? APP_ICONS_T : APP_ICONS;      // switching the look reloads the page
 function AppIcon({ app = 'rack', size = 30, radius, style }) {
   const st = { borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, ...style };
   if (THEME.appIcons[app]) return <img src={THEME.appIcons[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;      // the custom look brings its own
   // every app icon has flat outline twins for the «Графит» and «Контроллер» looks (css shows the right one, so the original look is untouched)
   return <><img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false" className="app-ic-c" style={{ display: 'block', ...st }} />
     <img src={APP_ICONS_G[app]} width={size} height={size} alt="" draggable="false" className="app-ic-g" style={st} />
-    <img src={APP_ICONS_N[app]} width={size} height={size} alt="" draggable="false" className="app-ic-n" style={st} /></>;
+    <img src={APP_ICONS_N[app]} width={size} height={size} alt="" draggable="false" className="app-ic-n" style={st} />
+    <img src={APP_ICONS_T[app]} width={size} height={size} alt="" draggable="false" className="app-ic-t" style={st} /></>;
 }
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {
   const d = THEME.icons[name] || ICON_PATHS[name] || ICON_PATHS.other;
@@ -173,6 +176,7 @@ const KIND_COLOR_NET = { tv: 'var(--accent)', internet: 'var(--accent)', modem: 
 function kindColor(kind) {
   const k = kind || 'other';
   if (THEME.kindColors[k]) return THEME.kindColors[k];
+  if (document.documentElement.getAttribute('data-look') === 'test') return 'var(--text2)';        // «Test»: strict, monochrome
   if (document.documentElement.getAttribute('data-skin') === 'net' && KIND_COLOR_NET[k]) return KIND_COLOR_NET[k];
   return KIND_COLOR[k] || KIND_COLOR.other;
 }

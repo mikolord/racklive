@@ -102,7 +102,9 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, swap, top
 function RackView() {
   const { data, edit, saveRack, saveRacks, openDevice } = useApp();
   const [rackId, setRackId] = useState(() => { const p = new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
-  const [side, setSide] = useState('front');
+  const [side, setSide] = useState(() => new URLSearchParams(location.search).get('side') === 'back' ? 'back' : 'front');
+  const [r3, setR3] = useState(() => { try { return localStorage.getItem('rl_rack3d') !== '0'; } catch (e) { return true; } });
+  const show3d = isTestLook() && r3 && !edit;
   const [editing, setEditing] = useState(() => { const id = new URLSearchParams(location.search).get('editunit');   // unit being edited / created
     if (id === 'new' && edit) return { id: null, name: '', type: 'switch', uSize: 1, uStart: 1, side: 'front', color: '#0a84ff', deviceId: null, notes: '' };
     return id && edit ? data.racks.flatMap(r => r.units).find(u => u.id === id) || null : null; });
@@ -197,8 +199,11 @@ function RackView() {
           {edit ? <button className="icon-link" onClick={() => setRackSettings(rack)} title="Настройки шкафа"><Icon name="settings" size={15} /></button> : null}
           {edit ? <button className="icon-link" onClick={() => setMoving(true)} title="Переезд: сделать щитком или комнатой"><Icon name="swap" size={15} /><span className="move-lbl">Переезд</span></button> : null}</div>
           <div className="meta">{total}U · занято {occ.filter(Boolean).length}U · {side === 'front' ? 'вид спереди' : 'вид сзади'}</div></div>
-          <Seg value={side} onChange={setSide} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} />
+          <div className="row" style={{ gap: 8 }}>{isTestLook() && !edit ? <Seg value={r3 ? '3d' : 'flat'} onChange={v => { setR3(v === '3d'); try { localStorage.setItem('rl_rack3d', v === '3d' ? '1' : '0'); } catch (e) { } }}
+            options={[{ value: '3d', label: '3D' }, { value: 'flat', label: 'Схема' }]} /> : null}
+          <Seg value={side} onChange={setSide} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></div>
         </div>
+        {show3d ? <Rack3D rack={rack} devById={devById} side={side} onUnit={u => { const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} /> :
         <div className="rack-body" style={{ '--u': U_PX + 'px' }}>
           <div className="rack-rail">{Array.from({ length: total }, (_, i) => <div key={i}>{i + 1}</div>)}</div>
           <div className="rack-slots" ref={slotsRef}>
@@ -213,7 +218,7 @@ function RackView() {
               onClick={() => { if (edit) return; const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} />)}
           </div>
           <div className="rack-rail">{Array.from({ length: total }, (_, i) => <div key={i}>{i + 1}</div>)}</div>
-        </div>
+        </div>}
       </div>
       {edit ? <div className="row" style={{ marginTop: 12 }}>
         <Btn kind="primary" icon="plus" onClick={() => { const free = occ.findIndex((x, i) => i > 0 && i <= total && !x);

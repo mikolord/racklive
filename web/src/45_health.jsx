@@ -15,7 +15,7 @@ function TopoPic({ id, on }) {
 }
 
 function ScoreRing({ score, size = 76 }) {
-  const r = size / 2 - 6, L = 2 * Math.PI * r; const col = score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--orange)' : 'var(--red)';
+  const r = size / 2 - 6, L = 2 * Math.PI * r; const col = isTestLook() ? scoreTone(score) : score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--orange)' : 'var(--red)';
   return <div className="score-ring" style={{ width: size, height: size }}>
     <svg width={size} height={size}><circle cx={size / 2} cy={size / 2} r={r} stroke="var(--line)" strokeWidth="7" fill="none" />
       <circle cx={size / 2} cy={size / 2} r={r} stroke={col} strokeWidth="7" fill="none" strokeLinecap="round" strokeDasharray={`${L * score / 100} ${L}`}

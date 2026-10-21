@@ -73,7 +73,7 @@ MANIFEST = {
     'pwaFrank': {'favicon': 'assets/frank.svg', 'appleTouch': 'assets/frank-touch-180.png', 'icon192': 'assets/frank-192.png', 'icon512': 'assets/frank-512.png'},
     'pwaSpeed': {'favicon': 'assets/speed.svg', 'appleTouch': 'assets/speed-touch-180.png', 'icon192': 'assets/speed-192.png', 'icon512': 'assets/speed-512.png'},
     'tileArt': {'stats': 'assets/tile-stats.svg', 'uptime': 'assets/tile-uptime.svg'},
-    'tileColors': {'stats': '#33b6ff', 'internet': '#3ddc97', 'problems': '#ffb454'},
+    'tileColors': {'stats': '#33b6ff', 'internet': '#3ddc97', 'uptime': '#ffb454'},
     'preview': 'assets/preview.svg',
 }
 CSS = '''/* Океанская ночь: всё начинается с html[data-theme-id="ocean-night"] — так правила не выходят за пределы темы */

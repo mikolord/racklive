@@ -4,6 +4,7 @@
 const DASH_ROW = 8, DASH_GAP = 14;
 
 function StatsWidget() {
+  if (isTestLook()) return <StatsInstr />;
   const { data } = useApp(); const devices = data.devices;
   const problems = devices.filter(d => ['offline', 'warning'].includes(d.state && d.state.status));
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
@@ -16,29 +17,8 @@ function StatsWidget() {
   </div>;
 }
 
-function ProblemsWidget() {
-  const { data, openDevice } = useApp();
-  const problems = data.devices.filter(d => ['offline', 'warning'].includes(d.state && d.state.status));
-  if (!problems.length) return <Card><div className="row"><span className="dot online" /><b>Всё работает</b><span className="dim">— все устройства на связи</span></div></Card>;
-  return <Card title="Требуют внимания"><div className="list">{problems.map(d => <div className="li" key={d.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
-    <KindIcon kind={d.kind} size={34} /><div className="grow"><div style={{ fontWeight: 600 }}>{d.name}</div>
-      <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{d.state.error || (d.state.metrics || []).filter(m => m.level).map(m => `${m.label}: ${m.value}`).join(', ') || STATUS_TEXT[d.state.status]}</div></div>
-    <StatusBadge status={d.state.status} /></div>)}</div></Card>;
-}
 
-function DevicesWidget() {
-  const { data, openDevice } = useApp();
-  return <Card title={`Устройства · ${data.devices.length}`}><div className="list">{data.devices.map(d => <div className="li" key={d.id} style={{ cursor: 'pointer' }} onClick={() => openDevice(d)}>
-    <KindIcon kind={d.kind} size={30} /><div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{d.name}</div>
-      <div className="dim ellipsis" style={{ fontSize: 12 }}>{deviceLine(d)}</div></div>
-    <span className={'dot ' + ((d.state || {}).status || 'unknown')} /></div>)}</div></Card>;
-}
 
-function EventsWidget() {
-  const { data, setTab } = useApp();
-  return <Card title="События" right={<Btn size="sm" onClick={() => setTab('events')}>Все</Btn>}>
-    <EventsList events={data.events.slice(0, 8)} bare /></Card>;
-}
 
 function SpeedWidget() {
   const { data, openSpeed } = useApp();
@@ -64,23 +44,6 @@ function FrankWidget() {
   </Card>;
 }
 
-function ShortcutsWidget() {
-  const { data, admin, setTab } = useApp();
-  if (!admin) return null;
-  const secs = SET_SECTIONS.filter(x => !x.need || data[x.need]);
-  const open = x => { lsSet('rl_set_sec', x.id); setTab('settings'); };
-  if (document.documentElement.getAttribute('data-skin') === 'net') {    // «Контроллер»: a list of rows, like the «Устройства» widget, not a grid of coloured tiles
-    return <Card title="Настройки"><div className="list">{secs.map(x => <div className="li" key={x.id} style={{ cursor: 'pointer' }} onClick={() => open(x)}>
-      <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
-      <div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{x.label}</div>
-        <div className="dim ellipsis" style={{ fontSize: 12 }}>{x.state ? x.state(data) : x.desc}</div></div>
-      <Icon name="chevron" size={14} color="var(--text3)" /></div>)}</div></Card>;
-  }
-  return <Card title="Настройки"><div className="shortcuts">{secs.map(x => <button key={x.id} type="button" className="shortcut" onClick={() => open(x)}>
-    {x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} />
-      : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
-    <span className="ellipsis">{x.label}</span></button>)}</div></Card>;
-}
 
 function NoteWidget({ w, edit: editMode, onOpts }) {
   const { admin } = useApp(); const edit = !!admin;               // a note is written right where it lies, no edit mode needed
@@ -93,9 +56,9 @@ function NoteWidget({ w, edit: editMode, onOpts }) {
   const type = v => { setDraft(v); latest.current.draft = v; clearTimeout(timer.current); timer.current = setTimeout(flush, 700); };      // saved by itself 0.7 s after the last key
   useEffect(() => () => flush(), []);                                                                                                   // leaving the edit mode / the page: nothing is lost
   return <Card title={w.title || 'Заметка'}>
-    {edit ? <textarea className="input" rows={4} value={draft} placeholder="Что угодно: пароль от гостевого Wi-Fi, телефон провайдера, что купить…"
+    {edit ? <textarea className="input note-pad" rows={4} value={draft} placeholder="Что угодно: пароль от гостевого Wi-Fi, телефон провайдера, что купить…"
       onChange={e => type(e.target.value)} onBlur={flush} style={{ width: '100%', resize: 'vertical' }} />
-      : <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.5 }}>{text || <span className="dim3">Пусто. Войдите как администратор, чтобы написать.</span>}</div>}
+      : <div className="note-pad" style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.5 }}>{text || <span className="dim3">Пусто. Войдите как администратор, чтобы написать.</span>}</div>}
   </Card>;
 }
 
@@ -128,6 +91,7 @@ function BatteryArt({ u, vertical }) {
 function UpsWidget() {
   const { data, openDevice, setTab } = useApp();
   const list = upsList(data);
+  if (isTestLook() && list.length) return <UpsInstr list={list} />;
   if (!list.length) return <Card title="ИБП"><div className="dim" style={{ fontSize: 13, lineHeight: 1.5 }}>ИБП ещё не добавлен. Добавьте его в «Устройства» (тип «ИБП») или юнитом в шкаф — здесь появится, на сколько хватит батареи.</div>
     <div style={{ marginTop: 10 }}><Btn size="sm" onClick={() => setTab('devices')}>К устройствам</Btn></div></Card>;
   return <div className="upsw-list">{list.map(d => { const u = d.state.ups; const tone = upsTone(u);
@@ -147,17 +111,11 @@ function UpsWidget() {
     </div>; })}</div>;
 }
 
-function ViewWidget({ which }) {
-  const { setTab } = useApp();
-  return <div className="wg-view">
-    <div className="wg-view-head"><b>{which === 'map' ? 'Карта сети' : 'План'}</b><Btn size="sm" onClick={() => setTab(which)}>Открыть</Btn></div>
-    <div className="wg-view-body">{which === 'map' ? <MapView /> : <PlanView />}</div>
-  </div>;
-}
 
 /* the catalogue — iOS-style sizes: S = a square tile (1 of 4 columns; 1 of 2 on a phone — two in a row),
    M = half the width (whole width on a phone), L = the whole width. sizes: which ones a widget allows.
    tile(data) → the square form: a big value and a line; go → where a tap on the tile leads (else the whole widget opens). */
+const newLive = d => (d.newDevices || []).filter(r => findClient(d, r.mac));      // the same list the «Новые в сети» window shows
 const avgUptime = d => { const k = (d.uptime || []).filter(u => u.pct != null); return k.length ? k.reduce((a, u) => a + u.pct, 0) / k.length : null; };
 const ALL = ['S', 'M', 'L'];
 const WIDGETS = {
@@ -165,9 +123,6 @@ const WIDGETS = {
     flat: true, render: () => <RackView />, tile: d => ({ v: (d.racks || []).length || '', s: 'шкафы и места' }) },
   stats: { title: 'Сводка', icon: 'pulse', color: '#0a84ff', size: 'M', sizes: ALL, once: true, desc: 'Устройства в сети, проблемы, клиенты, PoE', render: () => <StatsWidget />,
     tile: d => ({ v: `${d.devices.filter(x => (x.state || {}).status === 'online').length}/${d.devices.length}`, s: 'устройств в сети' }) },
-  problems: { title: 'Требуют внимания', icon: 'alert', color: '#ff9f0a', size: 'M', sizes: ALL, list: true, once: true, desc: 'Что сейчас не в сети или с предупреждением', flat: true, render: () => <ProblemsWidget />,
-    tile: d => { const n = d.devices.filter(x => ['offline', 'warning'].includes((x.state || {}).status)).length; const t = probTone(d);
-      return { v: n || '', s: t === 'red' ? `${n} ${ruPlural(n, 'проблема', 'проблемы', 'проблем')} — нет связи` : t === 'yellow' ? `${n} — требует внимания` : 'всё работает', tone: t }; } },
   state: { title: 'Состояние сети', icon: 'shield', color: '#30d158', size: 'M', sizes: ALL, once: true, desc: 'Здоровье и безопасность сети', render: () => <StateCard />,
     tile: d => ({ v: `${d.health ? d.health.score : '—'} · ${d.security ? d.security.score : '—'}`, s: 'здоровье · защита', bad: d.security && d.security.counts.bad }) },
   internet: { title: 'Интернет', icon: 'globe', color: '#64d2ff', size: 'M', sizes: ALL, once: true, desc: 'Скорость интернета по расписанию', render: () => <InternetCard />,
@@ -180,16 +135,8 @@ const WIDGETS = {
     go: ctx => { const u = upsFirst(ctx.data); if (u) ctx.openDevice(u); else ctx.setTab('devices'); } },
   uptime: { title: 'Доступность', icon: 'pulse', color: '#34c759', size: 'M', sizes: ALL, once: true, desc: 'Кто пропадал за 30 дней', render: () => <UptimeCard />,
     tile: d => { const a = avgUptime(d); return { v: a == null ? '—' : pctText(a), s: 'за 30 дней' }; } },
-  newdev: { title: 'Новые в сети', icon: 'plus', color: '#bf5af2', size: 'M', sizes: ALL, once: true, desc: 'Незнакомые устройства за неделю', render: () => <NewDevicesCard />,
-    tile: d => { const n = (d.newDevices || []).filter(x => !x.trusted).length; return { v: n, s: n ? 'незнакомых' : 'все свои', bad: n > 0 }; } },
-  map: { title: 'Карта сети', icon: 'map', color: '#0a84ff', size: 'L', sizes: ['S', 'L'], h: 520, once: true, desc: 'Живая карта: двигается и приближается; квадратом — кнопка',
-    render: () => <ViewWidget which="map" />, tile: () => ({ v: '', s: 'открыть карту' }), go: ctx => ctx.setTab('map') },
-  plan: { title: 'План', icon: 'plan', color: '#ff9f0a', size: 'L', sizes: ['S', 'L'], h: 460, once: true, desc: 'Дома, этажи и покрытие Wi-Fi; квадратом — кнопка',
-    render: () => <ViewWidget which="plan" />, tile: d => ({ v: ((d.plan || {}).buildings || []).length || '', s: 'открыть план' }), go: ctx => ctx.setTab('plan') },
-  devices: { title: 'Устройства', icon: 'list', color: '#8e8e93', size: 'M', sizes: ALL, list: true, once: true, desc: 'Все устройства со статусом', render: () => <DevicesWidget />,
-    tile: d => ({ v: d.devices.length, s: 'устройств' }), go: ctx => ctx.setTab('devices') },
-  events: { title: 'События', icon: 'bell', color: '#ff375f', size: 'M', sizes: ALL, list: true, once: true, desc: 'Последние сбои, восстановления, действия', render: () => <EventsWidget />,
-    tile: d => { const e = (d.events || [])[0]; return { v: (d.events || []).length, s: e ? 'открыть журнал' : 'событий нет' }; }, go: ctx => ctx.setTab('events') },
+  newdev: { title: 'Новые в сети', icon: 'plus', color: '#bf5af2', size: 'M', sizes: ALL, once: true, desc: 'Незнакомые устройства за неделю', render: () => isTestLook() ? <NewDevInstr /> : <NewDevicesCard />,
+    tile: d => { const n = newLive(d).filter(x => x.decision === 'ask').length; return { v: n, s: n ? 'ждут решения' : 'все свои', bad: n > 0 }; } },
   speed: { title: 'Тест скорости', icon: 'gauge', color: '#30d158', size: 'S', sizes: ALL, once: true, desc: 'Последний замер и кнопка «Начать»', render: () => <SpeedWidget />,
     tile: d => { const l = (d.speedtests || []).filter(t => t.kind !== 'iperf').slice(-1)[0]; return { v: l ? mbpsText(l.down) + '↓' : '—', s: 'нажмите — тест' }; },
     go: ctx => ctx.openSpeed() },
@@ -197,12 +144,10 @@ const WIDGETS = {
     tile: () => ({ v: '', s: 'спросить Frank' }), go: ctx => ctx.askAi('') },
   advice: { title: 'Советы Frank', icon: 'eye', color: '#bf5af2', size: 'M', sizes: ALL, list: true, once: true, desc: 'Раз в несколько дней Frank советует, что добавить и что улучшить',
     render: () => <AdviceWidget />, tile: d => { const n = ((d.advice || {}).items || []).length; return { v: n || '', s: n ? ruPlural(n, 'совет', 'совета', 'советов') + ' от Frank' : 'советов нет', bad: n > 0 }; } },
-  shortcuts: { title: 'Настройки', icon: 'settings', color: '#8e8e93', size: 'M', sizes: ALL, once: true, desc: 'Быстрый переход в разделы настроек', render: () => <ShortcutsWidget />,
-    tile: () => ({ v: '', s: 'открыть' }), go: ctx => ctx.setTab('settings') },
   note: { title: 'Заметка', icon: 'edit', color: '#ffd60a', size: 'S', sizes: ALL, list: true, desc: 'Свой текст: телефоны, пароль от гостевой сети…',
     render: (w, edit, onOpts) => <NoteWidget w={w} edit={edit} onOpts={onOpts} />, tile: (d, w) => ({ v: '', s: ((w.opts || {}).text || 'пусто').split('\n')[0] }) },
 };
-const DASH_DEFAULT = ['rack', 'stats', 'problems', 'state', 'internet', 'uptime'].map(type => ({ id: type, type, size: WIDGETS[type].size }));
+const DASH_DEFAULT = ['rack', 'stats', 'state', 'internet', 'uptime'].map(type => ({ id: type, type, size: WIDGETS[type].size }));
 // layouts saved before sizes existed: {w, h, compact} → a size
 const sizeOf = w => { const d = WIDGETS[w.type]; let s = w.size || (w.compact ? 'S' : (w.w || 2) >= 4 ? 'L' : 'M');
   return d.sizes.includes(s) ? s : d.sizes.includes('M') ? 'M' : d.sizes[d.sizes.length - 1]; };
@@ -227,7 +172,7 @@ function Dashboard() {
   const [list, setList] = useState(norm(saved.length ? saved : DASH_DEFAULT));
   const [drag, setDrag] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [full, setFull] = useState(null);
+  const [full, setFull] = useState(() => { const t = new URLSearchParams(location.search).get('wfull'); return t && WIDGETS[t] ? { id: t, type: t, size: 'M', opts: {} } : null; });
   const gridRef = useRef(null); const els = useRef({}); const rects = useRef({}); const flip = useRef(false);
   const follow = useRef(null);                       // while moving: re-pin the lifted widget under the finger after each re-layout
   const [cols, colW] = useCols(gridRef);
@@ -361,7 +306,8 @@ function DashItem({ w, cols, colW, edit, arranging, lifted, elRef, onMove, onTou
   const span = spanOf(size, cols);
   const name = w.title || d.title;
   let body;
-  if (size === 'S') {
+  if (size === 'S' && isTestLook()) body = <TestTile w={w} d={d} name={name} data={data} onTap={onTap} arranging={arranging} />;      // «Test»: strict mini-instruments
+  else if (size === 'S') {
     const t = d.tile ? d.tile(data, w) : { v: '', s: '' };
     const col = THEME.tileColors[w.type] || d.color;                       // a custom look may recolour a tile ...
     const art = THEME.tileArt[w.type] ? <img className="tile-img" src={THEME.tileArt[w.type]} alt="" draggable="false" /> : TILE_ART[w.type] ? TILE_ART[w.type](data, w) : null;      // ... and bring its own picture instead of the drawn one

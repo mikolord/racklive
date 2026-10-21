@@ -76,6 +76,18 @@ function Gauge({ value, phase, progress }) {
   const f = Math.max(0, Math.min(1, shown / max)), a = Math.PI * (1 - f);
   const R = 80, cx = 100, cy = 92, x = cx + R * Math.cos(a), y = cy - R * Math.sin(a);
   const col = phase ? speedLevel(shown)[1] : 'var(--text3)';
+  if (isTestLook()) { const pc = Math.round(f * 100), tip = `color-mix(in srgb, var(--accent) ${pc}%, var(--text))`;
+    return <div className="gauge lin">
+      <div className="lg-val"><b style={phase ? null : { color: 'var(--text3)' }}>{phase ? mbpsText(shown) : '0'}</b><span>Мбит/с</span></div>
+      <div className="lg-scale">
+        <div className="lg-ticks">{Array.from({ length: 41 }, (_, i) => <i key={i} className={i % 10 === 0 ? 'b' : i % 5 === 0 ? 'm' : ''} style={{ left: i * 2.5 + '%' }} />)}</div>
+        <div className="lg-line"><i style={{ width: f * 100 + '%', background: `linear-gradient(90deg, var(--text), ${tip})`, boxShadow: f > .05 ? `0 0 10px color-mix(in srgb, var(--accent) ${pc}%, transparent)` : 'none' }} /></div>
+        <div className="lg-mark" style={{ left: f * 100 + '%', background: tip, boxShadow: `0 0 8px ${tip}` }} />
+        <div className="lg-nums">{[0, .25, .5, .75, 1].map(k => <span key={k} style={{ left: k * 100 + '%' }}>{Math.round(scale * k)}</span>)}</div>
+      </div>
+      <div className="gauge-phase">{phase || ' '}</div>
+      {progress != null ? <div className="gauge-bar"><i style={{ width: progress * 100 + '%' }} /></div> : null}
+    </div>; }
   return <div className="gauge">
     <svg viewBox="0 0 200 110">
       <path d={`M${cx - R},${cy} A${R},${R} 0 0 1 ${cx + R},${cy}`} fill="none" stroke="var(--fill2)" strokeWidth="12" strokeLinecap="round" />

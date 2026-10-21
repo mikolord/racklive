@@ -93,15 +93,17 @@ function PortMapView({ unit, compact }) {
     return [lp && (lp.d || lp.unit) ? '→ ' + lp.text + (lp.p ? ` · ${lp.p.link ? fmt.speedShort(lp.p.speed) : 'нет линка'}` : '') + (lp.peers && lp.peers.length ? ' · ' + lp.peers.slice(0, 2).join(', ') : '') : '',
       ...inc.map(x => `← ${x.unit.name}, ${x.unit.type === 'modem' ? portName(x.unit, x.n) : 'порт ' + x.n}`),
       ...backbonesFor(data, unit.id, n).map(t => '⇄ ' + t)].filter(Boolean).join('   ') || 'никуда не подключён'; };
+  const t3 = isTestLook();
   return <div className="pm">
+    {t3 ? <UnitModel unit={unit} sel={sel} onPick={n => setSel(sel === n ? null : n)} /> : null}
     <div className="row wrap dim" style={{ gap: 10, fontSize: 12 }}>
       <span>{modem ? `${pm.count} гнёзд` : `${pm.count} портов`}{cross ? ` · ${pm.connector || 'SC'} · ${pm.fiber === 'MM' ? 'многомод' : 'одномод'}` : ''}</span>
       <span>подписано {rows.length}</span>
       <span className="row" style={{ gap: 4 }}><i className="pm-lg g" />1G</span><span className="row" style={{ gap: 4 }}><i className="pm-lg y" />100M</span>
       <span className="row" style={{ gap: 4 }}><i className="pm-lg down" />нет линка</span>
     </div>
-    <div className={'pm-grid' + (modem ? ' named' : '')} style={{ '--cols': Math.min(pm.count > 24 ? Math.ceil(pm.count / 2) : pm.count, 24) }}>
-      {Array.from({ length: pm.count }, (_, i) => cell(i + 1))}</div>
+    {t3 ? null : <div className={'pm-grid' + (modem ? ' named' : '')} style={{ '--cols': Math.min(pm.count > 24 ? Math.ceil(pm.count / 2) : pm.count, 24) }}>
+      {Array.from({ length: pm.count }, (_, i) => cell(i + 1))}</div>}
     {sel ? <div className="pm-detail"><b>{modem ? portName(unit, sel) : (cross ? 'Волокно ' : 'Порт ') + sel}</b>
       {((pm.ports || {})[sel] || {}).label ? <div>{pm.ports[sel].label}</div> : null}<div className="dim" style={{ fontSize: 12.5 }}>{line(sel)}</div>
       {((pm.ports || {})[sel] || {}).db ? <div className="dim" style={{ fontSize: 12.5 }}>Затухание {pm.ports[sel].db} дБ</div> : null}

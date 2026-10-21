@@ -38,7 +38,15 @@ function InternetCard() {
   const low = last && tariff && last.down != null && last.down < tariff * .5;
   return <>
     <Card title="Интернет" right={<Btn size="sm" onClick={() => setOpen(true)}>Подробнее</Btn>}>
-      <div className="row" style={{ gap: 14, cursor: 'pointer', alignItems: 'flex-end' }} onClick={() => setOpen(true)}>
+      {isTestLook() && last && last.down != null ? (() => { const top = Math.max(tariff || 0, last.down * 1.1, 100);
+        return <div className="sr-row inet-sr" onClick={() => setOpen(true)}>
+          <div className="sr"><div className="sp-k">Загрузка</div><div className={'sr-v' + (low ? ' warn' : '')}><Num v={Math.round(last.down)} /><small>Мбит/с</small></div>
+            <Scale value={last.down} max={top} marks={tariff ? [[tariff / top, 'тариф ' + tariff]] : null} /></div>
+          <div className="sr"><div className="sp-k">Отдача</div><div className="sr-v"><Num v={Math.round(last.up)} /><small>Мбит/с</small></div><Scale value={last.up} max={top} /></div>
+          <div className="sr sr-ping"><div className="sp-k">Пинг</div><div className="sr-v"><Num v={last.ping != null ? +last.ping : '—'} digits={last.ping != null && last.ping < 10 ? 1 : 0} /><small>мс</small></div>
+            <div className="sr-t">{fmt.ago(last.t, data.now)}</div></div>
+        </div>; })() : null}
+      <div className="row" style={{ gap: 14, cursor: 'pointer', alignItems: 'flex-end', display: isTestLook() && last && last.down != null ? 'none' : undefined }} onClick={() => setOpen(true)}>
         {last && last.down != null ? <>
           <div><div className="inet-big" style={{ color: low ? 'var(--orange)' : undefined }}>{Math.round(last.down)}<small> ↓</small></div><div className="dim3" style={{ fontSize: 11.5 }}>Мбит/с загрузка</div></div>
           <div><div className="inet-big">{Math.round(last.up)}<small> ↑</small></div><div className="dim3" style={{ fontSize: 11.5 }}>отдача</div></div>
@@ -47,7 +55,7 @@ function InternetCard() {
           <div className="dim3" style={{ fontSize: 11.5, textAlign: 'right' }}>{fmt.ago(last.t, data.now)}{tariff ? <div>тариф {tariff}</div> : null}</div>
         </> : <div className="dim" style={{ fontSize: 13 }}>{n.running ? 'Идёт первый замер…' : last && last.error ? 'Замер не удался: ' + last.error : 'Замеров ещё не было — нажмите «Подробнее» → «Замерить сейчас»'}</div>}
       </div>
-      {main.length > 2 ? <div style={{ marginTop: 8 }}><Sparkline points={main} field="down" color={low ? 'var(--orange)' : 'var(--accent)'} /></div> : null}
+      {main.length > 2 && !isTestLook() ? <div style={{ marginTop: 8 }}><Sparkline points={main} field="down" color={low ? 'var(--orange)' : 'var(--accent)'} /></div> : null}
     </Card>
     {open ? <Modal title="Скорость интернета" wide onClose={() => setOpen(false)} icon={<Icon name="globe" size={20} color="var(--accent)" />}><InternetBody n={n} /></Modal> : null}
   </>;

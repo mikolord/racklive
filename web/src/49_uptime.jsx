@@ -65,6 +65,8 @@ function UptimeCard() {
   const click = u => u.kind !== 'ap' && devById[u.dev] ? () => { setOpen(false); openDevice(devById[u.dev]); } : null;
   return <>
     <Card title="Доступность · 30 дней" right={<Btn size="sm" onClick={() => setOpen(true)}>Подробнее</Btn>}>
+      {isTestLook() ? <div className="up-leds" onClick={() => setOpen(true)}><DayTicks days={uptimeDays(list)} />
+        <div className="row dim3 mono" style={{ fontSize: 10.5, justifyContent: 'space-between', marginTop: 6 }}><span>30 ДНЕЙ НАЗАД</span><span>{avg != null ? 'СРЕДНЕЕ ' + pctText(avg) : ''}</span><span>СЕГОДНЯ</span></div></div> : null}
       {flaky.length ? <div className="list">{flaky.slice(0, 4).map(u => <UptimeRow key={u.key} u={u} now={data.now} onClick={click(u)} sub={u.parent ? '· ' + u.parent : null} />)}</div>
         : <div className="row" style={{ cursor: 'pointer' }} onClick={() => setOpen(true)}><span className="dot online" />
           <b>Всё стабильно</b><span className="dim">— за неделю ни одного сбоя{avg != null ? ` · в среднем ${pctText(avg)}` : ''}</span></div>}

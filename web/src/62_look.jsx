@@ -5,18 +5,20 @@
 const SKINS = [
   { id: 'net', name: 'Контроллер', text: 'Яркий синий акцент как у сетевых контроллеров, без оранжевого (жёлтый вместо него) и фиолетового, плоские иконки без картинок на плитках. Основное оформление.', rows: ['Сводка', 'Роутер'] },
   { id: 'classic', name: 'Rack Live', text: 'Стекло, мягкие градиенты и синий акцент — как в iOS.', rows: ['Сводка', 'Роутер'] },
+  { id: 'test', name: 'Test', text: 'Строгий стиль «Витрина», как в карточках «Сканера»: в тёмной теме чёрный алюминий, в светлой белый, тонкие линии вместо теней, моно-подписи, монохромные иконки. Экспериментальное.', rows: ['Сводка', 'Роутер'] },
   { id: 'graphite', name: 'Графит', text: 'Чёрный фон, плоские серые карточки, тонкие рамки, зелёный акцент — без размытия и теней.', rows: ['Сводка', 'Роутер'] },
 ];
 const ACCENTS = [['', 'По умолчанию у оформления', null], ['blue', 'Синий', '#0a84ff'], ['green', 'Зелёный', '#30b455'], ['purple', 'Фиолетовый', '#a259e6'],
   ['orange', 'Оранжевый', '#f5870a'], ['red', 'Красный', '#f2453d'], ['teal', 'Бирюзовый', '#20b4cc'], ['pink', 'Розовый', '#ee3d73']];
 
-const BUILTIN_SKINS = ['classic', 'graphite', 'net'];
+const BUILTIN_SKINS = ['classic', 'graphite', 'net', 'test'];
 const getSkin = () => lsGet('rl_skin', 'net') || 'net';
 const getAccent = () => { const a = lsGet('rl_accent', ''); return ACCENTS.some(x => x[0] === a) ? a : ''; };
 const themeMeta = () => { try { return JSON.parse(lsGet('rl_theme_meta', '') || 'null'); } catch (e) { return null; } };
 function applyLook(skin, accent) {                              // built-in looks only (a custom look needs its css: a page reload does it, see pickCustom)
   const h = document.documentElement;
-  if (skin && skin !== 'classic') h.setAttribute('data-skin', skin); else h.removeAttribute('data-skin');
+  if (skin && skin !== 'classic') h.setAttribute('data-skin', skin === 'test' ? 'net' : skin); else h.removeAttribute('data-skin');
+  if (skin === 'test') h.setAttribute('data-look', 'test'); else h.removeAttribute('data-look');      // «Test» = «Контроллер» + the «Витрина» look
   h.removeAttribute('data-theme-id');
   if (accent) h.setAttribute('data-accent', accent); else h.removeAttribute('data-accent');
   const fav = document.querySelector('link[rel~="icon"]'); if (fav) fav.setAttribute('href', skin === 'graphite' ? 'icon-graphite.svg?v=1' : 'icon.svg?v=27');
@@ -67,7 +69,7 @@ function LookCard() {
   const customNow = !BUILTIN_SKINS.includes(skin);
   const pickBuiltin = id => {
     lsSet('rl_skin', id); lsSet('rl_theme_meta', ''); setSkin(id);
-    if (customNow) { location.reload(); return; }                    // leaving a custom look: its texts and icons are in memory — a clean start
+    if (customNow || id === 'test' || skin === 'test') { applyLook(id, accent); location.reload(); return; }      // leaving a custom look (its texts and icons are in memory) or «Test» (another shell): a clean start
     applyLook(id, accent);
   };
   const pickCustom = async t => {
@@ -99,7 +101,7 @@ function LookCard() {
   const customs = (list && list.themes) || [];
   const card = (id, name, text, ok = true, base = 'classic', meta = null) => <div key={id} className={'look-skin' + (skin === id ? ' on' : '') + (ok ? '' : ' off')} role="button" tabIndex={0}
     onClick={() => ok && (meta ? pickCustom(meta) : pickBuiltin(id))}>
-    <div className="look-prev" data-skin={meta ? (base === 'graphite' ? 'graphite' : 'classic') : id} data-theme-id={meta ? id : undefined} data-theme={th} data-accent={accent || undefined}>
+    <div className="look-prev" data-skin={meta ? (base === 'graphite' ? 'graphite' : 'classic') : id === 'test' ? 'net' : id} data-look={id === 'test' ? 'test' : undefined} data-theme-id={meta ? id : undefined} data-theme={th} data-accent={accent || undefined}>
       {meta && meta.preview ? <img src={meta.preview} alt="" style={{ width: '100%', borderRadius: 8, display: 'block' }} /> : <>
         <div className="lp-card"><i /><span>Сводка</span><small>10/11</small></div><div className="lp-ok">Всё работает</div><span className="lp-btn">Кнопка</span></>}
     </div>

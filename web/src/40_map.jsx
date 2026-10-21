@@ -479,7 +479,7 @@ function MapView() {
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
           return <g key={e.id} className={dim}>
-            <path className={'edge' + (e.kind === 'wifi' || e.kind === 'mesh' ? ' wifi' : '') + (e.kind === 'remote' || e.extra || e.kind === 'lan' ? ' dashed' : '') + (e.kind === 'isp' ? ' isp' : '')} d={g.d} stroke={col} opacity={e.extra ? .55 : 1} />
+            <path className={'edge' + (e.speed >= 1000 && e.kind !== 'wifi' && e.kind !== 'mesh' ? ' fast' : e.speed > 0 && e.speed < 1000 ? ' slow' : '') + (e.kind === 'wifi' || e.kind === 'mesh' ? ' wifi' : '') + (e.kind === 'remote' || e.extra || e.kind === 'lan' ? ' dashed' : '') + (e.kind === 'isp' ? ' isp' : '')} d={g.d} stroke={col} opacity={e.extra ? .55 : 1} />
             {(e.kind === 'wan' || e.kind === 'isp' || (e.kind === 'wire' && e.speed >= 1000)) && !e.extra ? <path className="edge flow" d={g.d} stroke="#fff" opacity=".5" /> : null}
             {e.manual ? <path className="edge-hit" d={g.d} onClick={() => edgeClick(e)} /> : null}
           </g>; })}
@@ -488,9 +488,9 @@ function MapView() {
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
           return <g key={'l' + e.id} className={dim} pointerEvents="none">
             {e.sourcePort && !g.inside ? <g className="port-pill" transform={`translate(${g.lx - 14},${g.ly - 9})`}><rect width="28" height="18" rx="9" /><text x="14" y="12.5" textAnchor="middle">{e.sourcePort}</text></g> : null}
-            {g.cross ? <g transform={`translate(${g.lx},${g.ly})`}><rect x={-52} y={-10} width={104} height={20} rx={10} fill="var(--accent)" opacity=".92" />
+            {g.cross ? <g className="map-cross" transform={`translate(${g.lx},${g.ly})`}><rect x={-52} y={-10} width={104} height={20} rx={10} fill="var(--accent)" opacity=".92" />
               <text x={0} y={4} textAnchor="middle" fontSize="11" fontWeight="600" fill="#fff">между шкафами{e.sourcePort ? ' · ' + e.sourcePort : ''}</text></g> : null}
-            {e.poeW > 0 && g.mx ? <g transform={`translate(${g.lx - 14 - 50},${g.ly - 24})`}><rect width="44" height="18" rx="9" fill="#ffd60a" stroke="var(--bg)" strokeWidth="2" /><text x="22" y="12.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="#000">⚡{e.poeW}W</text></g> : null}
+            {e.poeW > 0 && g.mx ? <g className="map-poe" transform={`translate(${g.lx - 14 - 50},${g.ly - 24})`}><rect width="44" height="18" rx="9" fill="#ffd60a" stroke="var(--bg)" strokeWidth="2" /><text x="22" y="12.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="#000">⚡{e.poeW}W</text></g> : null}
             {(e.label && (e.manual || e.kind === 'wan' || e.kind === 'isp')) ? <text x={g.lx} y={g.ly - 14} fontSize="11" fill="var(--text2)" textAnchor="middle" stroke="var(--bg)" strokeWidth="3" paintOrder="stroke">{e.label}</text> : null}
           </g>; })}
         {guides ? <g pointerEvents="none" stroke="var(--accent)" strokeWidth={1 / view.k} strokeDasharray={`${4 / view.k} ${4 / view.k}`} opacity=".7">

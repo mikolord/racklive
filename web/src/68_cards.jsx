@@ -218,26 +218,42 @@ const FACE_DEF = {                                       // face → [width, hei
 const FACE_COLOR = { front: 'front', back: 'back', top: 'top', bottom: 'back', left: 'side', right: 'side' };
 const FACE_VAR = { front: 'var(--s3-front)', back: 'var(--s3-back)', top: 'var(--s3-top)', bottom: 'var(--s3-back)', left: 'var(--s3-side)', right: 'var(--s3-side)' };
 
-function Model3D({ model, ports, sel, onPick, view, onSaveView, manual, marks }) {
+/* the smart zoom («Test»): the rectangle the user drew in the port editor, or else the block of ports with a margin → {face, x, y, w, h} mm */
+function zoomZone(model, manual, marks, zoom) {
+  if (zoom && zoom.face) return zoom;
+  const box = (face, list) => { if (!list.length) return null; const x0 = Math.min(...list.map(p => p.x)), y0 = Math.min(...list.map(p => p.y)), x1 = Math.max(...list.map(p => p.x + p.w)), y1 = Math.max(...list.map(p => p.y + p.h)), m = 6;
+    return { face, x: x0 - m, y: y0 - m, w: x1 - x0 + 2 * m, h: y1 - y0 + 2 * m }; };
+  if (manual && (marks || []).length) { const f = marks[0].face; return box(f, marks.filter(m => m.face === f).map(m => ({ x: m.x - m.w / 2, y: m.y - m.h / 2, w: m.w, h: m.h }))); }
+  for (const f of ['front', 'back']) { const it = ((model.faces[f] || {}).items || []).filter(i => i.type === 'port'); if (it.length) return box(f, it); }
+  return null;
+}
+function Model3D({ model, ports, sel, onPick, view, onSaveView, manual, marks, zoom }) {
   const stage = useRef(null), drag = useRef(null);
   const [sw, setSw] = useState(320); const [risen, setRisen] = useState(false);
   const rest = view || model.view || { rx: -13, ry: -20 };
   const [rot, setRot] = useState(rest);
-  useEffect(() => { setRot(rest); }, [rest.rx, rest.ry, model.name, model.size.w, model.size.h]);
+  const [zoomed, setZoomedS] = useState(false); const setZoomed = v => { zoomedRef.current = v; setZoomedS(v); }; const zz = isTestLook() ? zoomZone(model, manual, marks, zoom) : null;
+  useEffect(() => { if (zz && new URLSearchParams(location.search).get('zoomports') === '1') { setZoomed(true); setRisen(true); setRot({ rx: 0, ry: zz.face === 'back' ? 180 : 0 }); } }, []);      // for tests
+  const zoomedRef = useRef(false);
+  useEffect(() => { if (!zoomedRef.current) setRot(rest); }, [rest.rx, rest.ry, model.name, model.size.w, model.size.h]);
   useEffect(() => { const tm = setTimeout(() => setRisen(true), 1800); return () => clearTimeout(tm); }, []);      // the rise is over even if animationend never came
   useLayoutEffect(() => { const f = () => stage.current && setSw(stage.current.clientWidth); f(); const ro = new ResizeObserver(f); ro.observe(stage.current); return () => ro.disconnect(); }, []);
   const S = model.size;
   // the whole thing, antennas and stands too, must fit at any angle: the turning width is the diagonal of the footprint
   const ext = (model.parts || []).reduce((a, p) => ({ lo: Math.min(a.lo, p.y - p.h / 2), hi: Math.max(a.hi, p.y + p.h / 2), sx: Math.max(a.sx, Math.abs(p.x) + p.w / 2), sz: Math.max(a.sz, Math.abs(p.z) + p.d / 2) }),
     { lo: -S.h / 2, hi: S.h / 2, sx: S.w / 2, sz: S.d / 2 });
-  const k = Math.min((sw - 40) / (2 * Math.hypot(ext.sx, ext.sz) * .9), 190 / (ext.hi - ext.lo + ext.sz * .5), 2.4), px = v => v * k;
+  const k = Math.min((sw - 40) / (2 * Math.hypot(ext.sx, ext.sz)), 190 / (ext.hi - ext.lo + ext.sz * .5), 2.4), px = v => v * k;
   const stageH = clampN((ext.hi - ext.lo) * k + ext.sz * k * .6 + 70, 170, 330), lift = (ext.lo + ext.hi) / 2 * k;
   const W = px(S.w), H = px(S.h), D = px(S.d);
+  // zoomed: face-on, scaled so the zone fills the stage, its centre moved to the middle
+  const Z = zoomed && zz ? Math.min((sw - 36) / (zz.w * k), 300 / (zz.h * k), 9) : 1;
+  const zx = zz ? (zz.x + zz.w / 2 - S.w / 2) * (zz.face === 'back' ? -1 : 1) * k : 0, zy = zz ? (zz.y + zz.h / 2 - S.h / 2) * k : 0;
+  const zH = zoomed && zz ? clampN(zz.h * k * Z + 90, 170, 400) : null;
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const C = (model.color && (model.color[dark ? 'dark' : 'light'] || model.color.light || model.color.dark)) || {};
   const byN = n => (ports || []).find(p => p.n === n);
   const ledOf = n => { const p = byN(n); return !p || !p.link ? 'transparent' : p.speed >= 1000 ? (C.led || 'var(--s3-led)') : 'var(--s3-led2)'; };
-  const down = ev => { if (ev.target.closest('.m3-port, .m3-tools')) return; drag.current = { x: ev.clientX, y: ev.clientY, rx: rot.rx, ry: rot.ry }; try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (x) { } setRisen(true); };
+  const down = ev => { if (zoomed || ev.target.closest('.m3-port, .m3-tools')) return; drag.current = { x: ev.clientX, y: ev.clientY, rx: rot.rx, ry: rot.ry }; try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (x) { } setRisen(true); };
   const move = ev => { const g = drag.current; if (!g) return; let ry = g.ry + (ev.clientX - g.x) * .5; ry = ((ry + 540) % 360) - 180;
     setRot({ rx: clampN(g.rx - (ev.clientY - g.y) * .35, -80, 80), ry, drag: true }); };
   const up = () => { if (!drag.current) return; drag.current = null; setRot(r => ({ rx: Math.round(r.rx), ry: Math.round(r.ry) })); };
@@ -248,8 +264,8 @@ function Model3D({ model, ports, sel, onPick, view, onSaveView, manual, marks })
   const face = (f, w, h, d, items, color, cls = '') => { const [fw, fh, tf] = FACE_DEF[f](w, h, d);
     return <div key={f} className={'m3-f m3-' + f + ' ' + cls} style={{ width: fw, height: fh, transform: `translate(-50%, -50%) ${tf}`, background: color }}>{items}</div>; };
   const fill = f => (model.faces[f] && model.faces[f].color) || C[FACE_COLOR[f]] || C.body || FACE_VAR[f];
-  return <div className="s3-stage m3-stage" ref={stage} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} style={{ height: stageH }}>
-    <div className="s3-floor" style={{ top: `calc(50% - ${lift}px)` }}><div className="s3-float">
+  return <div className={'s3-stage m3-stage' + (zoomed ? ' zoomed' : '')} ref={stage} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} style={{ height: zH || stageH, perspective: zoomed ? Math.round(1000 * Z * 6) + 'px' : undefined, perspectiveOrigin: zoomed ? '50% 50%' : undefined }}>
+    <div className="s3-floor" style={{ top: `calc(50% - ${zoomed ? 0 : lift}px)` }}><div className="s3-zoom" style={{ transform: zoomed ? `scale(${Z}) translate(${-zx}px, ${-zy}px)` : 'none' }}><div className="s3-float">
       <div className="s3-shadow" style={{ '--w': W + 'px', '--h': H + 'px', '--d': D + 'px' }} />
       <div className={'s3-box' + (risen ? '' : ' rise') + (rot.drag ? ' drag' : '')} onAnimationEnd={ev => { if (ev.animationName === 's3rise') setRisen(true); }}
         style={{ '--rx': rot.rx + 'deg', '--ry': rot.ry + 'deg' }}>
@@ -259,12 +275,14 @@ function Model3D({ model, ports, sel, onPick, view, onSaveView, manual, marks })
         {(model.parts || []).map((p, i) => <div key={'p' + i} className="m3-part" style={{ transform: `translate3d(${px(p.x)}px, ${px(p.y)}px, ${px(p.z)}px) rotateX(${p.rx || 0}deg) rotateZ(${p.rz || 0}deg)` }}>
           {Object.keys(FACE_DEF).map(f => face(f, px(p.w), px(p.h), px(p.d), null, p.color || C.body || FACE_VAR[f]))}</div>)}
       </div>
-    </div></div>
+    </div></div></div>
     <div className="m3-tools">
-      {moved ? <button type="button" className="m3-tool" title="Вернуть положение" onClick={() => setRot(rest)}><Icon name="refresh" size={15} /></button> : null}
-      {moved && onSaveView ? <button type="button" className="m3-tool pri" onClick={() => onSaveView({ rx: Math.round(rot.rx), ry: Math.round(rot.ry) })}><Icon name="pin" size={14} />Зафиксировать</button> : null}
+      {zz ? <button type="button" className={'m3-tool zoom' + (zoomed ? ' pri' : '')} title={zoomed ? 'Отдалить' : 'Приблизить порты'} onClick={() => { const on = !zoomed; setZoomed(on); setRisen(true); setRot(on ? { rx: 0, ry: zz.face === 'back' ? 180 : 0 } : rest); }}>
+        <Icon name={zoomed ? 'x' : 'search'} size={15} />{zoomed ? 'Отдалить' : 'Порты крупно'}</button> : null}
+      {!zoomed && moved ? <button type="button" className="m3-tool" title="Вернуть положение" onClick={() => setRot(rest)}><Icon name="refresh" size={15} /></button> : null}
+      {!zoomed && moved && onSaveView ? <button type="button" className="m3-tool pri" onClick={() => onSaveView({ rx: Math.round(rot.rx), ry: Math.round(rot.ry) })}><Icon name="pin" size={14} />Зафиксировать</button> : null}
     </div>
-    <div className="s3-hint">Потяните, чтобы повернуть</div>
+    <div className="s3-hint">{zoomed ? 'Нажмите на порт' : 'Потяните, чтобы повернуть'}</div>
   </div>;
 }
 
@@ -298,12 +316,34 @@ function Loupe({ lp, w, h, children }) {
     <div className="lp-in" style={{ width: w, height: h, transform: `translate(${R - lp.px * Z}px, ${R - lp.py * Z}px) scale(${Z})` }}>{children}</div><i className="lp-x" /></div>, document.body);
 }
 
+/* «Область приближения»: a rectangle drawn with a finger over the face / photo → {x, y, w, h} in px of the box */
+function useZoneDraw(box, onDone) {
+  const g = useRef(null); const [draft, setDraft] = useState(null);
+  const at = ev => { const r = box.current.getBoundingClientRect(); return { x: clampN(ev.clientX - r.left, 0, r.width), y: clampN(ev.clientY - r.top, 0, r.height), W: r.width, H: r.height }; };
+  const rect = (a, b) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y), W: a.W, H: a.H });
+  return { draft, handlers: {
+    onPointerDown: ev => { g.current = at(ev); try { box.current.setPointerCapture(ev.pointerId); } catch (x) { } setDraft(rect(g.current, g.current)); ev.preventDefault(); },
+    onPointerMove: ev => { if (g.current) setDraft(rect(g.current, at(ev))); },
+    onPointerUp: ev => { if (!g.current) return; const r = rect(g.current, at(ev)); g.current = null; setDraft(null); if (r.w > 12 && r.h > 8) onDone(r); },
+    onPointerCancel: () => { g.current = null; setDraft(null); } } };
+}
+/* only in «Test»: the zone the «Порты крупно» button flies to */
+function ZoneBar({ zone, zmode, setZmode, onReset }) {
+  if (!isTestLook()) return null;
+  return <div className="zn-bar"><div className="grow" style={{ minWidth: 0 }}><b>Область приближения</b>
+    <small>{zmode ? 'Обведите пальцем прямоугольник вокруг портов' : zone ? 'задана вручную — кнопка «Порты крупно» приблизит её' : 'не задана — приближается весь блок портов'}</small></div>
+    <Btn size="sm" kind={zmode ? 'primary' : undefined} icon="search" onClick={() => setZmode(!zmode)}>{zmode ? 'Отмена' : zone ? 'Изменить' : 'Задать'}</Btn>
+    {zone && !zmode ? <Btn size="sm" onClick={onReset}>Авто</Btn> : null}</div>;
+}
+const ZoneBox = ({ r, draft }) => r ? <span className={'zn-box' + (draft ? ' draft' : '')} style={{ left: r.left, top: r.top, width: r.width, height: r.height }}><i>{draft ? '' : 'приближение'}</i></span> : null;
+
 const FACE_NAME = { front: 'Перед', back: 'Зад', top: 'Верх', bottom: 'Низ', left: 'Слева', right: 'Справа' };
 function MarkEditor({ item, model, ent, onClose }) {
   const { data } = useApp(); const toast = useToast(); const save = useCardsSave();
   const cards = data.cards || [], ports = item.device ? ((item.device.state || {}).ports || []) : [];
   const [face, setFace] = useState(() => { const v = (ent && ent.view) || model.view || { ry: -20 }; return Math.abs(v.ry) > 90 ? 'back' : 'front'; });
   const [marks, setMarks] = useState(() => (ent && ent.mports) || []);
+  const [zone, setZone] = useState(() => (ent && ent.zoom) || null); const [zmode, setZmode] = useState(false);
   const [cur, setCur] = useState(null); const [size, setSize] = useState(15); const [busy, setBusy] = useState(false); const [cw, setCw] = useState(600);
   const box = useRef(null), wrap = useRef(null), drag = useRef(null);
   useLayoutEffect(() => { const f = () => wrap.current && setCw(wrap.current.clientWidth - 24); f(); const ro = new ResizeObserver(f); ro.observe(wrap.current); return () => ro.disconnect(); }, []);
@@ -321,7 +361,8 @@ function MarkEditor({ item, model, ent, onClose }) {
     onDrag: (i, p) => setMarks(a => a.map((x, j) => (j === i ? { ...x, x: r1(p.px / k), y: r1(p.py / k) } : x))),
     onNew: p => { setMarks(a => [...a, { face, n: nextN(), x: r1(p.px / k), y: r1(p.py / k), w: size, h: r1(size * 13 / 15) }]); setCur(marks.length); } });
   const resize = v => { setSize(v); setMarks(m => m.map(x => x.face === face ? { ...x, w: v, h: Math.round(v * 13 / 15 * 10) / 10 } : x)); };
-  const doSave = async () => { setBusy(true); const rec = { ...(ent || { of: item.id, name: item.name, kind: item.kind }), portsMode: 'manual', mports: marks };
+  const zd = useZoneDraw(box, r => { setZone({ face, x: r1(r.x / k), y: r1(r.y / k), w: r1(r.w / k), h: r1(r.h / k) }); setZmode(false); });
+  const doSave = async () => { setBusy(true); const rec = { ...(ent || { of: item.id, name: item.name, kind: item.kind }), portsMode: 'manual', mports: marks }; if (zone) rec.zoom = zone; else delete rec.zoom;
     const ok = await save(ent ? cards.map(c => c === ent ? rec : c) : [...cards, rec]); setBusy(false); if (ok) { toast('Порты на модели сохранены'); onClose(); } };
   const box2 = (x, i, cls) => <span key={i} className={'pe-spot ' + cls} style={{ left: ((x.x - x.w / 2) / fw * 100) + '%', top: ((x.y - x.h / 2) / fh * 100) + '%', width: (x.w / fw * 100) + '%', height: (x.h / fh * 100) + '%' }}>{x.n ? <span>{x.n}</span> : null}</span>;
   const content = <>{((model.faces[face] || {}).items || []).map((it, i) => faceItem(it, fw, fh, i, ctx))}
@@ -333,7 +374,9 @@ function MarkEditor({ item, model, ent, onClose }) {
       В карточке метки станут невидимыми кнопками поверх модели.</div>
     <Seg value={face} onChange={f => { setFace(f); setCur(null); }} options={Object.keys(FACE_DEF).map(f => { const n = marks.filter(x => x.face === f).length; return { value: f, label: FACE_NAME[f] + (n ? ' · ' + n : '') }; })} />
     <div className="m3-flat-stage" ref={wrap}>
-      <div ref={box} className="m3-face-flat m3-stage" style={{ width: px(fw), height: px(fh), background: fill }} {...pl.handlers}>{content}</div>
+      <div ref={box} className={'m3-face-flat m3-stage' + (zmode ? ' zoning' : '')} style={{ width: px(fw), height: px(fh), background: fill }} {...(zmode ? zd.handlers : pl.handlers)}>{content}
+        {zone && zone.face === face ? <ZoneBox r={{ left: px(zone.x), top: px(zone.y), width: px(zone.w), height: px(zone.h) }} /> : null}
+        {zd.draft ? <ZoneBox draft r={{ left: zd.draft.x, top: zd.draft.y, width: zd.draft.w, height: zd.draft.h }} /> : null}</div>
       <Loupe lp={pl.lp} w={px(fw)} h={px(fh)}><div className="m3-stage" style={{ position: 'relative', width: px(fw), height: px(fh), background: fill }}>{content}</div></Loupe>
     </div>
     <div className="pe-bar">
@@ -346,6 +389,7 @@ function MarkEditor({ item, model, ent, onClose }) {
         <Btn size="sm" kind="danger" onClick={() => { setMarks(a => a.filter((_, j) => j !== cur)); setCur(null); }}>Убрать</Btn></div>
         : <div className="dim3" style={{ fontSize: 12.5 }}>Отмечено портов: {marks.length}{ports.length ? ' из ' + ports.length : ''}</div>}
       {marks.length ? <div><Btn size="sm" onClick={() => { setMarks([]); setCur(null); }}>Убрать все метки</Btn></div> : null}
+      <ZoneBar zone={zone} zmode={zmode} setZmode={setZmode} onReset={() => setZone(null)} />
     </div>
   </Modal>;
 }
@@ -423,8 +467,14 @@ function AppearanceModal({ item, onClose }) {
   </Modal>;
 }
 
-function PhotoPorts({ url, spots, sel, onPick }) {
-  return <div className="ph-stage"><div className="ph-wrap">
+function PhotoPorts({ url, spots, sel, onPick, zoom }) {
+  const [zoomed, setZoomed] = useState(() => new URLSearchParams(location.search).get('zoomports') === '1');
+  const zz = !isTestLook() ? null : zoom || (spots.length ? (() => { const x0 = Math.min(...spots.map(s => s.x - s.w / 2)), y0 = Math.min(...spots.map(s => s.y - s.h / 2)), x1 = Math.max(...spots.map(s => s.x + s.w / 2)), y1 = Math.max(...spots.map(s => s.y + s.h / 2)), m = .03;
+    return { x: Math.max(0, x0 - m), y: Math.max(0, y0 - m), w: Math.min(1, x1 - x0 + 2 * m), h: Math.min(1, y1 - y0 + 2 * m) }; })() : null);
+  const Z = zz ? clampN(Math.min(1 / zz.w, 1 / zz.h), 1, 6) : 1;
+  return <div className={'ph-stage' + (zoomed ? ' zoomed' : '')}>
+    {zz ? <div className="m3-tools"><button type="button" className={'m3-tool zoom' + (zoomed ? ' pri' : '')} onClick={() => setZoomed(!zoomed)}><Icon name={zoomed ? 'x' : 'search'} size={15} />{zoomed ? 'Отдалить' : 'Порты крупно'}</button></div> : null}
+    <div className="ph-wrap" style={{ transform: zoomed && zz ? `scale(${Z}) translate(${(.5 - zz.x - zz.w / 2) * 100}%, ${(.5 - zz.y - zz.h / 2) * 100}%)` : 'none' }}>
     <img src={url} alt="" draggable="false" />
     {spots.map(s => <button key={s.n + ':' + s.x} type="button" className={'ph-spot' + (sel === s.n ? ' sel' : '')} aria-label={'Порт ' + s.n} onClick={() => onPick(s.n)}
       style={{ left: (s.x - s.w / 2) * 100 + '%', top: (s.y - s.h / 2) * 100 + '%', width: s.w * 100 + '%', height: s.h * 100 + '%' }} />)}
@@ -472,8 +522,8 @@ function CardPage({ e }) {
       <div className="vt-m">{[e.model || s.model, s.ip].filter(Boolean).join(' · ')}</div>
       {e.src === 'device' ? <div className={'vt-state ' + (st.status || '')}><i />{STATUS_TEXT[st.status] || 'Ожидание'}</div> : null}
     </div>
-    {purl ? <PhotoPorts url={purl} spots={spots} sel={sel} onPick={pick} />
-      : mdl ? <Model3D model={mdl} ports={ports} sel={sel} onPick={pick} view={ent.view} onSaveView={admin ? saveView : null} manual={own && ent.portsMode === 'manual'} marks={ent.mports} />
+    {purl ? <PhotoPorts url={purl} spots={spots} sel={sel} onPick={pick} zoom={ent.pzoom} />
+      : mdl ? <Model3D model={mdl} ports={ports} sel={sel} onPick={pick} view={ent.view} onSaveView={admin ? saveView : null} manual={own && ent.portsMode === 'manual'} marks={ent.mports} zoom={ent.zoom} />
       : !isUps && !hasMap ? <div className="vt-ico"><Icon name={e.kind} size={46} stroke={1.5} /></div> : null}
     {hasPorts ? <div className="vt-facts"><div><b>{up}/{ports.length}</b><span>Линк</span></div><div><b>{poe ? Math.round(poe) + ' Вт' : '—'}</b><span>PoE</span></div>
       <div><b>{s.uptime != null ? fmt.uptime(s.uptime) : '—'}</b><span>Работает</span></div></div> : null}
@@ -504,6 +554,7 @@ function PhotoEditor({ item, onClose, pane }) {
   const url = photoUrl(item.id, entry);
   const ports = item.device ? ((item.device.state || {}).ports || []) : [];
   const [spots, setSpots] = useState(() => (entry && entry.spots) || []);
+  const [zone, setZone] = useState(() => (entry && entry.pzoom) || null); const [zmode, setZmode] = useState(false);
   const [cur, setCur] = useState(null); const [busy, setBusy] = useState(false); const [aspect, setAspect] = useState(1);
   const [size, setSize] = useState(() => (entry && entry.spots && entry.spots[0] ? Math.round(entry.spots[0].w * 1000) / 10 : 4));
   const fileRef = useRef(null), wrap = useRef(null), drag = useRef(null);
@@ -534,7 +585,8 @@ function PhotoEditor({ item, onClose, pane }) {
     onDrag: (i, p) => setSpots(a => a.map((x, j) => (j === i ? { ...x, x: p.px / p.w, y: p.py / p.h } : x))),
     onNew: p => { setSpots(a => [...a, { n: nextN(), x: p.px / p.w, y: p.py / p.h, w: size / 100, h: size / 100 * aspect }]); setCur(spots.length); } });
   const resize = v => { setSize(v); setSpots(s => s.map(x => ({ ...x, w: v / 100, h: v / 100 * aspect }))); };
-  const doSave = async () => { if (!entry) return; setBusy(true); const ok = await save(cards.map(c => c.id === entry.id ? { ...c, spots } : c)); setBusy(false); if (ok) { toast('Порты на фото сохранены'); onClose(); } };
+  const zd = useZoneDraw(wrap, r => { const q = v => Math.round(v * 1e4) / 1e4; setZone({ x: q(r.x / r.W), y: q(r.y / r.H), w: q(r.w / r.W), h: q(r.h / r.H) }); setZmode(false); });
+  const doSave = async () => { if (!entry) return; setBusy(true); const ok = await save(cards.map(c => c.id === entry.id ? (({ pzoom, ...rest }) => zone ? { ...rest, spots, pzoom: zone } : { ...rest, spots })(c) : c)); setBusy(false); if (ok) { toast('Порты на фото сохранены'); onClose(); } };
   const pbox = (x, i, cls) => <span key={i} className={'pe-spot ' + cls} style={{ left: (x.x - x.w / 2) * 100 + '%', top: (x.y - x.h / 2) * 100 + '%', width: x.w * 100 + '%', height: x.h * 100 + '%' }}>{x.n ? <span>{x.n}</span> : null}</span>;
   const pspots = <>{spots.map((x, i) => pbox(x, i, cur === i ? 'on' : ''))}{pl.ghost && bw ? pbox({ x: pl.ghost.px / bw, y: pl.ghost.py / bh, w: size / 100, h: size / 100 * aspect }, 'g', 'ghost') : null}</>;
   const s = cur != null ? spots[cur] : null;
@@ -546,7 +598,9 @@ function PhotoEditor({ item, onClose, pane }) {
       <small>PNG (лучше вырезанное, на прозрачном фоне) или JPEG. Без фото карточка показывает 3D-модель.</small></button>
       : <>
         <div className="dim" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>Коснитесь фото там, где порт, и ведите палец: над ним появится лупа, метка встанет там, где отпустите. Готовую метку можно взять пальцем рядом с ней и перетащить; касание выбирает её номер. В карточке метки будут невидимыми кнопками.</div>
-        <div className="pe-stage"><div className="pe-wrap" ref={wrap} {...pl.handlers}>
+        <div className="pe-stage"><div className={'pe-wrap' + (zmode ? ' zoning' : '')} ref={wrap} {...(zmode ? zd.handlers : pl.handlers)}>
+          {zone ? <ZoneBox r={{ left: zone.x * 100 + '%', top: zone.y * 100 + '%', width: zone.w * 100 + '%', height: zone.h * 100 + '%' }} /> : null}
+          {zd.draft ? <ZoneBox draft r={{ left: zd.draft.x, top: zd.draft.y, width: zd.draft.w, height: zd.draft.h }} /> : null}
           <img src={url} alt="" draggable="false" onLoad={ev => setAspect(ev.target.naturalWidth / ev.target.naturalHeight)} />{pspots}
         </div></div>
         <Loupe lp={pl.lp} w={bw} h={bh}><div style={{ position: 'relative', width: bw, height: bh }}><img src={url} alt="" draggable="false" style={{ display: 'block', width: '100%', height: '100%' }} />{pspots}</div></Loupe>
@@ -562,6 +616,7 @@ function PhotoEditor({ item, onClose, pane }) {
           <div className="row wrap" style={{ gap: 8 }}><Btn size="sm" icon="camera" busy={busy} onClick={() => fileRef.current.click()}>Заменить фото</Btn>
             {spots.length ? <Btn size="sm" onClick={() => { setSpots([]); setCur(null); }}>Убрать все метки</Btn> : null}
             <Btn size="sm" kind="danger" onClick={removePhoto}>Убрать фото</Btn></div>
+          <ZoneBar zone={zone} zmode={zmode} setZmode={setZmode} onReset={() => setZone(null)} />
         </div>
       </>}
   </>;

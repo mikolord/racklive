@@ -10,7 +10,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.15.0'
+VERSION = '2.16.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -54,6 +54,8 @@ def port_errors(p):
         return None
     return max(i or 0, c or 0) + (o or 0)
 
+
+APP_MANIFESTS = {'/manifest.json': 'rack', '/frank-manifest.json': 'frank', '/speed-manifest.json': 'speed', '/terminal-manifest.json': 'terminal', '/cards-manifest.json': 'cards'}
 
 class App:
     def __init__(self):
@@ -1269,12 +1271,16 @@ class Handler(BaseHTTPRequestHandler):
         """/themes/all.css · /themes/<id>/theme.css · /themes/<id>/data.json · /themes/<id>/<file> · /manifest.json?skin=<id>"""
         T = APP.themes
         hdr = {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"}
-        if path in ('/manifest.json', '/frank-manifest.json', '/speed-manifest.json'):      # an installable app's manifest with this look's icons (each of the three apps has its own)
+        if path in APP_MANIFESTS:      # an installable app's manifest with this look's icons (each app has its own)
             tid = self.query().get('skin') or ''
             with open(os.path.join(WEB, path.lstrip('/')), encoding='utf-8') as f:
                 man = json.load(f)
+            if tid == 'test':          # the built-in «Test» look: black aluminium icons
+                a = APP_MANIFESTS[path]
+                man['icons'] = [{'src': f'/look-test/{a}-{s}.png?v=3', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
+                return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
             d = T.data(tid) or {}
-            pw = d.get({'/manifest.json': 'pwa', '/frank-manifest.json': 'pwaFrank', '/speed-manifest.json': 'pwaSpeed'}[path]) or {}
+            pw = d.get({'/manifest.json': 'pwa', '/frank-manifest.json': 'pwaFrank', '/speed-manifest.json': 'pwaSpeed'}.get(path, '')) or {}
             if pw.get('icon192') and pw.get('icon512'):
                 man['icons'] = [{'src': pw['icon192'], 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'}, {'src': pw['icon512'], 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'}]
             return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
@@ -1373,7 +1379,7 @@ class Handler(BaseHTTPRequestHandler):
                 q = self.query()
                 key = m.group(1) + (f":p{int(q['port'])}" if q.get('port', '').isdigit() else '')
                 return self.send(APP.store.history.get(key, []))
-            if path.startswith('/themes/') or (path in ('/manifest.json', '/frank-manifest.json', '/speed-manifest.json') and self.query().get('skin')):      # custom looks: files are public (the sign-in screen needs them), nothing secret inside
+            if path.startswith('/themes/') or (path in APP_MANIFESTS and self.query().get('skin')):      # custom looks: files are public (the sign-in screen needs them), nothing secret inside
                 return self.theme_file(path)
             if path == '/api/themes':                       # the list with the verdict «fits / does not fit» (admin only)
                 if not self.need_admin():
@@ -2083,6 +2089,22 @@ class Handler(BaseHTTPRequestHandler):
                         pic['mports'] = marks
                     if c.get('portsMode') == 'manual':                  # the model's own port numbers are ignored; the marks are the ports
                         pic['portsMode'] = 'manual'
+                    zm = c.get('zoom')                               # «Test»: where the smart zoom flies to — a rectangle on a face of the model, mm
+                    try:
+                        if isinstance(zm, dict) and zm.get('face') in models_mod.FACES:
+                            z = {k: float(zm[k]) for k in ('x', 'y', 'w', 'h')}
+                            if all(0 <= z[k] <= 2500 for k in ('x', 'y')) and all(1 <= z[k] <= 2500 for k in ('w', 'h')):
+                                pic['zoom'] = {'face': zm['face'], **{k: round(v, 1) for k, v in z.items()}}
+                    except (TypeError, ValueError, KeyError):
+                        pass
+                    pz = c.get('pzoom')                              # the same on the photo, in parts of the picture
+                    try:
+                        if isinstance(pz, dict):
+                            z = {k: float(pz[k]) for k in ('x', 'y', 'w', 'h')}
+                            if all(0 <= z[k] <= 1 for k in ('x', 'y')) and all(.02 <= z[k] <= 1 for k in ('w', 'h')):
+                                pic['pzoom'] = {k: round(v, 4) for k, v in z.items()}
+                    except (TypeError, ValueError, KeyError):
+                        pass
                     vw = c.get('view')
                     if isinstance(vw, dict) and all(isinstance(vw.get(k), (int, float)) and not isinstance(vw.get(k), bool) for k in ('rx', 'ry')):
                         pic['view'] = {'rx': round(max(-90, min(90, vw['rx'])), 1), 'ry': round(max(-180, min(180, vw['ry'])), 1)}
