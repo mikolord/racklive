@@ -355,7 +355,7 @@ def main():
         P({'plugin': 'hydraroute', 'op': 'remove'})
         ow = next(d for d in st['devices'] if d['driver'] == 'demo_openwrt')
         OP = lambda body: api(f"/api/devices/{ow['id']}/plugins", body, 'POST')
-        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem', 'meshnode'])
+        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem', 'portal', 'meshnode'])
         mj = OP({'plugin': 'meshnode', 'op': 'install'})
         for _ in range(40):
             if not mj.get('job'):
@@ -631,7 +631,7 @@ def main():
                  'Безопасность': '?security=1#rack', 'Интернет': '?inet=1#rack',
                  'Роутер · конфигурация': f'?device={dev["demo_router"]}&tab=config', 'Устройства · новые': '#devices',
                  'Помощник — не настроен': '?ai=1#rack', 'Помощник — настроен': '?ai=1#rack',
-                 'Устройства · роутеры в сети': '?routers=1#devices', 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings',
+                 'Настройки · Frank': '?section=frank#settings', 'Настройки · Приложения': '?section=apps#settings', 'Настройки · Уведомления': '?section=notify#settings',
                  'Доступность': '?uptime=1#rack', 'Карта — ONT': '#map', 'Карта — дерево': '?mapstyle=tree#map', 'Карта — кольца': '?mapstyle=radial#map', 'Карта — по сетям': '?mapstyle=groups#map', 'Карта — меню вида': '?mapstyle=tree&mapnode=камера · вход#map', 'Карта — камера в дереве': '?mapnode=камера · вход#map',
                  'Новый юнит — что ставим': '?mode=edit&editunit=new#rack', 'Переезд места': '?mode=edit&move=1#rack',
                  'Карта — правка (магнит)': '?mode=edit#map',
@@ -688,8 +688,6 @@ def main():
                 check('окно теста скорости', 'gauge' in out)
             if name == 'Настройки':
                 check('настройки разбиты на разделы', out.count('set-item') >= 6 and 'set-head' in out)
-            if name == 'Устройства · роутеры в сети':
-                check('карточка «Роутеры в сети»', 'router-row' in out and 'Гостевой домик' in out)
             if name == 'Новый юнит — что ставим':
                 check('выбор устройства вместо «привязки»', out.count('up-opt') >= 8 and 'Связанное устройство' not in out)
             if name == 'Proxmox · виртуалки':
@@ -714,7 +712,7 @@ def main():
                 check('вкладка «Системные»: журнал и кнопка «Скопировать всё»', 'Системные события' in out and 'Скопировать всё' in out and 'загружена (navigate)' in out)
             if name == 'Устройства — сканирование сети':
                 check('окно «Сканировать сеть»: сети, кнопка, результаты', 'Сканировать сеть' in out and 'Сканировать' in out and 'стучится' in out)
-                check('сканирование: то, что уже в дереве сети, не предлагается как новое, а показано отдельно', 'ничего добавлять не нужно' in out and 'в дереве сети' in out and 'Камеры: вход, пароль, кадр' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
+                check('сканирование: что можно добавить — сверху, остальное свёрнуто', 'Можно добавить в Rack Live' in out and 'остальные устройства в сети' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
             if name == 'Настройки — оформление':
                 check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Контроллер' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
                 check('оформление: «Test» — основное, со своим превью', 'class="tp"' in out and 'tp-rack' in out and 'tp-scale' in out and 'основное' in out)
@@ -912,6 +910,43 @@ def main():
                 bad = next(c for c in api('/api/state')['cards'] if c.get('of') == sw_id)
                 check('карточки: область приближения сохраняется, неверная отбрасывается', ent.get('zoom', {}).get('w') == 200 and ent.get('pzoom', {}).get('w') == .5 and 'zoom' not in bad and 'pzoom' not in bad)
                 api('/api/cards', {'cards': cards0}, 'PUT')
+                # «Гостевой Wi-Fi с порталом»: the card, the template library (a good and a bad .zip), the preview, a demo setup
+                ow = next(d for d in api('/api/state')['devices'] if d['driver'] == 'demo_openwrt')
+                pc = next(p for p in api(f"/api/devices/{ow['id']}/plugins", {'op': 'status'}, 'POST')['plugins'] if p['id'] == 'portal')
+                check('портал: карточка знает порты, радио, порт управления и шаблоны', pc['hw']['lan'] == ['lan1', 'lan2', 'lan3', 'lan4'] and pc['hw']['mgmt'] == 'lan2'
+                      and len(pc['hw']['radios']) == 2 and pc['templates'][0]['id'] == 'default')
+                import io as _io, zipfile as _zf
+                def _zip(files):
+                    b = _io.BytesIO()
+                    with _zf.ZipFile(b, 'w') as z:
+                        for n, t in files.items():
+                            z.writestr(n, t)
+                    return b.getvalue()
+                def _up(data, name='Кофейня'):
+                    rq = urllib.request.Request(base + '/api/portal/templates?name=' + urllib.parse.quote(name), data=data, method='POST', headers={'Content-Type': 'application/zip'})
+                    return json.loads(urllib.request.urlopen(rq, timeout=20).read())
+                good = _up(_zip({'cafe/index.html': '<html><link rel="stylesheet" href="{{assets}}/s.css"><h1>{{name}}</h1>{{form}}</html>', 'cafe/s.css': 'h1{color:red}'}))
+                bad1 = _up(_zip({'index.html': '<html>нет метки</html>'}))
+                bad2 = _up(_zip({'index.html': '{{form}}', 'run.sh': 'rm -rf /'}))
+                check('портал: шаблон загружается, без {{form}} и с чужими файлами — отказ', good.get('ok') and not bad1.get('ok') and 'form' in bad1.get('error', '') and not bad2.get('ok'))
+                tid = good['template']['id']
+                pv = urllib.request.urlopen(base + f'/api/portal/templates/{tid}/preview', timeout=10)
+                html = pv.read().decode()
+                check('портал: предпросмотр — метки заполнены, страница в песочнице', 'rl-btn' in html and '{{' not in html and 'sandbox' in (pv.headers.get('Content-Security-Policy') or '')
+                      and urllib.request.urlopen(base + f'/api/portal/templates/{tid}/f/s.css', timeout=10).read() == b'h1{color:red}')
+                try:                                    # the port Rack Live manages the router through cannot become a guest port
+                    api(f"/api/devices/{ow['id']}/plugins", {'plugin': 'portal', 'op': 'install', 'profile': {'mainSsid': 'Office', 'mainKey': 'office-2026', 'guestSsid': 'Guest', 'ports': {'lan2': 'guest'}}}, 'POST')
+                    guard = False
+                except urllib.error.HTTPError as e:
+                    guard = 'управл' in e.read().decode('utf-8', 'replace')
+                r = api(f"/api/devices/{ow['id']}/plugins", {'plugin': 'portal', 'op': 'install', 'profile': {'mainSsid': 'Office', 'mainKey': 'office-2026', 'guestSsid': 'Guest', 'template': tid, 'ports': {'lan4': 'trunk'}}}, 'POST')
+                pc2 = next(p for p in api(f"/api/devices/{ow['id']}/plugins", {'op': 'status'}, 'POST')['plugins'] if p['id'] == 'portal')
+                devs = api('/api/state')['devices']
+                check('портал: настройка (демо) — профиль сохранён, пароли не уходят в браузер', guard and r.get('ok') and pc2['saved']['template'] == tid and pc2['saved']['mainKeySet']
+                      and 'mainKey' not in pc2['saved'] and 'portal' not in next(d for d in devs if d['id'] == ow['id']))
+                co = dom(f"/?skin=test&device={ow['id']}&tab=plugins&plugin=portal&psec=ports#rack", 1300, 1000)
+                check('портал: окно плагина — порты по одному', 'pt-port' in co and co.count('pt-port r-') >= 4 and 'data-js-error="' not in co)
+                api(f"/api/portal/templates/{tid}", None, 'DELETE')
                 api('/api/dashboard', {'widgets': prev_w}, 'PUT')
                 ok_ic = True
                 for mf in ('manifest.json', 'frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'cards-manifest.json'):

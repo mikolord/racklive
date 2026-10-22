@@ -259,6 +259,9 @@ class DemoOpenWrt(DemoBase):
                                  {'label': f"Не установлен {inst['conflict'].capitalize()} — они конфликтуют", 'ok': inst['conflict'] not in self._pkgs}])
                 if p['id'] == 'forkop':
                     p['options'] = [{'id': 'extended', 'label': 'sing-box extended — поддержка XHTTP', 'on': True, 'hint': 'Без него XHTTP-ссылки не заработают.'}]
+            elif p['id'] == 'portal':
+                from .openwrt import OpenWrt
+                p.update(OpenWrt._portal_card(self._portal_hw()))
             elif p['id'] == 'meshnode':
                 on = 'meshnode' in self._pkgs
                 p.update(installed=on, member=on, ssids=['MIKO', 'IoT'] if on else [],
@@ -272,8 +275,37 @@ class DemoOpenWrt(DemoBase):
             out.append(p)
         return {'fw': '25.12.1', 'pm': 'apk', 'plugins': out}
 
+    def _portal_hw(self):
+        from .. import portal
+        prof = self._pkgs.get('portal')
+        return {'model': 'Cudy WR3000S v1', 'rel': '25.12.5', 'pm': 'apk', 'free': 42000, 'lan': ['lan1', 'lan2', 'lan3', 'lan4'], 'wan': 'wan',
+                'links': {'wan': {'up': True, 'speed': 1000}, 'lan1': {'up': False, 'speed': None}, 'lan2': {'up': True, 'speed': 1000},
+                          'lan3': {'up': True, 'speed': 1000}, 'lan4': {'up': False, 'speed': None}},
+                'radios': [{'name': 'radio0', 'band': '2g'}, {'name': 'radio1', 'band': '5g'}], 'nds': '10.3.1' if prof else None,
+                'ndsEnabled': bool(prof and prof['portal']), 'ndsRunning': bool(prof and prof['portal']), 'profile': prof, 'clients': 3 if prof else None,
+                'wanip': '192.168.1.70/24', 'lanip': prof['lan'] if prof else '10.0.40.1/24', 'via': 'br-lan', 'mgmt': 'lan2', 'rollback': False, 'nopass': not prof, 'wanmac': ''}
+
     def plugin(self, cfg, pid, op, params):
         time.sleep(.8)
+        if pid == 'portal':
+            from .. import portal
+            if op == 'install':
+                prof = portal.validate(portal.merge_secrets(params.get('profile'), params.get('_old')), self._portal_hw())
+                self._pkgs['portal'] = prof
+                return {'ok': True, 'message': f"Роутер настроен (демо): основная Wi-Fi «{prof['mainSsid']}», гостевая «{prof['guestSsid']}».", 'deviceUpdate': {'portal': prof}}
+            if op == 'prepare_wan':
+                return {'ok': True, 'wanmac': 'aa:00:00:00:00:99', 'message': 'Готово (демо): управление со стороны WAN открыто.'}
+            if op == 'toggle':
+                prof = dict(self._pkgs.get('portal') or params.get('_old') or {}, portal=bool(params.get('on')))
+                self._pkgs['portal'] = prof
+                return {'ok': True, 'message': 'Портал включён (демо)' if prof['portal'] else 'Портал выключен (демо)', 'deviceUpdate': {'portal': prof}}
+            if op == 'template':
+                prof = dict(self._pkgs.get('portal') or params.get('_old') or {}, template=str(params.get('template') or 'default'))
+                self._pkgs['portal'] = prof
+                return {'ok': True, 'message': 'Шаблон заменён (демо)', 'deviceUpdate': {'portal': prof}}
+            if op == 'remove':
+                self._pkgs.pop('portal', None)
+                return {'ok': True, 'message': 'Портал убран (демо)', 'deviceUpdate': {'portal': None}}
         if pid == 'modem':
             (self._installed.add if op == 'install' else self._installed.discard)(params.get('profile'))
             return {'ok': True, 'log': [], 'message': f"{'Установлено' if op == 'install' else 'Удалено'} (демо)"}

@@ -146,8 +146,15 @@ class SSHHost(Driver):
                             pass
                     if not pkey:
                         raise DriverError('не удалось прочитать приватный ключ')
-                c.connect(host, port=port, username=user, password=pw or None, pkey=pkey, timeout=12, banner_timeout=12,
-                          auth_timeout=12, look_for_keys=False, allow_agent=False)
+                if not pkey and not pw:                         # a fresh OpenWrt: root has no password yet — the server lets us in with «none»
+                    t = paramiko.Transport((host, port))
+                    t.banner_timeout = 12
+                    t.start_client(timeout=12)
+                    t.auth_none(user)
+                    c._transport = t
+                else:
+                    c.connect(host, port=port, username=user, password=pw or None, pkey=pkey, timeout=12, banner_timeout=12,
+                              auth_timeout=12, look_for_keys=False, allow_agent=False)
                 i, o, e = c.exec_command(remote, timeout=timeout)
                 i.write(script)
                 i.channel.shutdown_write()

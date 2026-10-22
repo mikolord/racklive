@@ -205,7 +205,7 @@ function RoutersCard() {
 /* devices that showed up in the network recently — sorted by what the network's role says to do with them */
 function NewDevicesCard() {
   const { data, refresh } = useApp(); const toast = useToast();
-  const list = (data.newDevices || []).filter(r => findClient(data, r.mac));      // only what is in the network right now
+  const list = (data.newDevices || []).map(r => ({ ...r, live: !!findClient(data, r.mac) }));      // everything new for the week; «сейчас в сети» marks who is here now
   const ask = list.filter(r => r.decision === 'ask');
   const todoNets = (data.networks || []).filter(n => !n.role).length;
   const trust = async (r, on) => { try { await api('/api/newdev/trust', { method: 'POST', body: { mac: r.mac, on } }); refresh(); } catch (e) { toast(e.message, true); } };
@@ -221,7 +221,7 @@ function NewDevicesCard() {
           {role ? <span className="role-badge" style={{ background: role.color }}>{role.label}</span> : r.segment ? <span className="role-badge none">{r.segment}</span> : null}
           {r.random && (!live || macChanges(live.client)) ? <span className="role-badge none" title="Частный (случайный) MAC-адрес — может меняться">частный MAC</span> : null}</div>
         <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{[r.ip, r.mac, r.via && 'через ' + r.via].filter(Boolean).join(' · ')}</div>
-        <div className="dim3" style={{ fontSize: 11.5 }}>появилось {fmt.ago(r.t, data.now)}</div>
+        <div className="dim3" style={{ fontSize: 11.5 }}>появилось {fmt.ago(r.t, data.now)} · {r.live ? <span style={{ color: 'var(--green)' }}>сейчас в сети</span> : 'сейчас не в сети'}</div>
         {live ? <PendingIp c={live.client} /> : null}</div>
       <div className="col" style={{ gap: 6, alignItems: 'stretch' }}>
         {r.decision === 'ask' ? <Btn size="sm" kind="primary" onClick={() => trust(r, true)}>{r.role === 'subscribers' ? 'Я в курсе' : 'Это моё'}</Btn> : null}

@@ -16,10 +16,12 @@ function NetScanModal({ onClose }) {
   const stop = async () => { try { await api('/api/netscan/stop', { method: 'POST', body: {} }); } catch (e) { } };
   if (!info) return <Modal title="Сканировать сеть" wide onClose={onClose} icon={<Icon name="search" size={20} color="var(--accent)" />}><div className="dim">Загрузка…</div></Modal>;
   const mine = new Set(data.devices.map(hostOf));
+  const isCam = it => it.kind === 'camera' || (it.ports || []).some(p => [554, 8000, 8554, 37777, 34567].includes(p));
   const items = (info.items || []).map(it => ({ ...it, have: it.added || mine.has(it.ip) }));
-  const seen = items.filter(it => it.tree && !it.have);        // already in the network tree (a router's client): not offered as «new», but what can be done with it is shown here
-  const addable = items.filter(it => it.driver && !it.have && !it.tree && it.driver !== 'ping');
-  const others = items.filter(it => !it.have && !it.tree && !(it.driver && it.driver !== 'ping'));
+  // what Rack Live can manage and does not have yet comes first — even if a router already lists it as its client (a second router, a NAS…)
+  const addable = items.filter(it => it.driver && !it.have && it.driver !== 'ping' && !isCam(it));
+  const seen = items.filter(it => it.tree && !it.have && !addable.includes(it));        // phones, TVs, cameras the routers already show: folded, with what can be done
+  const others = items.filter(it => !it.have && !it.tree && !addable.includes(it));
   const have = items.filter(it => it.have);
   const pct = info.total ? Math.min(100, Math.round(info.done * 100 / info.total)) : 0;
   const drvKind = id => (data.drivers.find(d => d.id === id) || {}).kind;
@@ -32,7 +34,6 @@ function NetScanModal({ onClose }) {
         fields: { host: it.ip, location: 'local', notes: [it.vendor, it.mac, it.ports.length ? 'порты ' + it.ports.join(', ') : ''].filter(Boolean).join(' · ') } });
     }
   };
-  const isCam = it => it.kind === 'camera' || (it.ports || []).some(p => [554, 8000, 8554, 37777, 34567].includes(p));
   const driverTitle = id => (data.drivers.find(d => d.id === id) || {}).title || id;
   const seenRow = it => <div className="li netscan-row" key={it.ip}>
     <KindIcon kind={it.driver && it.driver !== 'ping' ? (drvKind(it.driver) || it.kind) : it.kind} size={36} round={10} />
@@ -62,7 +63,7 @@ function NetScanModal({ onClose }) {
       {info.running ? <Btn onClick={stop}>Остановить</Btn> : <Btn kind="primary" icon="search" onClick={start}>{info.finished ? 'Сканировать снова' : 'Сканировать'}</Btn>}
       <WhereToSearch subnets={info.subnets} value={where} onChange={setWhere} disabled={info.running} />
     </div>
-    {info.cidr && (info.running || info.finished) ? <div className="dim3" style={{ fontSize: 12 }}>Сканировали: {info.cidr}{info.skipped && info.skipped.length ? '. Адреса роутеров (' + info.skipped.join(', ') + ') не трогаем: роутер принимает это за сканирование и на несколько минут закрывает доступ.' : ''}</div> : null}
+    {info.cidr && (info.running || info.finished) ? <div className="dim3" style={{ fontSize: 12 }}>Сканировали: {info.cidr}{info.skipped && info.skipped.length ? '. Роутеры (' + info.skipped.join(', ') + ') проверяем бережно, без перебора портов: иначе роутер примет это за атаку и на несколько минут закроет доступ.' : ''}</div> : null}
     {info.running ? <div><div className="row between" style={{ fontSize: 13, marginBottom: 6 }}><span>{PHASE_TEXT[info.phase] || 'Работаю'}…</span><span className="dim3">{info.done} из {info.total}</span></div>
       <div className="gauge-bar" style={{ maxWidth: 'none' }}><i style={{ width: pct + '%' }} /></div></div> : null}
     {info.error ? <div style={{ color: 'var(--orange)', fontSize: 13 }}>{info.error}</div> : null}
@@ -71,17 +72,45 @@ function NetScanModal({ onClose }) {
       <div className="card-title" style={{ margin: '4px 0 0' }}><Icon name="plus" size={14} />Можно добавить в Rack Live · {addable.length}</div>
       {addable.length ? <div className="list">{addable.map(it => row(it, true))}</div>
         : <div className="dim3" style={{ fontSize: 13 }}>{info.running ? 'Пока ничего не определено…' : 'Ничего подходящего не нашлось — смотрите «Другие устройства» ниже или добавьте по адресу вручную.'}</div>}
-      {seen.length ? <>
-        <div className="card-title" style={{ margin: '8px 0 0' }}><Icon name="check" size={14} />Уже видны в сети, ничего добавлять не нужно · {seen.length}</div>
-        <div className="dim3" style={{ fontSize: 12.5 }}>Эти устройства уже показаны роутером в дереве сети. Ниже — что с ними ещё можно сделать.</div>
-        <div className="list">{seen.map(seenRow)}</div></> : null}
-      {others.length ? <>
-        <button type="button" className="link-btn" style={{ alignSelf: 'flex-start' }} onClick={() => setMore(!more)}>{more ? 'Скрыть' : 'Показать'} другие устройства · {others.length}</button>
-        {more ? <div className="list">{others.map(it => row(it, false))}</div> : null}
+      {seen.length + others.length ? <>
+        <button type="button" className="link-btn" style={{ alignSelf: 'flex-start' }} onClick={() => setMore(!more)}>{more ? 'Скрыть' : 'Показать'} остальные устройства в сети · {seen.length + others.length}</button>
+        {more ? <><div className="dim3" style={{ fontSize: 12.5 }}>Телефоны, компьютеры, камеры и прочее, чем Rack Live не управляет. Обычно добавлять их не нужно — роутер и так показывает их на карте.</div>
+          <div className="list">{seen.map(seenRow)}{others.map(it => row(it, false))}</div></> : null}
       </> : null}
       {have.length ? <div className="dim3" style={{ fontSize: 12.5 }}>Уже есть в Rack Live: {have.length} {ruPlural(have.length, 'устройство', 'устройства', 'устройств')}.</div> : null}
       {info.finished ? <div className="dim3" style={{ fontSize: 11.5 }}>Просканировано {fmt.ago(info.finished, data.now)} · сеть {info.cidr} · всего найдено {items.length}</div> : null}
     </> : null}
     {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
   </Modal>;
+}
+
+/* «Добавить» → a type is chosen: Rack Live looks for devices of exactly this type in the network by itself (a fresh scan if the last one is older
+   than 10 minutes) and offers them; pressing one fills the address. The fields below can always be filled by hand. */
+const SCAN_DRIVERS = new Set(['keenetic', 'openwrt', 'synology', 'homeassistant', 'proxmox', 'ssh', 'tplink_jetstream', 'windows']);
+function ScanForType({ driver, onPick, picked }) {
+  const { data } = useApp();
+  const [info, setInfo] = useState(null); const [open, setOpen] = useState(true);
+  const on = SCAN_DRIVERS.has(driver);
+  const load = async () => { try { const r = await api('/api/netscan'); setInfo(r); return r; } catch (e) { return null; } };
+  useEffect(() => { if (!on) return;
+    (async () => { const r = await load();
+      if (r && !r.running && (!r.finished || Date.now() / 1000 - r.finished > 600)) { try { await api('/api/netscan/start', { method: 'POST', body: { cidrs: [] } }); load(); } catch (e) { } } })(); }, [driver]);
+  useEffect(() => { if (!info || !info.running) return; const t = setInterval(load, 1200); return () => clearInterval(t); }, [info && info.running]);
+  if (!on || !info) return null;
+  const mine = new Set(data.devices.map(hostOf).filter(Boolean));
+  const found = (info.items || []).filter(it => it.driver === driver && !it.added && !mine.has(it.ip) && !mine.has(String(it.host || '').replace(/^\w+:\/\//, '').replace(/[:/].*$/, '')));
+  const pct = info.total ? Math.min(100, Math.round(info.done * 100 / info.total)) : 0;
+  return <div className="sft">
+    <button type="button" className="sft-h" onClick={() => setOpen(!open)}><Icon name="search" size={15} /><b className="grow">{info.running ? 'Ищу такие устройства в вашей сети…' : found.length ? `Найдено в сети: ${found.length}` : 'В сети такие устройства не нашлись'}</b>
+      {info.running ? <span className="dim3 mono" style={{ fontSize: 11.5 }}>{pct}%</span> : null}<Icon name="chevron" size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} /></button>
+    {open ? <>
+      {info.running ? <div className="gauge-bar" style={{ maxWidth: 'none' }}><i style={{ width: pct + '%' }} /></div> : null}
+      {found.map(it => { const h = it.host || it.ip, on2 = picked && (picked === h || picked === it.ip);
+        return <button key={it.ip} type="button" className={'sft-row' + (on2 ? ' on' : '')} onClick={() => onPick(it)}>
+          <span className="sft-dot" /><span className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b className="ellipsis" style={{ display: 'block' }}>{it.name || it.what || it.ip}</b>
+            <small className="dim3 mono">{[h, it.mac].filter(Boolean).join(' · ')}</small></span>{on2 ? <Icon name="check" size={16} /> : <span className="dim3" style={{ fontSize: 12 }}>выбрать</span>}</button>; })}
+      {!info.running ? <div className="dim3" style={{ fontSize: 12 }}>{found.length ? 'Нажмите на устройство — адрес подставится сам. ' : ''}Или впишите адрес вручную ниже.
+        {' '}<button type="button" className="linkbtn" onClick={async () => { try { await api('/api/netscan/start', { method: 'POST', body: { cidrs: [] } }); load(); } catch (e) { } }}>Искать снова</button></div> : null}
+    </> : null}
+  </div>;
 }

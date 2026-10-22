@@ -3,7 +3,7 @@ import re
 import time
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
-from .. import plugins
+from .. import plugins, portal
 from ..util import DriverError, http_json
 
 
@@ -327,6 +327,9 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                 p['profiles'] = [dict(m, installed=m['key'] in st['pkgs'], suggested=m['id'] == sug) for m in plugins.MODEM_PROFILES]
                 p['installed'] = any(m['installed'] for m in p['profiles'])
                 p['checks'] = [{'label': 'Модем подключён к USB' + (f": {st['usb'][0]}" if st['usb'] else ''), 'ok': bool(st['usb'])}]
+            elif p['id'] == 'portal':
+                hw = portal.parse_status(self._ssh(cfg, portal.STATUS, 40))
+                p.update(self._portal_card(hw, st))
             elif p['id'] == 'meshnode':
                 ms = plugins.parse_meshnode(self._ssh(cfg, plugins.MESHNODE_STATUS, 30))
                 free_mb = (ms['free'] or 0) // 1024
@@ -342,6 +345,134 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                     p['status'] = ('работает, принят в Mesh' if ms['member'] else 'запущен, ждёт приёмки в приложении Keenetic') if ms['run'] else 'установлен, но не запущен'
             out.append(p)
         return {'fw': st['rel'], 'pm': st['pm'], 'plugins': out}
+
+    # ───────── «Гостевой Wi-Fi с порталом» (rackd/portal.py) ─────────
+    @staticmethod
+    def _portal_card(hw, st=None):
+        major = int((re.findall(r'\d+', hw['rel'] or '') or ['0'])[0])
+        free_mb = (hw['free'] or 0) // 1024
+        prof = hw['profile']
+        card = {'installed': bool(prof), 'hw': {k: hw[k] for k in ('model', 'lan', 'wan', 'links', 'radios', 'mgmt', 'via', 'wanip', 'lanip', 'clients', 'nds', 'ndsEnabled', 'ndsRunning', 'rollback', 'nopass')},
+                'routerProfile': portal.public(prof), 'portText': portal.PORT_TEXT, 'defaults': portal.public(portal.DEFAULTS)}
+        card['checks'] = [{'label': f"OpenWrt 23.05 или новее (у вас {hw['rel'] or '?'})", 'ok': major >= 23},
+                          {'label': f"Есть Wi-Fi (радио: {', '.join(r['band'].replace('g', ' ГГц').replace('2 ', '2,4 ') for r in hw['radios']) or 'нет'})", 'ok': bool(hw['radios'])},
+                          {'label': 'OpenNDS ' + (f"установлен ({hw['nds']})" if hw['nds'] else f"поставится сам (нужно ~2 МБ, свободно {free_mb} МБ)"), 'ok': bool(hw['nds']) or free_mb >= 2},
+                          {'label': 'Кабель провайдера в WAN-порту' + (f" ({hw['wanip']})" if hw['wanip'] else ''), 'ok': bool((hw['links'].get(hw['wan']) or {}).get('up')), 'optional': True,
+                           'hint': 'без него гости не получат интернет' if not (hw['links'].get(hw['wan']) or {}).get('up') else ''}]
+        if prof:
+            card['status'] = ('портал работает' if hw['ndsRunning'] else 'портал выключен') + (f" · гостей: {hw['clients']}" if hw['clients'] is not None and hw['ndsRunning'] else '')
+        return card
+
+    def _portal(self, cfg, op, params):
+        import ipaddress
+        prog = params.get('_progress') or (lambda s: None)
+        status = lambda c: portal.parse_status(self._ssh(c, portal.STATUS, 40))
+        fail = lambda out: re.search(r'@@fail (.+)', out)
+        if op == 'status':
+            return dict(self._portal_card(status(cfg)), ok=True)
+        if op == 'install':
+            prog('Проверяю роутер…')
+            hw = status(cfg)
+            prof = portal.validate(portal.merge_secrets(params.get('profile'), params.get('_old') or hw['profile']), hw)      # «не менять» = keep what Rack Live or the router itself has
+            root_pass = str(params.get('rootPass') or '')
+            if hw['nopass'] and not root_pass:
+                raise DriverError('у роутера нет пароля администратора (root) — задайте его в разделе «Дополнительно»: роутер отдаётся клиенту, без пароля в него может зайти любой')
+            if root_pass:
+                root_pass = portal.check_root_pass(root_pass)
+            hello = params['_hello']
+            if not hw['profile'] and '@@foreign' in self._ssh(cfg, portal.FOREIGN_DHCP, 30):
+                raise DriverError('в основной сети роутера уже есть другой DHCP-сервер (другой роутер): похоже, кабель от вашей сети воткнут в LAN-порт. '
+                                  'Если настроить сейчас, роутер начнёт раздавать адреса чужой сети. Переткните этот кабель в порт WAN и попробуйте снова.')
+            prog('Ставлю OpenNDS, копирую шаблон, записываю настройки…')
+            out = self._ssh(cfg, portal.apply_script(prof, hw, params['_files'], hello['url'], hello['token'], root_pass), timeout=600)
+            if fail(out):
+                raise DriverError(fail(out).group(1).strip())
+            if '@@scheduled' not in out:
+                raise DriverError('роутер не подтвердил запуск настройки — ничего не применено, через 4 минуты он сам вернёт прежнее')
+            prog('Роутер перезапускает сеть — жду, пока он снова выйдет на связь (до 4 минут)…')
+            old, lan_ip = self._hostname(cfg), str(ipaddress.ip_interface(prof['lan']).ip)
+            deadline = time.time() + portal.ROLLBACK_SEC - 30
+            time.sleep(15)
+            while time.time() < deadline:
+                h = portal.HELLO.get(hello['token']) or {}
+                try:                                                         # by the WAN MAC in the lists of the main router
+                    found = params['_find'](hw['wanmac']) if params.get('_find') and hw['wanmac'] else None
+                except Exception:
+                    found = None
+                for host in dict.fromkeys(x for x in (h.get('wan'), found, lan_ip, old) if x):
+                    login = dict(cfg, host=host, password=root_pass or cfg.get('password') or '')
+                    try:
+                        if '@@done' not in self._ssh(login, portal.VERIFY, timeout=15):      # reachable, but still installing OpenNDS — wait
+                            prog('Роутер снова на связи, заканчивает установку OpenNDS…')
+                            break
+                        out = self._ssh(login, portal.CONFIRM + portal.VERIFY + portal.STATUS, timeout=20)
+                    except DriverError:
+                        continue
+                    if '@@confirmed' not in out:
+                        continue
+                    v = dict(re.findall(r'@@([gwnd]) (\S*)', out))
+                    after = portal.parse_status(out)
+                    problems = [t for k, t in (('g', 'у гостевой сети нет адреса'), ('n', 'OpenNDS не запустился')) if (k == 'g' and not v.get('g')) or (k == 'n' and prof['portal'] and v.get('n') != '1')]
+                    if '@@err' in out:
+                        problems.insert(0, 'OpenNDS не установился (нет интернета на WAN?) — гостевая Wi-Fi работает без страницы входа; нажмите «Применить изменения», когда интернет появится')
+                    if not v.get('w') or v.get('w') == '0':
+                        problems.append('Wi-Fi не поднялся')
+                    via = 'по WAN' if host in (h.get('wan'), found) and host != old else 'в основной сети' if host == lan_ip and host != old else 'по прежнему адресу'
+                    msg = (f"Роутер настроен: основная Wi-Fi «{prof['mainSsid']}», гостевая «{prof['guestSsid']}» "
+                           f"{'с порталом' if prof['portal'] else 'без портала'}. Rack Live теперь заходит на него {via}: {host}.")
+                    if problems:
+                        msg += ' Но: ' + '; '.join(problems) + '.'
+                    return {'ok': True, 'message': msg, 'problems': problems, 'host': host, 'card': self._portal_card(after),
+                            'deviceUpdate': dict({'host': host, 'portal': prof}, **({'password': root_pass} if root_pass else {}))}
+                time.sleep(5)
+            raise DriverError(f'роутер не вышел на связь. Через пару минут он сам вернёт прежние настройки и снова будет доступен по адресу {old}.')
+        if op == 'prepare_wan':                                  # Rack Live is in the network above this router's WAN (a bench): open management there first
+            hw = status(cfg)
+            new_lan = portal.free_lan(hw['lanip'])
+            out = self._ssh(cfg, portal.prepare_wan_script(new_lan), timeout=40)
+            mac = (re.search(r'@@wanmac (\S+)', out) or [None, ''])[1]
+            if not mac:
+                raise DriverError('не удалось подготовить роутер')
+            return {'ok': True, 'wanmac': mac, 'lan': new_lan, 'deviceUpdate': {'portalWanMac': mac},
+                    'message': f'Готово: управление со стороны WAN открыто (только для частных адресов), а LAN роутера переведён в {new_lan}, чтобы не пересекаться с вашей сетью. '
+                               'Через несколько секунд Rack Live потеряет роутер — так и должно быть. Переткните кабель вашей сети из LAN-порта в WAN, подождите полминуты и нажмите «Найти роутер».'}
+        if op == 'toggle':
+            on = bool(params.get('on'))
+            out = self._ssh(cfg, portal.toggle_script(on), timeout=60)
+            running = '@@nds 1' in out
+            saved = dict(params.get('_old') or status(cfg)['profile'] or {}, portal=on)
+            if on and not running:
+                return {'ok': False, 'error': 'OpenNDS не запустился — посмотрите журнал роутера', 'deviceUpdate': {'portal': saved}}
+            return {'ok': True, 'message': 'Портал включён: гости сначала видят страницу входа' if on else 'Портал выключен: гостевая Wi-Fi работает без страницы входа',
+                    'deviceUpdate': {'portal': saved}}
+        if op == 'template':
+            old = params.get('_old') or status(cfg)['profile'] or {}
+            if not old:
+                raise DriverError('сначала настройте роутер')
+            prof = dict(old, template=str(params.get('template') or 'default'))
+            out = self._ssh(cfg, portal.template_script(params['_files'], prof), timeout=120)
+            if fail(out) or '@@tpl ok' not in out:
+                raise DriverError(fail(out).group(1).strip() if fail(out) else 'шаблон не записался')
+            return {'ok': True, 'message': 'Шаблон страницы входа заменён — гости увидят его при следующем заходе', 'deviceUpdate': {'portal': prof}}
+        if op == 'remove':
+            prog('Возвращаю роутеру исходные настройки…')
+            out = self._ssh(cfg, portal.REMOVE, timeout=60)
+            if fail(out):
+                raise DriverError(fail(out).group(1).strip())
+            old_lan = (re.search(r'@@oldlan (\S+)', out) or [None, ''])[1].split('/')[0]
+            prog('Роутер перезапускает сеть…')
+            time.sleep(25)
+            for host in dict.fromkeys(x for x in (old_lan, self._hostname(cfg)) if x):
+                for _ in range(8):
+                    try:
+                        self._ssh(dict(cfg, host=host), 'echo ok', timeout=10)
+                        return {'ok': True, 'message': f'Портал удалён полностью: OpenNDS, тема и шаблон стёрты, сеть, Wi-Fi, DHCP и межсетевой экран — как до установки. Адрес роутера: {host}.',
+                                'deviceUpdate': {'host': host, 'portal': None}}
+                    except DriverError:
+                        time.sleep(5)
+            return {'ok': True, 'message': f"Портал удалён, настройки роутера — как до установки. Rack Live пока не видит роутер: он вернулся на прежний адрес {old_lan or '—'} в своей сети (LAN). Подключитесь к его LAN-порту или Wi-Fi и поправьте адрес устройства в Rack Live.",
+                    'deviceUpdate': {'host': old_lan or self._hostname(cfg), 'portal': None}}
+        raise DriverError('неизвестное действие')
 
     def plugin(self, cfg, pid, op, params):
         clean = lambda s: re.sub(r'\x1b\[[0-9;]*m', '', s)
@@ -402,6 +533,8 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                 return {'ok': True, 'log': log, 'message': f"Вариант «{prof['title']}» удалён — можно поставить другой"}
             return {'ok': True, 'log': log, 'message': f"Установлено: {prof['title']}. Дальше: {prof['after']} Если модем не заработал — "
                                                          'удалите этот вариант и попробуйте другой (иногда нужно переподключить модем).'}
+        if pid == 'portal':
+            return self._portal(cfg, op, params)
         if pid == 'meshnode':
             if op == 'suggest_ip':
                 out = self._ssh(cfg, plugins.MESHNODE_FREEIP, 40)

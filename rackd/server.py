@@ -4,13 +4,14 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import models as models_mod
+from . import portal as portal_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.17.0'
+VERSION = '2.18.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -93,6 +94,7 @@ class App:
         self.host = hostops.Host(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
         self.models = models_mod.Library(DATA)            # «Сканер»: the user's own 3D models of devices
+        self.portal_tpl = portal_mod.Templates(DATA)      # «Гостевой Wi-Fi с порталом»: designs of the guest page
         self.community = community.Community(DATA)
         self.updater = updater.Updater(self, VERSION, DEMO)
         self.sites = sites_mod.Sites(self)
@@ -308,8 +310,7 @@ class App:
             self.inet.start()
         if self.extscan.due():
             self.extscan.start()
-        if self.routers.due():
-            self.routers.run()
+        # «Найдено в сети» (routers.py) no longer runs on its own: it knocked on every client's ports every 6 h — «Сканировать сеть» does this on request
         if time.time() - self.started > advisor.FIRST_DELAY and self.advisor.due():     # Frank's review every few days
             self.advisor.start()
         if not self.backup_busy:
@@ -395,6 +396,11 @@ class App:
         def run():
             try:
                 res = drv.plugin(d, pid, op, dict(body, _progress=lambda s: job.update(stage=s)))
+                for k, v in (res.pop('deviceUpdate', None) or {}).items():       # the plugin changed the device: a new address, a saved profile
+                    if v is None:
+                        d.pop(k, None)
+                    else:
+                        d[k] = v
                 if res.get('info'):                                     # panel credentials: kept on the device (a secret field)
                     d.setdefault('panelInfo', {})[pid] = res['info']
                 if res.get('removed'):
@@ -412,6 +418,14 @@ class App:
         threading.Thread(target=run, daemon=True).start()
         self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: {'установка' if op == 'install' else 'удаление'} начата")
         return job
+
+    def ip_of_mac(self, mac):
+        mac = str(mac or '').lower()
+        for s in list(self.states.values()):
+            for c in (s or {}).get('clients') or []:
+                if str(c.get('mac') or '').lower() == mac and c.get('ip'):
+                    return c['ip']
+        return None
 
     def collector_prepare(self, d, body, op):
         """plugin «Сборщик площадки»: before the SSH job starts — the site (reused on a repeat install), the address the new installation will call,
@@ -1372,6 +1386,23 @@ class Handler(BaseHTTPRequestHandler):
                 with open(f, 'rb') as fh:
                     b = fh.read()
                 return self.send_raw(b, {'png': 'image/png', 'jpg': 'image/jpeg', 'webp': 'image/webp'}[f.rsplit('.', 1)[1]], {'Cache-Control': 'private, max-age=604800'})
+            if path == '/api/portal/hello':                 # «Гостевой Wi-Fi»: the router is back after its network restart and says where it is now
+                q = self.query()
+                return self.send({'ok': portal_mod.hello(q.get('k', ''), q.get('wan', ''), q.get('lan', ''))})
+            if path == '/api/portal/templates':
+                if not self.need_admin():
+                    return
+                return self.send({'ok': True, 'templates': APP.portal_tpl.list()})
+            m = re.match(r'^/api/portal/templates/(default|t[0-9a-f]{8})/(preview|f/([A-Za-z0-9._/-]{1,120}))$', path)
+            if m:
+                csp = {'Content-Security-Policy': "sandbox allow-forms; default-src 'self' data:; style-src 'self' 'unsafe-inline' data:; img-src 'self' data:; font-src 'self' data:", 'Cache-Control': 'no-cache'}
+                try:
+                    if m.group(2) == 'preview':
+                        return self.send_raw(APP.portal_tpl.preview(m.group(1), self.query().get('page') or 'index.html').encode(), 'text/html; charset=utf-8', csp)
+                    b = APP.portal_tpl.file(m.group(1), m.group(3))
+                except ValueError as e:
+                    return self.err(str(e), 404)
+                return self.send_raw(b, mimetypes.guess_type(m.group(3))[0] or 'application/octet-stream', csp)
             m = re.match(r'/api/history/(\w+)$', path)
             if m:
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
@@ -1550,6 +1581,24 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(card_photo(st, m.group(1), self.rfile.read(int(self.headers.get('Content-Length') or 0)) if method == 'POST' and 0 < int(self.headers.get('Content-Length') or 0) <= 8_000_000 else None, method))
+            if path == '/api/portal/templates' and method == 'POST':  # a guest-page design (.zip): raw bytes, checked, kept in the library
+                if not self.need_admin():
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > 4_000_000:
+                    return self.err('архив шаблона должен быть не больше 4 МБ', 413)
+                try:
+                    t = APP.portal_tpl.add(urllib.parse.unquote(self.query().get('name') or ''), self.rfile.read(n))
+                except ValueError as e:
+                    return self.send({'ok': False, 'error': str(e)})
+                st.add_event(None, 'Портал', 'info', f"загружен шаблон страницы входа «{t['name']}»")
+                return self.send({'ok': True, 'template': t, 'templates': APP.portal_tpl.list()})
+            m = re.match(r'^/api/portal/templates/(t[0-9a-f]{8})$', path)
+            if m and method == 'DELETE':
+                if not self.need_admin():
+                    return
+                APP.portal_tpl.delete(m.group(1))
+                return self.send({'ok': True, 'templates': APP.portal_tpl.list()})
             if path == '/api/themes/upload' and method == 'POST':    # a .zip with a custom look: raw bytes (admin), checked and installed only if it fits
                 if not self.need_admin():
                     return
@@ -2246,6 +2295,9 @@ class Handler(BaseHTTPRequestHandler):
                     if body.get('op') == 'status':
                         res = dict(drv.plugins(d), ok=True) if hasattr(drv, 'plugins') else {'ok': True, 'plugins': []}
                         for card in res['plugins']:
+                            if card.get('id') == 'portal':
+                                card['templates'] = APP.portal_tpl.list()
+                                card['saved'] = portal_mod.public(d.get('portal'))
                             if card.get('id') in ('collector', 'rcos'):         # what the card needs from this installation: the address to call, the site and its live state
                                 ci = (d.get('panelInfo') or {}).get(card['id']) or {}
                                 card['serverUrl'] = (st.cfg.get('apps') or {}).get('url') or ''
@@ -2270,6 +2322,27 @@ class Handler(BaseHTTPRequestHandler):
                             body = APP.collector_prepare(d, body, op)
                         except ValueError as e:
                             return self.err(str(e))
+                    if pid == 'portal' and op == 'locate':          # the cable moved to WAN: the router's new address, from the main router's client list by its WAN MAC
+                        ip = APP.ip_of_mac(d.get('portalWanMac'))
+                        if not ip:
+                            return self.send({'ok': False, 'error': 'Роутер пока не найден в списках вашего роутера — подождите полминуты после перестановки кабеля и нажмите ещё раз.'})
+                        d['host'] = ip
+                        st.save(); APP.last_start.pop(did, None)
+                        st.add_event(did, d.get('name'), 'info', f'портал: роутер найден со стороны WAN — {ip}')
+                        return self.send({'ok': True, 'host': ip, 'message': f'Роутер найден: {ip}. Теперь можно «Настроить роутер».'})
+                    if pid == 'portal':
+                        body = dict(body, _old=d.get('portal'))
+                        if op in ('install', 'template'):
+                            tid = str(body.get('template') if op == 'template' else (body.get('profile') or {}).get('template') or 'default')
+                            try:
+                                body['_files'] = portal_mod.files_b64(APP.portal_tpl.files(tid))
+                            except ValueError as e:
+                                return self.err(str(e))
+                        if op == 'install':
+                            body['_hello'] = {'url': lan_url_toward(d.get('host')), 'token': portal_mod.new_token()}
+                            body['_find'] = APP.ip_of_mac               # if the router's call back does not arrive: its WAN address from the main router's client list
+                        if op in ('install', 'remove') and not DEMO:
+                            return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     if pid == 'meshnode' and op == 'acquire':       # захват точки через наш Keenetic (команда mws acquire … no-update), фоном
                         if DEMO:
                             return self.send({'ok': True, 'message': 'Захвачено (демо): роутер принят в Keenetic как точка Mesh.'})
@@ -2284,6 +2357,13 @@ class Handler(BaseHTTPRequestHandler):
                         if op not in ('preview',):
                             st.add_event(did, d.get('name'), 'warning', f'плагин {pid}: {e}')
                         raise
+                    if res.get('deviceUpdate'):                   # the plugin changed the device (a saved profile)
+                        for k, v in res.pop('deviceUpdate').items():
+                            if v is None:
+                                d.pop(k, None)
+                            else:
+                                d[k] = v
+                        st.save()
                     if res.get('sshSave'):                      # Entware login checked → keep it (password is a secret)
                         d.update(res.pop('sshSave'))
                         st.save()

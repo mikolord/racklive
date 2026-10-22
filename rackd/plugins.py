@@ -70,6 +70,9 @@ CATALOG += [
      'author': 'itdoginfo', 'home': 'https://github.com/itdoginfo/podkop'},
     {'id': 'modem', 'drivers': ['openwrt'], 'title': 'USB-модем', 'icon': 'modem', 'kind': 'modem',
      'description': 'Драйверы для 4G/LTE-модемов. Rack Live посмотрит, что воткнуто, и подскажет вариант; не подошёл — удалите и поставьте другой.'},
+    {'id': 'portal', 'drivers': ['openwrt'], 'title': 'Гостевой Wi-Fi с порталом', 'icon': 'wifi', 'kind': 'portal',
+     'description': 'Роутер раздаёт две сети: основную и гостевую со страницей входа (captive-портал OpenNDS). Названия и пароли Wi-Fi, '
+                    'что отдаёт каждый порт, способ входа и свой дизайн страницы — всё задаётся здесь; шаблон меняется одной кнопкой.'},
     {'id': 'meshnode', 'drivers': ['openwrt'], 'title': 'Точка Keenetic (Mesh)', 'icon': 'wifi', 'kind': 'meshnode', 'experimental': True, 'author': 'Сергей Воропаев',
      'description': 'Сделать OpenWrt-роутер точкой доступа системы Keenetic: он появится в Mesh как «своя» точка и будет раздавать Wi-Fi контроллера. '
                     'Подготовьте роутер по простой инструкции внутри (та же подсеть, Wi-Fi, DNS и шлюз — адрес основного роутера, кабель в LAN-порт), '

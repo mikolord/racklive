@@ -16,7 +16,7 @@ DEFAULT = {
     'plan': {'buildings': [], 'links': [], 'poles': []},
 }
 
-SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword', 'tokenSecret')
+SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword', 'tokenSecret', 'portal')
 NEVER_EXPORTED = ('auth', 'mfa')          # the administrator password and the second factor stay with the installation: a backup file never carries them
 KEPT_ON_IMPORT = ('auth', 'mfa', 'notify')   # …and restoring a file never replaces them (nor the notification channels)
 

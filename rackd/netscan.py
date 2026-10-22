@@ -6,7 +6,7 @@ It only KNOCKS: a TCP connect (no login, nothing is changed, no passwords) in th
   2. which well-known ports are open on the live ones (web, ssh, telnet, smb, rdp, rtsp, printers, NAS, Home Assistant, Proxmox …);
   3. what Rack Live can watch there — the same fingerprints as «Определить автоматически» (detect.py), only on the interesting hosts.
 Only private networks up to /22 (1022 addresses) are scanned. The result is kept in data/netscan.json."""
-import concurrent.futures, ipaddress, re, socket, threading, time
+import concurrent.futures, ipaddress, re, socket, subprocess, threading, time
 
 from . import detect, routers
 from .drivers import REGISTRY
@@ -76,6 +76,56 @@ def local_ips():
     return out
 
 
+def local_networks():
+    """private IPv4 networks on this machine's own interfaces (Linux `ip`): [(network, interface, on the default route)].
+    Docker bridges and veth pairs are skipped — they are containers, not the home network."""
+    try:
+        addrs = subprocess.run(['ip', '-4', '-o', 'addr', 'show'], capture_output=True, text=True, timeout=5).stdout
+        dflt = subprocess.run(['ip', '-4', 'route', 'show', 'default'], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    gw_ifs = set(re.findall(r'\bdev\s+(\S+)', dflt))
+    out, seen = [], set()
+    for line in addrs.splitlines():
+        m = re.search(r'^\d+:\s+(\S+)\s+inet\s+(\d+\.\d+\.\d+\.\d+)/(\d+)', line)
+        if not m:
+            continue
+        ifc, ip, pfx = m.group(1).split('@')[0], m.group(2), int(m.group(3))
+        if ifc == 'lo' or re.match(r'^(docker|veth|br-[0-9a-f]{12}|cni|flannel|tun|wg|tailscale)', ifc):
+            continue
+        try:
+            net = ipaddress.ip_interface(f'{ip}/{max(pfx, 22) if pfx >= 22 else 24}').network
+        except ValueError:
+            continue
+        if not net.is_private or net.prefixlen > 30 or str(net) in seen:
+            continue
+        seen.add(str(net)); out.append((net, ifc, ifc in gw_ifs))
+    return out
+
+
+def lan_networks():
+    """the networks a scan starts from: where Rack Live itself is. On a router (it forwards packets and has networks besides
+    the one its internet comes through) — its own LANs, never the provider's side; on a NAS / server — the network it is in."""
+    nets = local_networks()
+    try:
+        forwarding = open('/proc/sys/net/ipv4/ip_forward').read().strip() == '1'
+    except OSError:
+        forwarding = False
+    lans = [n for n in nets if not n[2]]
+    return lans if forwarding and lans else nets
+
+
+def same_device(mac, macs):
+    """the MAC is an added device's, or its sibling an access point uses on another network (the same address with the «local» bit in the first byte).
+    Not «±8 in the last byte»: two routers of one model bought together have neighbouring MACs — that is another device."""
+    mac = (mac or '').lower()
+    if len(mac) != 17:
+        return False
+    if mac in macs:
+        return True
+    return any(len(m) == 17 and m[2:] == mac[2:] and m[0] == mac[0] for m in macs)      # the access point's variants: d4→d2, 50→52 (only the first byte's low half differs)
+
+
 def infra_ips(app):
     """addresses a scan must not knock on: the routers' own addresses (every network's gateway), the default gateway, the routers / switches already added, this machine.
     A router takes a burst of connections to its own closed ports for a port scan and shuts its web interface to the scanner for ~15 minutes — Rack Live then «loses» it."""
@@ -129,12 +179,15 @@ class NetScan:
             net, err = check_cidr(cidr)
             if net and str(net) not in seen:
                 seen.add(str(net)); out.append({'cidr': str(net), 'label': label})
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(('10.255.255.255', 1)); mine = s.getsockname()[0]; s.close()
-            add(mine + '/24', 'сеть, где стоит Rack Live')
-        except OSError:
-            pass
+        for net, ifc, _ in lan_networks():
+            add(str(net), f'сеть, где стоит Rack Live ({ifc})')
+        if not out:                                                # not Linux (a test run on a PC): the address of the default route
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('10.255.255.255', 1)); mine = s.getsockname()[0]; s.close()
+                add(mine + '/24', 'сеть, где стоит Rack Live')
+            except OSError:
+                pass
         for d in self.store.cfg['devices']:
             h = re.sub(r'^\w+://|[:/].*$', '', d.get('host') or '')
             if re.match(r'^\d+\.\d+\.\d+\.\d+$', h):
@@ -254,16 +307,22 @@ class NetScan:
                         tree_ip.setdefault(c['ip'], t)
                     if t['mac']:
                         tree_mac.setdefault(t['mac'], t)
+            added_hosts = {re.sub(r'^\w+://|[:/].*$', '', d.get('host') or '') for d in self.app.store.cfg['devices']}
+            gentle = [ip for ip in sorted(skip & {str(h) for n in nets for h in n.hosts()}) if ip not in mine and ip not in added_hosts and ip not in known_ips]
+            for ip in gentle:                                       # a router's own address: no port sweep, only «is it there» (ARP / one port)
+                if ip in arp or touch(ip, .6):
+                    alive.setdefault(ip, arp.get(ip, ''))
+                    ports.setdefault(ip, [])
             items = {}
             for ip in sorted(alive, key=lambda x: ipaddress.ip_address(x)):
                 mac = alive[ip]
                 items[ip] = {'ip': ip, 'mac': mac, 'name': names.get(ip, ''), 'vendor': OUI.get(mac[:8], '') or routers.vendor_of(names.get(ip)) or '', 'ports': sorted(ports[ip]),
-                             'driver': None, 'score': 0, 'kind': self._guess(ports[ip]), 'what': '', 'self': ip in mine, 'tree': tree_ip.get(ip) or tree_mac.get((mac or '').lower()), 'added': ip in known_ips or routers.related(mac, known_macs) if mac else ip in known_ips}
+                             'driver': None, 'score': 0, 'kind': self._guess(ports[ip]), 'what': '', 'self': ip in mine, 'tree': tree_ip.get(ip) or tree_mac.get((mac or '').lower()), 'added': ip in known_ips or same_device(mac, known_macs)}
             with self.lock:
                 self.s['items'] = list(items.values())
             # 3. what Rack Live can watch there
             self._set(phase='detect', done=0, total=len(items))
-            smart = [ip for ip in items if SMART & set(items[ip]['ports']) and not items[ip]['added']]       # the machine Rack Live runs on too: a router / NAS is worth watching
+            smart = [ip for ip in items if (SMART & set(items[ip]['ports']) or ip in gentle) and not items[ip]['added']]       # the machine Rack Live runs on too: a router / NAS is worth watching
             self._set(total=len(smart) or 1)
             with concurrent.futures.ThreadPoolExecutor(6) as pool:
                 futs = {pool.submit(detect.detect, ip): ip for ip in smart}

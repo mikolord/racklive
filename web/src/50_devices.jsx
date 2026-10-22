@@ -21,8 +21,6 @@ function DevicesView() {
   const counts = { all: data.devices.length, problems: data.devices.filter(bad).length,
     local: data.devices.filter(d => d.location !== 'remote').length, remote: data.devices.filter(d => d.location === 'remote').length };
   const LOC_TABS = [{ value: 'all', label: `Все · ${counts.all}` }, { value: 'local', label: `Локальные · ${counts.local}` }, { value: 'remote', label: `Удалённые · ${counts.remote}` }];
-  const routers = ((data.routerScan || {}).list || []).filter(r => !r.dismissed);
-  const [showRouters, setShowRouters] = useState(() => new URLSearchParams(location.search).get('routers') === '1');
   const [scan, setScan] = useState(() => new URLSearchParams(location.search).get('netscan') === '1');       // «Сканировать сеть» (?netscan=1)
   const changed = onlyBad || sort !== 'group' || loc !== 'all';
   return <>
@@ -57,14 +55,6 @@ function DevicesView() {
       {admin ? <div className="row center wrap" style={{ gap: 10 }}><Btn kind="primary" icon="search" onClick={() => setScan(true)}>Сканировать сеть</Btn>
         <Btn icon="plus" onClick={() => openEditor(null)}>Добавить вручную</Btn></div> : null}</div></Card> : null}
     {data.newDevices ? <div style={{ marginBottom: 10 }}><NewDevicesCard /></div> : null}
-    {admin && data.routerScan && routers.length ? <div style={{ marginBottom: 14 }}>
-      <button type="button" className="card newdev-row" onClick={() => setShowRouters(true)}>
-        <div className="newdev-ic"><Icon name="search" size={18} /></div>
-        <div className="grow" style={{ minWidth: 0, textAlign: 'left' }}><b style={{ fontSize: 14.5 }}>Найдено в сети: {routers.length}</b>
-          <div className="dim ellipsis" style={{ fontSize: 12.5 }}>можно добавить в Rack Live: {routers.slice(0, 3).map(r => r.name).join(', ')}{routers.length > 3 ? '…' : ''}</div></div>
-        <Icon name="chevron" size={16} color="var(--text3)" /></button>
-      {showRouters ? <Modal title="Найдено в сети" wide onClose={() => setShowRouters(false)} icon={<Icon name="search" size={20} color="var(--accent)" />}><RoutersCard /></Modal> : null}
-    </div> : null}
     {!list.length && data.devices.length ? <div className="empty" style={{ lineHeight: 1.5 }}>
       {loc === 'remote' && !counts.remote ? <>Удалённых устройств пока нет. Это устройства в другом месте: сервер или VPS, роутер на даче, сайт.<br />Нажмите «Добавить» → «Проверка доступности» (агент, сайт) или выберите «Удалённое» в настройках устройства.</>
         : loc === 'local' && !counts.local ? 'Локальных устройств пока нет.' : `Ничего не найдено${onlyBad ? ' — включён фильтр «только с проблемами»' : ''}`}</div> : null}
@@ -96,8 +86,10 @@ const DEVICE_CATALOG = [
         'Роутер не у вас дома: нужен прямой доступ к его веб-интерфейсу (белый IP или домен с прямым доступом). Облачный KeenDNS не подходит — он пускает только браузер.'] },
     { driver: 'openwrt', title: 'OpenWrt', proof: 'проверено на живом роутере',
       text: 'Порты (с настоящими номерами гнёзд), интерфейсы, DHCP-клиенты, USB-модем, плагины Forkop и Podkop.',
-      steps: ['Нужен пароль root (задаётся в LuCI: Система → Администрирование).', 'Должен открываться веб-интерфейс LuCI — через него идёт опрос. SSH (порт 22) не закрывайте: по нему ставятся плагины и читаются порты.',
-        'Адрес — любой IP роутера, доступный из вашей сети.'] },
+      steps: ['Свежая OpenWrt открывается по адресу 192.168.1.1, логин root, пароля нет. Пароль лучше сразу задать (LuCI: Система → Администрирование) — без пароля Rack Live тоже войдёт, но так в роутер может зайти любой.',
+        'Роутер подключаете в свою сеть (Rack Live на NAS или сервере)? Сначала в LuCI: Сеть → Интерфейсы → LAN — адрес свободный в вашей сети (например 192.168.1.70), шлюз и DNS — адрес вашего роутера; вкладка «DHCP-сервер» → «Игнорировать интерфейс». Иначе роутер с адресом 192.168.1.1 и своим DHCP поссорится с вашим роутером. Потом кабель вашей сети — в LAN-порт.',
+        'Ноутбук или ReckController можно просто воткнуть в LAN-порт роутера — тогда менять ничего не нужно, адрес роутера 192.168.1.1.',
+        'Должен открываться веб-интерфейс LuCI — через него идёт опрос. SSH (порт 22) не закрывайте: по нему ставятся плагины и читаются порты.'] },
     { driver: 'snmp', title: 'Другой роутер по SNMP', preset: { kind: 'router' }, proof: 'стандартный протокол',
       text: 'MikroTik, Zyxel, ASUS, TP-Link и любой роутер, который умеет SNMP: порты и скорость, трафик, процессор, память, время работы. Клиентов и настройку по SNMP получить нельзя.',
       steps: ['В роутере включите SNMP версии 2c (MikroTik: IP → SNMP → Enabled; на OpenWrt нужен пакет snmpd).', 'Задайте community только для чтения — не оставляйте «public», если роутер виден из интернета. Разрешите доступ только с адреса Rack Live.',
@@ -161,7 +153,7 @@ function CatalogPick({ grp, setGrp, onPick }) {
 
 function DeviceEditor({ device, onClose, onCreated, preset }) {
   const { data, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
-  const [drvId, setDrvId] = useState(device ? device.driver : (preset && preset.driver) || null);
+  const [drvId, setDrvId] = useState(device ? device.driver : (preset && preset.driver) || new URLSearchParams(location.search).get('adddrv') || null);      // ?add=1&adddrv=openwrt — for tests
   const catalogEntry = id => DEVICE_CATALOG.flatMap(g => g.items).find(i => i.driver === id && !i.preset) || null;
   const [entry, setEntry] = useState(() => (!device && preset && preset.driver ? catalogEntry(preset.driver) : null));   // catalog entry → the «что нужно сделать» steps
   const [grp, setGrp] = useState(() => new URLSearchParams(location.search).get('addgrp'));     // opened group of the picker (?addgrp=router)
@@ -249,7 +241,9 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       {drvId !== 'agent' ? <Btn onClick={doTest} busy={test && test.busy}>Проверить</Btn> : null}<Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
     {entry ? <div className="dim" style={{ fontSize: 13.5 }}>{entry.text}</div> : drv.description ? <div className="dim" style={{ fontSize: 13.5 }}>{drv.description}</div> : null}
     {drv.help ? <div className="err-note" style={{ marginTop: 8, whiteSpace: 'pre-wrap', fontSize: 12.5, userSelect: 'text' }}><b>Как подготовить компьютер.</b>{'\n'}{drv.help}</div> : null}
-    {entry && entry.steps && entry.steps.length ? <details className="guide" open>
+    {!device ? <ScanForType driver={drvId} onPick={it => setF(x => ({ ...x, host: it.host || it.ip, ...(it.mode ? { mode: it.mode } : {}),
+      name: x.name || (it.name && it.name !== it.ip ? it.name : (it.what || '').split(/[(:—]/)[0].trim().slice(0, 40)) }))} picked={f.host} /> : null}
+    {entry && entry.steps && entry.steps.length ? <details className="guide" open={!!device}>
       <summary>Что нужно сделать</summary>
       <ol className="steps">{entry.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
       {entry.proof ? <div className="dim3" style={{ fontSize: 12 }}>Как это работает: {entry.proof}.</div> : null}</details> : null}

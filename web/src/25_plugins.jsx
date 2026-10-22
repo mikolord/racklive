@@ -48,6 +48,7 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.kind === 'installer' ? <InstallerPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
       {p.kind === 'modem' ? <ModemPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'meshnode' ? <MeshNodePlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'portal' ? <PortalPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'panel' ? <PanelPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'agents' ? <AgentsPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'collector' ? <CollectorPlugin p={p} device={device} reload={reload} /> : null}

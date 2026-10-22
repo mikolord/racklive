@@ -2469,3 +2469,38 @@ html[data-look="test"] .cd-cam-err { border-radius: 10px; background: rgba(13,14
 .tp-btn { flex: none; font: 600 8.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; padding: 5px 8px; border-radius: 5px;
   background: var(--text); color: var(--t-inv); border: 1px solid var(--text); }
 @media (max-width: 520px) { .tp-v { font-size: 26px; } .look-prev[data-look="test"] { padding: 14px; } }
+/* «Гостевой Wi-Fi с порталом» */
+.pt-live { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; margin: 4px 0 8px; }
+.pt-sec { border-top: 1px solid var(--line); }
+.pt-sec-h { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 2px; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+.pt-sec-h b { flex: none; } .pt-sec-h span { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-sec-h svg { transition: transform .2s; } .pt-sec.open .pt-sec-h svg { transform: rotate(90deg); }
+.pt-sec-b { display: grid; gap: 10px; padding: 0 2px 14px; }
+.pt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.pt-ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.pt-port { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; position: relative; }
+.pt-port b { font: 600 12px/1 var(--mono); letter-spacing: .1em; }
+.pt-port span { font-size: 11.5px; color: var(--text3); }
+.pt-port .select { height: 32px; font-size: 13px; padding: 0 6px; }
+.pt-port.wan { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.pt-port.r-guest { border-color: color-mix(in srgb, var(--orange) 55%, var(--line)); }
+.pt-port.r-trunk { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.pt-port.r-off { opacity: .55; }
+.pt-led { position: absolute; right: 10px; top: 11px; width: 7px; height: 7px; border-radius: 50%; background: var(--fill2); }
+.pt-led.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.pt-mg { color: var(--accent) !important; font-weight: 600; }
+.pt-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.pt-tpl { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-width: 0; }
+.pt-tpl.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pt-thumb { height: 200px; overflow: hidden; border-radius: 8px; background: var(--fill); position: relative; }
+.pt-thumb iframe { width: 390px; height: 800px; border: 0; transform: scale(.36); transform-origin: 0 0; pointer-events: none; position: absolute; left: 0; top: 0; }
+.pt-tpl { overflow: hidden; }
+.pt-thumb { width: 100%; contain: strict; }
+.pt-thumb iframe { left: 50% !important; margin-left: -195px; transform-origin: 50% 0 !important; }
+/* «Добавить» → a type: devices of this type found in the network */
+.sft { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; margin: 4px 0 10px; }
+.sft-h { display: flex; align-items: center; gap: 8px; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; padding: 0; text-align: left; }
+.sft-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--text); font: inherit; cursor: pointer; min-width: 0; }
+.sft-row:hover { background: var(--fill); } .sft-row.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.sft-row small { display: block; font-size: 11.5px; }
+.sft-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); flex: none; }
