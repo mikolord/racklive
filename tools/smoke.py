@@ -813,6 +813,11 @@ def main():
                 check('карточки: ИБП — кольца, потребление и график', 'cd-ups' in co and 'cd-ring' in co and 'Потребление за сутки' in co and 'data-js-error="' not in co)
                 co = dom('/cards?card=' + sw['id'] + '&port=3')
                 check('карточки: порт по нажатию — плашка с названием и скоростью', 'vt-pop' in co and 'vt-pop empty' not in co)
+                cab = next((d for d in devs if any(p.get('cable') for p in d['state'].get('ports') or [])), None)
+                if cab:
+                    cp = next(p for p in cab['state']['ports'] if p.get('cable'))
+                    co = dom(f"/cards?card={cab['id']}&port={cp['n']}")
+                    check('карточки: длина кабелей по прошлой проверке', 'Длина кабелей' in co and (not cp['cable'].get('length') or f"≈ {cp['cable']['length']} м" in co))
                 co = dom('/cards?card=ucross')
                 check('карточки: патч-панель / кросс — порты', 'vt-head' in co and 'class="pm' in co and 'data-js-error="' not in co)
                 nas = next(d for d in devs if not d['state'].get('ports') and not d['state'].get('ups') and d['state'].get('summary'))
