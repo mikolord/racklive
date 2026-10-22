@@ -3,7 +3,7 @@ import re
 import time
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
-from .. import plugins, portal
+from .. import plugins, portal, remote
 from ..util import DriverError, http_json
 
 
@@ -330,6 +330,8 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
             elif p['id'] == 'portal':
                 hw = portal.parse_status(self._ssh(cfg, portal.STATUS, 40))
                 p.update(self._portal_card(hw, st))
+            elif p['id'] == 'remote':
+                p.update(self._remote_card(remote.parse(self._ssh(cfg, remote.STATUS, 30))))
             elif p['id'] == 'meshnode':
                 ms = plugins.parse_meshnode(self._ssh(cfg, plugins.MESHNODE_STATUS, 30))
                 free_mb = (ms['free'] or 0) // 1024
@@ -345,6 +347,18 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                     p['status'] = ('работает, принят в Mesh' if ms['member'] else 'запущен, ждёт приёмки в приложении Keenetic') if ms['run'] else 'установлен, но не запущен'
             out.append(p)
         return {'fw': st['rel'], 'pm': st['pm'], 'plugins': out}
+
+    # ───────── «Удалённый доступ» (rackd/remote.py) ─────────
+    @staticmethod
+    def _remote_card(rs):
+        free_mb = (rs['free'] or 0) // 1024
+        major = int((re.findall(r'\d+', rs['rel'] or '') or ['0'])[0])
+        card = {'installed': rs['installed'], 'tunnel': rs}
+        card['checks'] = [{'label': f"OpenWrt 22.03 или новее (у вас {rs['rel'] or '?'})", 'ok': major >= 22},
+                          {'label': 'WireGuard ' + ('уже установлен' if rs['wg'] else f'поставится сам (~1 МБ, свободно {free_mb} МБ)'), 'ok': rs['wg'] or free_mb >= 1}]
+        if rs['installed']:
+            card['status'] = (f"на связи · {rs['ip']}" if rs['up'] else f"нет связи с центром · {rs['ip']}")
+        return card
 
     # ───────── «Гостевой Wi-Fi с порталом» (rackd/portal.py) ─────────
     @staticmethod
@@ -445,6 +459,16 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                 return {'ok': False, 'error': 'OpenNDS не запустился — посмотрите журнал роутера', 'deviceUpdate': {'portal': saved}}
             return {'ok': True, 'message': 'Портал включён: гости сначала видят страницу входа' if on else 'Портал выключен: гостевая Wi-Fi работает без страницы входа',
                     'deviceUpdate': {'portal': saved}}
+        if op == 'login':                               # the guest login only: no network restart, guests already in stay in
+            hw = status(cfg)
+            old = params.get('_old') or hw['profile'] or {}
+            if not old:
+                raise DriverError('сначала настройте роутер')
+            new = {k: v for k, v in (params.get('profile') or {}).items() if k in ('login', 'password', 'hours', 'down', 'up', 'name', 'rules', 'after')}
+            prof = portal.validate(portal.merge_secrets(dict(old, **new), old), hw)
+            if '@@ok' not in self._ssh(cfg, portal.login_script(prof), timeout=60):
+                raise DriverError('настройки входа не записались')
+            return {'ok': True, 'message': 'Вход гостей обновлён — действует для новых входов, сеть не перезапускалась', 'deviceUpdate': {'portal': prof}}
         if op == 'template':
             old = params.get('_old') or status(cfg)['profile'] or {}
             if not old:
@@ -535,6 +559,15 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                                                          'удалите этот вариант и попробуйте другой (иногда нужно переподключить модем).'}
         if pid == 'portal':
             return self._portal(cfg, op, params)
+        if pid == 'remote':
+            prog = params.get('_progress') or (lambda s: None)
+            if op == 'status':
+                return dict(self._remote_card(remote.parse(self._ssh(cfg, remote.STATUS, 30))), ok=True)
+            if op == 'install':
+                return remote.connect(params['_app'], cfg, self, params, prog)
+            if op == 'remove':
+                return remote.disconnect(params['_app'], cfg, self, params, prog)
+            raise DriverError('неизвестное действие')
         if pid == 'meshnode':
             if op == 'suggest_ip':
                 out = self._ssh(cfg, plugins.MESHNODE_FREEIP, 40)

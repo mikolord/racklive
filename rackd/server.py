@@ -5,13 +5,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import models as models_mod
 from . import portal as portal_mod
+from . import remote as remote_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.18.0'
+VERSION = '2.19.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -2298,6 +2299,11 @@ class Handler(BaseHTTPRequestHandler):
                             if card.get('id') == 'portal':
                                 card['templates'] = APP.portal_tpl.list()
                                 card['saved'] = portal_mod.public(d.get('portal'))
+                            if card.get('id') == 'remote':              # the hubs it can join, and what Rack Live knows about the joined one
+                                card['hubs'] = remote_mod.hubs(APP)
+                                card['info'] = d.get('remote')
+                                card['hostLocal'] = d.get('hostLocal')
+                                card['host'] = d.get('host')
                             if card.get('id') in ('collector', 'rcos'):         # what the card needs from this installation: the address to call, the site and its live state
                                 ci = (d.get('panelInfo') or {}).get(card['id']) or {}
                                 card['serverUrl'] = (st.cfg.get('apps') or {}).get('url') or ''
@@ -2343,6 +2349,21 @@ class Handler(BaseHTTPRequestHandler):
                             body['_find'] = APP.ip_of_mac               # if the router's call back does not arrive: its WAN address from the main router's client list
                         if op in ('install', 'remove') and not DEMO:
                             return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
+                    if pid == 'remote' and op in ('install', 'remove'):
+                        if DEMO:
+                            return self.err('в демо-режиме удалённый доступ не настраивается', 400)
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, dict(body, _app=APP))['id']})
+                    if pid == 'remote' and op == 'address':         # which address Rack Live uses: the tunnel or the local one
+                        info = d.get('remote') or {}
+                        want = info.get('ip') if body.get('to') == 'tunnel' else d.get('hostLocal')
+                        if not want:
+                            return self.err('нет такого адреса')
+                        if body.get('to') == 'tunnel' and d.get('host') != info.get('ip'):
+                            d['hostLocal'] = d.get('host')
+                        d['host'] = want
+                        st.save(); APP.last_start.pop(did, None)
+                        st.add_event(did, d.get('name'), 'info', f'удалённый доступ: Rack Live теперь ходит на роутер по адресу {want}')
+                        return self.send({'ok': True, 'message': f'Теперь Rack Live работает с роутером по адресу {want}'})
                     if pid == 'meshnode' and op == 'acquire':       # захват точки через наш Keenetic (команда mws acquire … no-update), фоном
                         if DEMO:
                             return self.send({'ok': True, 'message': 'Захвачено (демо): роутер принят в Keenetic как точка Mesh.'})

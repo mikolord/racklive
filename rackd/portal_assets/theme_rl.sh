@@ -5,7 +5,7 @@
 
 title="theme_rl"
 TPL=/etc/opennds/htdocs/rl
-RL_LOGIN=click; RL_PASSHASH=""; RL_MIN=1440; RL_UP=0; RL_DOWN=0; RL_name="Wi-Fi"; RL_hours=24; RL_rules=""; RL_terms=""
+RL_LOGIN=click; RL_PASSHASH=""; RL_MIN=1440; RL_UP=0; RL_DOWN=0; RL_name="Wi-Fi"; RL_hours=24; RL_rules=""; RL_terms=""; RL_after=""
 [ -f /etc/rl-portal/conf ] && . /etc/rl-portal/conf
 
 generate_splash_sequence() {
@@ -48,6 +48,7 @@ rl_form() {
 rl_login() {
 	RL_error=""
 	RL_continue=$(printf "${originurl//%/\\x}" | rl_esc)
+	[ -n "$RL_after" ] && RL_continue="$RL_after"                # the owner chose where guests go after login
 	[ -z "$RL_continue" ] && RL_continue="https://ya.ru"
 	if [ "$rlgo" = "1" ]; then
 		ok=1

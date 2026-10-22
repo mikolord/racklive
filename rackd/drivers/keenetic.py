@@ -494,6 +494,64 @@ class Keenetic(Driver):
     def _rc(self, cli):
         return cli(['show running-config'])[0]['parse']['message']
 
+    # ───────── «Удалённый доступ» (rackd/remote.py): this router's WireGuard server is the hub remote routers dial ─────────
+    def wg_hubs(self, cfg):
+        """WireGuard SERVERS of this router: key, port, tunnel network, addresses already given out, and how it is reached from the internet"""
+        get, cli = self._session(cfg)
+        ifs, rc = get('/rci/show/interface'), self._rc(cli)
+        try:
+            nd = get('/rci/show/ndns')
+        except Exception:
+            nd = {}
+        used, owner, cur, peer = {}, {}, None, None
+        for l in rc:
+            m = re.match(r'interface (\S+)', l)
+            if m:
+                cur, peer = m.group(1), None
+            p = re.match(r'\s*wireguard peer (\S+)', l)
+            if p:
+                peer = p.group(1)
+            a = re.match(r'\s*allow-ips (\S+) (\S+)', l)
+            if a and cur:
+                used.setdefault(cur, []).append(a.group(1))
+                if peer and a.group(2) == '255.255.255.255':
+                    owner.setdefault(cur, {}).setdefault(peer, a.group(1))
+        domain = f"{nd['name']}.{nd['domain']}" if nd.get('name') and nd.get('domain') else None
+        wan = nd.get('address') if nd.get('address') not in (None, '0.0.0.0') else None
+        out = []
+        for name, v in (ifs.items() if isinstance(ifs, dict) else []):
+            wg = v.get('wireguard') or {}
+            if v.get('type') != 'Wireguard' or 'server-owned' not in wg or not v.get('address'):
+                continue
+            net = str(ipaddress.ip_interface(f"{v['address']}/{v.get('mask') or '255.255.255.0'}").network)
+            d = v.get('description') or name
+            out.append({'iface': name, 'name': codecs.escape_decode(d.encode())[0].decode('utf-8', 'ignore') if '\\x' in d else d, 'pub': wg.get('public-key'), 'port': wg.get('listen-port'),
+                        'ip': v['address'], 'net': net, 'used': [v['address']] + used.get(name, []), 'up': v.get('state') == 'up',
+                        'domain': domain, 'wan': wan, 'peers': [p.get('public-key') for p in wg.get('peer') or []], 'owner': owner.get(name, {})})
+        return out
+
+    def wg_peer(self, cfg, iface, op, pub, psk=None, ip=None, name=None):
+        """add (or re-create) / remove one peer of the server iface. Only this peer is touched; the others stay as they are."""
+        if not re.match(r'^Wireguard\d+$', iface or '') or not re.match(r'^[A-Za-z0-9+/]{42,44}=?$', pub or ''):
+            raise DriverError('неверное подключение WireGuard')
+        get, cli = self._session(cfg)
+        log, peer = [], f'interface {iface} wireguard peer {pub}'
+        have = any(re.match(rf'\s*wireguard peer {re.escape(pub)}\b', l) for l in self._rc(cli))
+        if have:
+            self._run(cli, [f'interface {iface} no wireguard peer {pub}'], log)
+        if op == 'remove':
+            self._run(cli, ['system configuration save'], log)
+            return log
+        ipaddress.ip_address(ip)
+        self._run(cli, [peer, f'{peer} allow-ips {ip} 255.255.255.255', f'{peer} preshared-key {psk}', f'{peer} connect'], log)
+        if name and re.match(r'^[A-Za-z0-9_.-]{1,40}$', name):   # «peer KEY !name» is how the firmware keeps a peer's name; a nicety — it never stops the connection
+            try:
+                self._run(cli, [f'{peer} !{name}'], log)
+            except DriverError:
+                pass
+        self._run(cli, ['system configuration save'], log)
+        return log
+
     @staticmethod
     def _run(cli, cmds, log):
         """Run CLI commands one batch; every result goes to the log, the first error stops with a readable message."""

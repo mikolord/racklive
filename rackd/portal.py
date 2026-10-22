@@ -26,7 +26,7 @@ PORT_TEXT = {'main': 'основная сеть', 'guest': 'гостевая (п
 
 DEFAULTS = {'role': 'gateway', 'mainSsid': '', 'mainKey': '', 'guestSsid': 'Guest', 'guestKey': '', 'bands': ['2g', '5g'],
             'lan': '192.168.10.1/24', 'guest': '10.20.0.1/22', 'vlan': 10, 'portal': True, 'login': 'click', 'password': '',
-            'hours': 24, 'down': 0, 'up': 0, 'name': 'Гостевой Wi-Fi', 'rules': '', 'template': 'default', 'ports': {},
+            'hours': 24, 'down': 0, 'up': 0, 'name': 'Гостевой Wi-Fi', 'rules': '', 'after': 'https://ya.ru', 'template': 'default', 'ports': {},
             'mgmtWan': True, 'country': 'RU'}
 SECRET = ('mainKey', 'guestKey', 'password')
 
@@ -130,6 +130,10 @@ def validate(p, hw):
             raise ValueError(f'{what}: число от {lo} до {hi}')
     out['name'] = re.sub(r'\s+', ' ', str(p['name'] or '')).strip()[:40] or DEFAULTS['name']
     out['rules'] = str(p['rules'] or '').strip()[:4000]
+    after = str(p.get('after', DEFAULTS['after']) or '').strip()[:300]
+    if after and not re.fullmatch(r'https?://[^\s"\'<>]+', after):
+        raise ValueError('Куда отправить после входа: адрес сайта вида https://ya.ru (или пусто — туда, куда гость шёл сам)')
+    out['after'] = after
     out['template'] = str(p['template'] or 'default')
     out['mgmtWan'] = bool(p['mgmtWan'])
     out['country'] = p['country'] if re.fullmatch(r'[A-Z]{2}', str(p['country'] or '')) else 'RU'
@@ -375,7 +379,7 @@ def portal_conf(p):
     rules = '<div id="rl-rules" class="rl-rules">' + _html(p['rules']).replace('\n', '<br>') + '</div>' if p['rules'] else ''
     vals = {'RL_LOGIN': p['login'], 'RL_PASSHASH': hashlib.sha256(p['password'].encode()).hexdigest() if p['password'] else '',
             'RL_MIN': p['hours'] * 60, 'RL_UP': p['up'] * 1000, 'RL_DOWN': p['down'] * 1000, 'RL_name': _html(p['name']),
-            'RL_hours': str(p['hours']), 'RL_rules': rules, 'RL_terms': '1' if p['rules'] else ''}
+            'RL_hours': str(p['hours']), 'RL_rules': rules, 'RL_terms': '1' if p['rules'] else '', 'RL_after': _html(p.get('after', DEFAULTS['after']) or '')}
     return ''.join(f'{k}={_q(v)}\n' for k, v in vals.items())
 
 
@@ -581,6 +585,15 @@ def toggle_script(on):
             + ("/etc/init.d/opennds enable; /etc/init.d/opennds restart\n" if on else "/etc/init.d/opennds stop; /etc/init.d/opennds disable\n")
             + "sleep 2; echo \"@@nds $(pidof opennds >/dev/null && echo 1 || echo 0)\"\n"
             + "[ -f /etc/rl-portal/profile.json ] && sed -i 's/\"portal\": *[a-z]*/\"portal\": " + ('true' if on else 'false') + "/' /etc/rl-portal/profile.json\n")
+
+
+def login_script(p):
+    """only the guest login (button / password, hours, speed, name, rules, where to go after) — the network is not touched, nothing restarts"""
+    return ("cat > /usr/lib/opennds/theme_rl.sh <<'RLTHEME'\n" + theme_script().rstrip('\n') + "\nRLTHEME\nchmod 755 /usr/lib/opennds/theme_rl.sh\n"
+            + "cat > /etc/rl-portal/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n"
+            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + json.dumps(p, ensure_ascii=False) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n"
+            + f"uci set opennds.@opennds[0].sessiontimeout={p['hours'] * 60}; uci set opennds.@opennds[0].authidletimeout={p['hours'] * 60}; uci commit opennds\n"
+            + "echo @@ok\n")
 
 
 def template_script(b64, p):

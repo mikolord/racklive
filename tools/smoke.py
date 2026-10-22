@@ -355,7 +355,7 @@ def main():
         P({'plugin': 'hydraroute', 'op': 'remove'})
         ow = next(d for d in st['devices'] if d['driver'] == 'demo_openwrt')
         OP = lambda body: api(f"/api/devices/{ow['id']}/plugins", body, 'POST')
-        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem', 'portal', 'meshnode'])
+        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem', 'portal', 'remote', 'meshnode'])
         mj = OP({'plugin': 'meshnode', 'op': 'install'})
         for _ in range(40):
             if not mj.get('job'):
@@ -947,6 +947,15 @@ def main():
                 co = dom(f"/?skin=test&device={ow['id']}&tab=plugins&plugin=portal&psec=ports#rack", 1300, 1000)
                 check('портал: окно плагина — порты по одному', 'pt-port' in co and co.count('pt-port r-') >= 4 and 'data-js-error="' not in co)
                 api(f"/api/portal/templates/{tid}", None, 'DELETE')
+                rc = next(p for p in api(f"/api/devices/{ow['id']}/plugins", {'op': 'status'}, 'POST')['plugins'] if p['id'] == 'remote')
+                try:
+                    api(f"/api/devices/{ow['id']}/plugins", {'plugin': 'remote', 'op': 'install', 'hub': 'x:Wireguard0'}, 'POST')
+                    rguard = False
+                except urllib.error.HTTPError:
+                    rguard = True
+                co = dom(f"/?skin=test&device={ow['id']}&tab=plugins&plugin=remote#rack", 1300, 1000)
+                check('удалённый доступ: карточка, туннель на связи, в демо не настраивается, окно рисуется', rc['installed'] and rc['tunnel']['up'] and 'hubs' in rc and rguard
+                      and 'Туннель на связи' in co and 'data-js-error="' not in co)
                 api('/api/dashboard', {'widgets': prev_w}, 'PUT')
                 ok_ic = True
                 for mf in ('manifest.json', 'frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'cards-manifest.json'):

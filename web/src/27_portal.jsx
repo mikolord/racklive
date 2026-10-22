@@ -133,6 +133,9 @@ function PortalPlugin({ p, device, reload }) {
         {f.login === 'password' ? <Field label="Пароль для входа"><input className="input" value={f.password} placeholder={base.passwordSet ? 'не менять' : 'например, кофе2026'} onChange={e => set('password', e.target.value)} /></Field> : null}
         <Field label="Название на странице"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} /></Field>
         <Field label="Вход действует, часов (гость не вводит заново, даже если долго не пользовался сетью)"><input className="input mono" value={f.hours} onChange={e => set('hours', e.target.value)} /></Field>
+        <Field label="Куда отправить гостя после входа" hint="Пусто — туда, куда гость шёл сам (часто это служебная страница проверки интернета телефона, например OpenDNS или Apple).">
+          <input className="input mono" value={f.after == null ? 'https://ya.ru' : f.after} placeholder="https://ya.ru" onChange={e => set('after', e.target.value)} /></Field>
+        {p.installed ? <div><Btn icon="check" busy={busy === 'login'} disabled={working} onClick={() => quick({ op: 'login', profile: profile() }, 'Сохранено')}>Сохранить вход гостей (без перезапуска сети)</Btn></div> : null}
         <Field label="Скорость гостя: загрузка, Мбит/с (0 — без ограничения)"><input className="input mono" value={f.down} onChange={e => set('down', e.target.value)} /></Field>
         <Field label="Скорость гостя: отдача, Мбит/с"><input className="input mono" value={f.up} onChange={e => set('up', e.target.value)} /></Field>
       </div>

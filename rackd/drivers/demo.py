@@ -262,6 +262,11 @@ class DemoOpenWrt(DemoBase):
             elif p['id'] == 'portal':
                 from .openwrt import OpenWrt
                 p.update(OpenWrt._portal_card(self._portal_hw()))
+            elif p['id'] == 'remote':
+                from .openwrt import OpenWrt
+                p.update(OpenWrt._remote_card({'wg': True, 'rel': '25.12.1', 'free': 84000, 'ip': '172.16.6.11', 'ep': 'office.example.net:51820', 'domain': 'office.example.net',
+                                               'hub': None, 'allowed': ['172.16.6.0/24', '10.0.0.5/32'], 'hs': None, 'rx': 18_400_000, 'tx': 3_100_000, 'pub': None,
+                                               'now': None, 'installed': True, 'ago': 21, 'up': True}))
             elif p['id'] == 'meshnode':
                 on = 'meshnode' in self._pkgs
                 p.update(installed=on, member=on, ssids=['MIKO', 'IoT'] if on else [],
@@ -293,6 +298,12 @@ class DemoOpenWrt(DemoBase):
                 prof = portal.validate(portal.merge_secrets(params.get('profile'), params.get('_old')), self._portal_hw())
                 self._pkgs['portal'] = prof
                 return {'ok': True, 'message': f"Роутер настроен (демо): основная Wi-Fi «{prof['mainSsid']}», гостевая «{prof['guestSsid']}».", 'deviceUpdate': {'portal': prof}}
+            if op == 'login':
+                old = self._pkgs.get('portal') or params.get('_old') or {}
+                new = {k: v for k, v in (params.get('profile') or {}).items() if k in ('login', 'password', 'hours', 'down', 'up', 'name', 'rules', 'after')}
+                prof = portal.validate(portal.merge_secrets(dict(old, **new), old), self._portal_hw())
+                self._pkgs['portal'] = prof
+                return {'ok': True, 'message': 'Вход гостей обновлён (демо)', 'deviceUpdate': {'portal': prof}}
             if op == 'prepare_wan':
                 return {'ok': True, 'wanmac': 'aa:00:00:00:00:99', 'message': 'Готово (демо): управление со стороны WAN открыто.'}
             if op == 'toggle':
