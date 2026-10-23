@@ -7,7 +7,8 @@ function PortalPlugin({ p, device, reload }) {
   const toast = useToast(); const confirm = useConfirm();
   const hw = p.hw || {};
   const base = p.saved || p.routerProfile || p.defaults || {};
-  const [f, setF] = useState(() => ({ ...base, mainKey: '', guestKey: '', password: '', ports: { ...(base.ports || {}) } }));
+  const [f, setF] = useState(() => ({ ...base, mainKey: '', guestKey: '', password: '', smsPass: '', ports: { ...(base.ports || {}) } }));
+  const [smsTo, setSmsTo] = useState('');
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
   const [tpls, setTpls] = useState(p.templates || [{ id: 'default', name: 'Стандартный (Rack Live)', builtin: true }]);
   const [busy, setBusy] = useState(''); const [stage, setStage] = useState(''); const [result, setResult] = useState(null);
@@ -23,6 +24,36 @@ function PortalPlugin({ p, device, reload }) {
     }
     return { ok: false, error: 'настройка заняла слишком долго — проверьте роутер' };
   };
+  const smsBlock = () => <div className="stack" style={{ gap: 10 }}>
+    <div className="dim3" style={{ fontSize: 12.5, lineHeight: 1.5 }}>Гость вводит номер телефона и получает код в СМС. Код отправляет второй роутер, в котором стоит SIM-карта: подключите его LAN-порт в LAN-порт этого роутера
+      (не в гостевой порт). Этому роутеру нужен только адрес и пароль того; ключ для отправки СМС создаётся сам.</div>
+    <details className="guide"><summary>Как подготовить роутер с SIM-картой</summary>
+      <ol className="steps" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+        <li><b>SIM-карта.</b> Вставьте её в роутер при выключенном питании. Уберите запрос PIN-кода (вставьте SIM в телефон → «Блокировка SIM» → выключить PIN). На счету должны быть деньги, а отправка СМС с неё — работать (проверьте с телефона). Мобильный интернет не нужен.</li>
+        <li><b>Сброс.</b> Если роутер уже настраивали, сбросьте его до заводских настроек. Нужна чистая OpenWrt с модемом, который видится как порты <code>/dev/ttyUSB*</code> (обычные USB- и встроенные LTE-модемы). Модемы, работающие как сетевая карта (HiLink), СМС по AT-командам не отдают.</li>
+        <li><b>Подключение к ПК.</b> Кабель из компьютера в LAN-порт роутера с SIM, адрес в браузере — <code>192.168.1.1</code> (у OpenWrt по умолчанию). Wi-Fi ему не нужен.</li>
+        <li><b>Пароль.</b> System → Administration → задайте пароль root. SSH на OpenWrt включён сам. Запомните пароль — его надо будет вписать ниже.</li>
+        <li><b>Адрес.</b> Network → Interfaces → lan → Edit. Протокол «Static address», IPv4 address <code>192.168.10.2/24</code> (в одной сети с этим роутером, по умолчанию он <code>192.168.10.1</code>). Поле «IPv4 gateway» и DNS <b>оставьте пустыми</b> — Rack Live пропишет их сам. На вкладке «DHCP Server» поставьте галочку «Ignore interface» (иначе роутер с SIM начнёт раздавать адреса чужой сети).</li>
+        <li><b>Применить.</b> «Save» → «Save &amp; Apply». Страница отвалится — так и должно быть (роутер переехал на новый адрес). Если LuCI предложит «Apply unchecked», нажмите.</li>
+        <li><b>Провод.</b> Из LAN-порта роутера с SIM — в LAN-порт <b>этого</b> роутера (не в гостевой порт и не в WAN).</li>
+        <li><b>Здесь.</b> Впишите адрес <code>192.168.10.2</code>, логин <code>root</code> и пароль, нажмите «Подготовить роутер с SIM» и дождитесь галочки (1–2 минуты). Потом — «Отправить тестовую СМС» на свой номер и «Сохранить вход гостей».</li>
+      </ol>
+      <div className="dim3" style={{ fontSize: 12.5 }}>Rack Live сам поставит на роутер с SIM программу отправки СМС и разрешит этому роутеру только отправлять СМС (ограниченный ключ) — управлять роутером с SIM через него нельзя. Пароль от роутера с SIM нужен один раз и нигде не хранится на роутерах.</div>
+    </details>
+    <div className="pt-grid">
+      <Field label="Роутер с SIM — адрес (так его видит этот роутер)"><input className="input mono" value={f.smsHost || ''} placeholder="192.168.10.2" onChange={e => set('smsHost', e.target.value)} /></Field>
+      <Field label="Логин"><input className="input mono" value={f.smsUser || 'root'} onChange={e => set('smsUser', e.target.value)} /></Field>
+      <Field label="Пароль роутера с SIM (нужен один раз, не хранится на роутерах)"><input className="input" type="password" value={f.smsPass || ''} placeholder={base.smsPassSet ? 'не менять' : 'пароль root'} onChange={e => set('smsPass', e.target.value)} /></Field>
+    </div>
+    {p.installed ? <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+      <Btn icon="check" busy={busy === 'sms_setup'} disabled={working || !f.smsHost || (!f.smsPass && !base.smsPassSet)} onClick={smsSetup}>{base.smsReady ? 'Подготовить заново' : 'Подготовить роутер с SIM'}</Btn>
+      {base.smsReady ? <span className="dim3" style={{ fontSize: 12.5 }}>✔ готов: {base.smsInfo}</span> : null}
+    </div> : <div className="dim3" style={{ fontSize: 12.5 }}>Роутер с SIM подготавливается после настройки этого роутера (кнопка появится здесь).</div>}
+    {p.installed && base.smsReady ? <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+      <input className="input mono" style={{ maxWidth: 220 }} value={smsTo} placeholder="+7 900 123-45-67" onChange={e => setSmsTo(e.target.value)} />
+      <Btn busy={busy === 'sms_test'} disabled={working || !smsTo} onClick={() => quick({ op: 'sms_test', phone: smsTo }, 'Отправлено')}>Отправить тестовую СМС</Btn>
+    </div> : null}
+  </div>;
   const portRole = n => (f.ports || {})[n] || 'main';
   const profile = () => ({ ...f, ports: Object.fromEntries((hw.lan || []).map(n => [n, portRole(n)])) });
 
@@ -46,6 +77,17 @@ function PortalPlugin({ p, device, reload }) {
     try { const r = await call(body); toast(r.message || r.error || label, !r.ok); setResult({ ...r, up: r.ok, kept: true }); reload(); }
     catch (e) { toast(e.message, true); }
     finally { setBusy(''); }
+  };
+  const smsSetup = async () => {
+    if (!(await confirm(`Rack Live зайдёт на роутер с SIM-картой (${f.smsHost}) и подготовит его: поставит программу отправки СМС и разрешит этому роутеру только отправлять СМС (больше ничего). `
+      + 'Чтобы поставить один маленький пакет, роутер с SIM на время выйдет в интернет через этот роутер; мобильный интернет SIM-карты не нужен и не тратится. Продолжить?', { title: 'Подготовить роутер с SIM', ok: 'Подготовить' }))) return;
+    setBusy('sms_setup'); setResult(null); setStage('Готовлю роутер с SIM…');
+    try {
+      let r = await call({ op: 'sms_setup', profile: profile() });
+      if (r.job) r = await pollJob(r.job);
+      setResult({ ...r, up: r.ok, kept: true }); toast(r.message || r.error || '', !r.ok); set('smsPass', ''); reload();
+    } catch (e) { setResult({ error: e.message }); toast(e.message, true); }
+    finally { setBusy(''); setStage(''); }
   };
   const remove = async () => {
     if (!(await confirm('Удалить портал полностью? Rack Live вернёт роутеру настройки, которые были перед установкой портала: сеть и адрес, Wi-Fi, DHCP, межсетевой экран. '
@@ -126,9 +168,10 @@ function PortalPlugin({ p, device, reload }) {
         <b> Обе</b> — провод к точке доступа: основная сеть идёт без метки, гостевая с меткой VLAN {f.vlan}. <b>Выключен</b> — порт ничего не отдаёт.</div>
     </>)}
 
-    {sec('login', 'Вход гостей', `${f.login === 'password' ? 'по паролю' : 'кнопкой'} · ${f.hours} ч${f.down ? ` · ${f.down} Мбит/с` : ''}`, <>
+    {sec('login', 'Вход гостей', `${f.login === 'password' ? 'по паролю' : f.login === 'sms' ? 'по СМС' : 'кнопкой'} · ${f.hours} ч${f.down ? ` · ${f.down} Мбит/с` : ''}`, <>
       <div className="row" style={{ gap: 10, alignItems: 'center' }}><Switch on={!!f.portal} onChange={v => set('portal', v)} /><span>Страница входа (captive-портал)</span></div>
-      <Seg value={f.login} onChange={v => set('login', v)} options={[{ value: 'click', label: 'Кнопка «Подключиться»' }, { value: 'password', label: 'Общий пароль' }]} />
+      <Seg value={f.login} onChange={v => set('login', v)} options={[{ value: 'click', label: 'Кнопка «Подключиться»' }, { value: 'password', label: 'Общий пароль' }, { value: 'sms', label: 'По СМС' }]} />
+      {f.login === 'sms' ? smsBlock() : null}
       <div className="pt-grid">
         {f.login === 'password' ? <Field label="Пароль для входа"><input className="input" value={f.password} placeholder={base.passwordSet ? 'не менять' : 'например, кофе2026'} onChange={e => set('password', e.target.value)} /></Field> : null}
         <Field label="Название на странице"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} /></Field>
@@ -161,7 +204,7 @@ function PortalPlugin({ p, device, reload }) {
           В <code>index.html</code> обязательно поставьте метку <code>{'{{form}}'}</code> — на её место Rack Live вставит кнопку «Подключиться» (и поле пароля, и галочку правил, если они включены).
           Другие метки: <code>{'{{name}}'}</code> — название, <code>{'{{hours}}'}</code> — сколько часов действует вход, <code>{'{{error}}'}</code> — сообщение об ошибке, <code>{'{{rules}}'}</code> — правила,
           <code>{'{{assets}}'}</code> — путь к вашим файлам (<code>{'<link rel="stylesheet" href="{{assets}}/style.css">'}</code>), <code>{'{{continue}}'}</code> — куда гость шёл (для кнопки в done.html).
-          Классы кнопки и полей: <code>rl-form</code>, <code>rl-btn</code>, <code>rl-field</code>, <code>rl-terms</code>, <code>rl-error</code>, <code>rl-rules</code>. Окно входа на iPhone — урезанный браузер: сложный JavaScript там может не работать.</div></details>
+          Классы кнопки и полей: <code>rl-form</code>, <code>rl-btn</code>, <code>rl-field</code>, <code>rl-terms</code>, <code>rl-error</code>, <code>rl-rules</code>, <code>rl-note</code>. При входе по СМС форма сама показывает «Отправляем СМС…» и ставит на форму класс <code>rl-loading</code> — по нему можно нарисовать свою анимацию загрузки (например, <code>.rl-loading .rl-btn::before</code>). Окно входа на iPhone — урезанный браузер: сложный JavaScript там может не работать.</div></details>
     </>)}
 
     {hw.nopass ? <div className="plugin-result warn"><b>У роутера нет пароля администратора.</b> Задайте его в «Дополнительно» — без пароля в роутер может зайти любой. Rack Live запомнит его сам.</div> : null}

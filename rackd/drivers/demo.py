@@ -300,10 +300,14 @@ class DemoOpenWrt(DemoBase):
                 return {'ok': True, 'message': f"Роутер настроен (демо): основная Wi-Fi «{prof['mainSsid']}», гостевая «{prof['guestSsid']}».", 'deviceUpdate': {'portal': prof}}
             if op == 'login':
                 old = self._pkgs.get('portal') or params.get('_old') or {}
-                new = {k: v for k, v in (params.get('profile') or {}).items() if k in ('login', 'password', 'hours', 'down', 'up', 'name', 'rules', 'after')}
+                new = {k: v for k, v in (params.get('profile') or {}).items() if k in ('login', 'password', 'hours', 'down', 'up', 'name', 'rules', 'after', 'smsHost', 'smsUser', 'smsPort', 'smsPass')}
                 prof = portal.validate(portal.merge_secrets(dict(old, **new), old), self._portal_hw())
                 self._pkgs['portal'] = prof
                 return {'ok': True, 'message': 'Вход гостей обновлён (демо)', 'deviceUpdate': {'portal': prof}}
+            if op == 'sms_setup':
+                return {'ok': False, 'error': 'В демо-режиме роутер с SIM не настраивается'}
+            if op == 'sms_test':
+                return {'ok': False, 'error': 'В демо-режиме СМС не отправляются'}
             if op == 'prepare_wan':
                 return {'ok': True, 'wanmac': 'aa:00:00:00:00:99', 'message': 'Готово (демо): управление со стороны WAN открыто.'}
             if op == 'toggle':

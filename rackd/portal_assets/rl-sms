@@ -1,0 +1,72 @@
+#!/bin/sh
+# Rack Live: SMS gateway. Runs as the forced command of the portal router's SSH key:
+#   send <phone> <text as UCS2 hex>       one SMS (the portal prepares the text, so Russian works)
+#   status                                 SIM / network / signal
+# The modem is driven through its AT port in text mode (the PDU mode of sms_tool is refused by some modems).
+[ -f /etc/rl-sms.conf ] && . /etc/rl-sms.conf
+DEV=${DEV:-/dev/ttyUSB1}
+set -- $SSH_ORIGINAL_COMMAND "$@"
+cmd=$1
+
+# a phone number as UCS2 hex ("+" = 002B, digits = 0030…0039)
+phone_ucs2() { printf '%s' "$1" | awk '{for(i=1;i<=length($0);i++){c=substr($0,i,1); printf "%04X", (c=="+") ? 43 : 48 + c}}'; }
+
+# one AT command; prints the reply, returns 0 on OK
+at() {
+	printf '%s\r' "$1" >&3
+	while read -t "${2:-8}" -r l <&3; do
+		l=$(printf '%s' "$l" | tr -d '\r')
+		case "$l" in
+			OK) return 0 ;;
+			ERROR*|*"+CMS ERROR"*|*"+CME ERROR"*) echo "$l"; return 1 ;;
+			"") ;;
+			*) echo "$l" ;;
+		esac
+	done
+	echo "нет ответа модема"; return 1
+}
+
+n=0; until mkdir /tmp/rl-sms.lock 2>/dev/null; do n=$((n+1)); [ $n -gt 60 ] && { echo "@@fail модем занят"; exit 1; }; sleep 1; done
+trap 'rmdir /tmp/rl-sms.lock 2>/dev/null' EXIT
+stty -F "$DEV" 115200 raw -echo 2>/dev/null
+exec 3<>"$DEV"
+at ATE0 3 >/dev/null; at ATE0 3 >/dev/null
+
+case "$cmd" in
+	status)
+		echo "@@dev $DEV"
+		at "AT+CPIN?" | tr -d '\n'; echo
+		at "AT+CREG?" | tr -d '\n'; echo
+		at "AT+COPS?" | tr -d '\n'; echo
+		at "AT+CSQ" | tr -d '\n'; echo
+		at "AT+CNUM" | tr -d '\n'; echo
+		;;
+	send)
+		phone=$2; text=$3
+		case "$phone" in
+			+[0-9]*|[0-9]*) ;;
+			*) echo "@@fail плохой номер"; exit 1 ;;
+		esac
+		printf '%s' "$phone" | grep -Eq '^\+?[0-9]{10,15}$' || { echo "@@fail плохой номер"; exit 1; }
+		[ -n "$text" ] || { echo "@@fail пустой текст"; exit 1; }
+		printf '%s' "$text" | grep -Eq '^[0-9a-fA-F]+$' && [ $(( ${#text} % 4 )) = 0 ] || { echo "@@fail плохой текст"; exit 1; }
+		[ ${#text} -le 1000 ] || { echo "@@fail длинный текст"; exit 1; }
+		at 'AT+CMGF=1' >/dev/null || { echo "@@fail модем не отвечает"; exit 1; }
+		at 'AT+CSCS="UCS2"' >/dev/null
+		at 'AT+CSMP=17,167,0,8' >/dev/null
+		printf 'AT+CMGS="%s"\r' "$(phone_ucs2 "$phone")" >&3
+		sleep 2
+		printf '%s\032' "$text" >&3
+		ok=0
+		while read -t 40 -r l <&3; do
+			l=$(printf '%s' "$l" | tr -d '\r')
+			case "$l" in
+				*"+CMGS:"*) ok=1 ;;
+				OK) [ $ok = 1 ] && break ;;
+				*ERROR*) echo "@@fail $l"; exit 1 ;;
+			esac
+		done
+		[ $ok = 1 ] && echo "@@sent" || { echo "@@fail оператор не принял сообщение"; exit 1; }
+		;;
+	*) echo "@@fail неизвестная команда"; exit 1 ;;
+esac

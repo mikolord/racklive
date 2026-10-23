@@ -27,8 +27,8 @@ PORT_TEXT = {'main': 'основная сеть', 'guest': 'гостевая (п
 DEFAULTS = {'role': 'gateway', 'mainSsid': '', 'mainKey': '', 'guestSsid': 'Guest', 'guestKey': '', 'bands': ['2g', '5g'],
             'lan': '192.168.10.1/24', 'guest': '10.20.0.1/22', 'vlan': 10, 'portal': True, 'login': 'click', 'password': '',
             'hours': 24, 'down': 0, 'up': 0, 'name': 'Гостевой Wi-Fi', 'rules': '', 'after': 'https://ya.ru', 'template': 'default', 'ports': {},
-            'mgmtWan': True, 'country': 'RU'}
-SECRET = ('mainKey', 'guestKey', 'password')
+            'mgmtWan': True, 'country': 'RU', 'smsHost': '', 'smsUser': 'root', 'smsPort': 22, 'smsPass': '', 'smsReady': False, 'smsInfo': ''}
+SECRET = ('mainKey', 'guestKey', 'password', 'smsPass')
 
 # роутер после перезапуска сети «отзывается» сюда: token → {'t', 'wan', 'lan'}; токены ждущих — PENDING
 HELLO, PENDING = {}, {}
@@ -84,7 +84,7 @@ def _net(v, what, lo, hi):
     return n
 
 
-def validate(p, hw):
+def validate(p, hw, strict_sms=False):
     """профиль от интерфейса + что есть на роутере (порты, радио, WAN) → чистый профиль или ValueError с понятной причиной"""
     p = dict(DEFAULTS, **{k: v for k, v in (p or {}).items() if k in DEFAULTS})
     out = {'role': 'gateway'}
@@ -115,12 +115,13 @@ def validate(p, hw):
     if not 2 <= out['vlan'] <= 4094:
         raise ValueError('Номер VLAN гостевой сети: от 2 до 4094')
     out['portal'] = bool(p['portal'])
-    out['login'] = 'password' if p['login'] == 'password' else 'click'
+    out['login'] = p['login'] if p['login'] in ('click', 'password', 'sms') else 'click'
     out['password'] = str(p['password'] or '')
     if out['login'] == 'password' and not 4 <= len(out['password']) <= 63:
         raise ValueError('Пароль для входа на портал: от 4 до 63 символов')
-    if out['login'] == 'click':
+    if out['login'] != 'password':
         out['password'] = ''
+    out.update(_sms(p, out['login'] == 'sms' and strict_sms))      # the SIM router is asked for only when it is being prepared: the main router is set up first
     for k, lo, hi, what in (('hours', 1, 720, 'Сколько часов действует вход'), ('down', 0, 1000, 'Скорость гостя, загрузка'), ('up', 0, 1000, 'Скорость гостя, отдача')):
         try:
             out[k] = int(p[k])
@@ -149,6 +150,29 @@ def validate(p, hw):
         raise ValueError('Хотя бы один порт должен отдавать основную сеть — иначе к роутеру не подключиться проводом')
     out['ports'] = ports
     return out
+
+
+def _sms(p, need):
+    """the router with the SIM card that sends the codes: its address (seen from the portal router), SSH login and port"""
+    host = str(p.get('smsHost') or '').strip()
+    user = str(p.get('smsUser') or 'root').strip() or 'root'
+    try:
+        port = int(22 if p.get('smsPort') in (None, '') else p['smsPort'])
+    except (TypeError, ValueError):
+        port = 0
+    if need:
+        try:
+            ok = ipaddress.ip_address(host).is_private
+        except ValueError:
+            ok = bool(re.fullmatch(r'[A-Za-z0-9]([A-Za-z0-9.-]{0,60}[A-Za-z0-9])?', host))
+        if not host or not ok:
+            raise ValueError('Роутер с SIM: адрес вида 192.168.10.2 (так его видит главный роутер)')
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,32}', user):
+            raise ValueError('Роутер с SIM: логин из латинских букв и цифр, обычно root')
+        if not 1 <= port <= 65535:
+            raise ValueError('Роутер с SIM: порт SSH от 1 до 65535')
+    return {'smsHost': host, 'smsUser': user, 'smsPort': port if 1 <= port <= 65535 else 22, 'smsPass': str(p.get('smsPass') or ''),
+            'smsReady': bool(p.get('smsReady')), 'smsInfo': str(p.get('smsInfo') or '')[:300]}
 
 
 def public(p):
@@ -380,7 +404,19 @@ def portal_conf(p):
     vals = {'RL_LOGIN': p['login'], 'RL_PASSHASH': hashlib.sha256(p['password'].encode()).hexdigest() if p['password'] else '',
             'RL_MIN': p['hours'] * 60, 'RL_UP': p['up'] * 1000, 'RL_DOWN': p['down'] * 1000, 'RL_name': _html(p['name']),
             'RL_hours': str(p['hours']), 'RL_rules': rules, 'RL_terms': '1' if p['rules'] else '', 'RL_after': _html(p.get('after', DEFAULTS['after']) or '')}
+    vals.update({'RL_SMSHOST': p.get('smsHost', ''), 'RL_SMSPORT': p.get('smsPort', 22), 'RL_SMSUSER': p.get('smsUser', 'root'), 'RL_SMSTAIL': sms_tail(p)})
     return ''.join(f'{k}={_q(v)}\n' for k, v in vals.items())
+
+
+def sms_tail(p):
+    """the SMS is «<code> — код для входа в Wi-Fi «name»»: the code is added by the router, this is the rest, as UCS2 hex"""
+    text = f" — код для входа в Wi-Fi «{p.get('name') or DEFAULTS['name']}»"
+    return ''.join('%04X' % ord(c) for c in text)
+
+
+def router_profile(p):
+    """what is written on the router: no SIM-router password (it is needed once, to prepare that router)"""
+    return json.dumps({k: v for k, v in p.items() if k != 'smsPass'}, ensure_ascii=False)
 
 
 def push_files_script(b64):
@@ -435,7 +471,7 @@ echo "@@step Копирую шаблон страницы входа"
 ''', push_files_script(b64),
          "cat > /usr/lib/opennds/theme_rl.sh <<'RLEOF'\n" + theme_script() + "\nRLEOF\nchmod 644 /usr/lib/opennds/theme_rl.sh\n",
          "cat > $B/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n",
-         "cat > $B/profile.json <<'RLEOF'\n" + json.dumps(p, ensure_ascii=False) + "\nRLEOF\nchmod 600 $B/profile.json $B/conf\n",
+         "cat > $B/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 $B/profile.json $B/conf\n" + (SMS_KEY if p.get("login") == "sms" else ""),
          # откат: если Rack Live не подтвердит связь — вернуть прежние настройки
          r'''cat > /tmp/rl-rollback.sh <<'RLEOF'
 [ -f /tmp/rl-rollback.sh ] || exit 0
@@ -587,18 +623,80 @@ def toggle_script(on):
             + "[ -f /etc/rl-portal/profile.json ] && sed -i 's/\"portal\": *[a-z]*/\"portal\": " + ('true' if on else 'false') + "/' /etc/rl-portal/profile.json\n")
 
 
+# the key this router signs in to the SIM router with (it can only send SMS there: the key is bound to a forced command)
+SMS_KEY = r'''mkdir -p /etc/rl-portal
+[ -f /etc/rl-portal/sms_rsa ] || dropbearkey -t rsa -s 2048 -f /etc/rl-portal/sms_rsa >/dev/null 2>&1
+chmod 600 /etc/rl-portal/sms_rsa 2>/dev/null
+echo "@@smspub $(dropbearkey -y -f /etc/rl-portal/sms_rsa 2>/dev/null | grep '^ssh-')"
+'''
+
+
+def phone(v):
+    """a phone number as the guest types it → +79001234567 (or ValueError)"""
+    d = re.sub(r'\D', '', str(v or ''))
+    if len(d) == 11 and d[0] == '8':
+        d = '7' + d[1:]
+    elif len(d) == 10 and d[0] == '9':
+        d = '7' + d
+    if not 11 <= len(d) <= 15:
+        raise ValueError('Номер телефона вида +7 900 123-45-67')
+    return '+' + d
+
+
+def _asset(name):
+    return open(os.path.join(ASSETS, name), encoding='utf-8').read().replace('\r\n', '\n')
+
+
+def sms_setup_script(p):
+    """runs on the PORTAL router: signs in to the SIM router by password (the password goes through the environment, once), puts the sender on it
+    and binds the portal router's key to it. The SIM router gets internet through the portal router only to install one small package (stty)."""
+    return f'''B=/etc/rl-portal; mkdir -p $B
+command -v dbclient >/dev/null 2>&1 || {{ echo "@@fail на этом роутере нет dbclient (нужен SSH-клиент dropbear)"; exit 0; }}
+[ -f $B/sms_rsa ] || dropbearkey -t rsa -s 2048 -f $B/sms_rsa >/dev/null 2>&1
+PUB=$(dropbearkey -y -f $B/sms_rsa 2>/dev/null | grep '^ssh-'); [ -n "$PUB" ] || {{ echo "@@fail не получилось создать ключ"; exit 0; }}
+H={_q(p['smsHost'])}
+export DROPBEAR_PASSWORD={_q(p['smsPass'])}
+G="dbclient -y -y -p {int(p['smsPort'])} {p['smsUser']}@$H"
+MYIP=$(ip -4 route get $H 2>/dev/null | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p' | head -1)
+echo "@@step Захожу на роутер с SIM"
+$G 'echo rl-ok' </dev/null 2>/dev/null | grep -q rl-ok || {{ echo "@@fail не получилось зайти на $H: проверьте адрес, логин и пароль, и что провод от него в LAN главного роутера"; exit 0; }}
+$G 'cat > /tmp/rl-gw.sh' <<'RLGW'
+{_asset('sms_gw.sh')}
+RLGW
+$G 'cat > /tmp/rl-sms.new' <<'RLSMS'
+{_asset('rl-sms')}
+RLSMS
+echo "$PUB" | $G 'cat > /tmp/rl-pub'
+if [ "$($G 'command -v stty >/dev/null 2>&1 && echo y' </dev/null 2>/dev/null)" != y ]; then
+  echo "@@step Настраиваю выход роутера с SIM в интернет через этот роутер"
+  $G "sh /tmp/rl-gw.sh net $MYIP" </dev/null 2>/dev/null
+  n=0; while [ $n -lt 40 ]; do sleep 3; $G 'ping -c1 -W2 downloads.openwrt.org >/dev/null 2>&1 && echo y' </dev/null 2>/dev/null | grep -q y && break; n=$((n+1)); done
+fi
+$G 'sh /tmp/rl-gw.sh sms' </dev/null 2>&1 | grep '^@@'
+echo "@@step Проверяю связь по ключу"
+dbclient -y -y -i $B/sms_rsa -p {int(p['smsPort'])} {p['smsUser']}@$H status </dev/null 2>/dev/null | sed 's/^/@@gw /'
+'''
+
+
+def sms_send_script(p, number, text):
+    """one real SMS from the portal router through the SIM router (a test, with the key the guests' codes go with)"""
+    hexs = ''.join('%04X' % ord(c) for c in text)
+    return (f"dbclient -y -y -i /etc/rl-portal/sms_rsa -p {int(p['smsPort'])} {p['smsUser']}@{p['smsHost']} 'send {number} {hexs}' </dev/null 2>&1 | head -5\n")
+
+
 def login_script(p):
     """only the guest login (button / password, hours, speed, name, rules, where to go after) — the network is not touched, nothing restarts"""
     return ("cat > /usr/lib/opennds/theme_rl.sh <<'RLTHEME'\n" + theme_script().rstrip('\n') + "\nRLTHEME\nchmod 755 /usr/lib/opennds/theme_rl.sh\n"
             + "cat > /etc/rl-portal/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n"
-            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + json.dumps(p, ensure_ascii=False) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n"
+            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n"
+            + (SMS_KEY if p.get('login') == 'sms' else '')
             + f"uci set opennds.@opennds[0].sessiontimeout={p['hours'] * 60}; uci set opennds.@opennds[0].authidletimeout={p['hours'] * 60}; uci commit opennds\n"
             + "echo @@ok\n")
 
 
 def template_script(b64, p):
     return (push_files_script(b64) + "cat > /etc/rl-portal/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n"
-            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + json.dumps(p, ensure_ascii=False) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n")
+            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n")
 
 
 REMOVE = r'''B=/etc/rl-portal

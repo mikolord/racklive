@@ -23,6 +23,9 @@ def _in_net(ip, n):
         return False
 
 
+LOGIN_KEYS = ('login', 'password', 'hours', 'down', 'up', 'name', 'rules', 'after', 'smsHost', 'smsUser', 'smsPort', 'smsPass')      # what «guest login» may change
+
+
 class OpenWrt(Driver):
     id = 'openwrt'
     title = 'OpenWrt'
@@ -464,11 +467,50 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
             old = params.get('_old') or hw['profile'] or {}
             if not old:
                 raise DriverError('сначала настройте роутер')
-            new = {k: v for k, v in (params.get('profile') or {}).items() if k in ('login', 'password', 'hours', 'down', 'up', 'name', 'rules', 'after')}
+            new = {k: v for k, v in (params.get('profile') or {}).items() if k in LOGIN_KEYS}
             prof = portal.validate(portal.merge_secrets(dict(old, **new), old), hw)
+            if prof['login'] == 'sms' and not prof['smsReady']:
+                raise DriverError('Вход по СМС: сначала подготовьте роутер с SIM (кнопка «Подготовить роутер с SIM»)')
             if '@@ok' not in self._ssh(cfg, portal.login_script(prof), timeout=60):
                 raise DriverError('настройки входа не записались')
             return {'ok': True, 'message': 'Вход гостей обновлён — действует для новых входов, сеть не перезапускалась', 'deviceUpdate': {'portal': prof}}
+        if op == 'sms_setup':                           # prepare the router with the SIM card (through this router) and write the SMS login
+            hw = status(cfg)
+            old = params.get('_old') or hw['profile'] or {}
+            if not old:
+                raise DriverError('сначала настройте роутер')
+            new = {k: v for k, v in (params.get('profile') or {}).items() if k in LOGIN_KEYS}
+            prof = portal.validate(portal.merge_secrets(dict(old, **dict(new, login='sms')), old), hw, strict_sms=True)
+            if not prof['smsPass']:
+                raise DriverError('введите пароль роутера с SIM')
+            prog('Записываю вход по СМС на роутер…')
+            if '@@ok' not in self._ssh(cfg, portal.login_script(prof), timeout=60):
+                raise DriverError('настройки входа не записались')
+            prog('Готовлю роутер с SIM (пакеты ставятся минуту-две)…')
+            out = self._ssh(cfg, portal.sms_setup_script(prof), timeout=900)
+            if fail(out):
+                raise DriverError(fail(out).group(1).strip())
+            gw = '\n'.join(re.findall(r'@@gw (.*)', out))
+            if '+CPIN: READY' not in gw:
+                raise DriverError('Связь с роутером с SIM есть, но SIM-карта не готова: ' + (re.findall(r'\+CP[A-Z]+:.*|\+CME ERROR.*', gw) or ['модем не ответил'])[0])
+            sig = (re.findall(r'\+CSQ: (\d+)', gw) or ['?'])[0]
+            prof['smsReady'] = True
+            port = (re.findall(r'@@port (\S+)', out) or ['?'])[0]
+            prof['smsInfo'] = f'{port} · SIM готова · сигнал {sig}/31'
+            self._ssh(cfg, portal.login_script(prof), timeout=60)
+            return {'ok': True, 'message': f"Роутер с SIM готов: {prof['smsInfo']}. Отправьте тестовую СМС, чтобы проверить весь путь.", 'deviceUpdate': {'portal': prof}}
+        if op == 'sms_test':
+            old = params.get('_old') or status(cfg)['profile'] or {}
+            if not old.get('smsReady'):
+                raise DriverError('сначала подготовьте роутер с SIM')
+            try:
+                num = portal.phone(params.get('phone'))
+            except ValueError as e:
+                raise DriverError(str(e))
+            out = self._ssh(cfg, portal.sms_send_script(old, num, 'Rack Live: проверка СМС — портал отправляет коды правильно'), timeout=90)
+            if '@@sent' not in out:
+                raise DriverError('СМС не ушла: ' + ((fail(out).group(1).strip() if fail(out) else out.strip()) or 'нет ответа от роутера с SIM')[:200])
+            return {'ok': True, 'message': f'Тестовая СМС отправлена на {num}'}
         if op == 'template':
             old = params.get('_old') or status(cfg)['profile'] or {}
             if not old:

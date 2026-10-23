@@ -12,7 +12,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.19.2'
+VERSION = '2.20.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -2347,7 +2347,7 @@ class Handler(BaseHTTPRequestHandler):
                         if op == 'install':
                             body['_hello'] = {'url': lan_url_toward(d.get('host')), 'token': portal_mod.new_token()}
                             body['_find'] = APP.ip_of_mac               # if the router's call back does not arrive: its WAN address from the main router's client list
-                        if op in ('install', 'remove') and not DEMO:
+                        if op in ('install', 'remove', 'sms_setup') and not DEMO:
                             return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     if pid == 'remote' and op in ('install', 'remove'):
                         if DEMO:

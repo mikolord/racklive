@@ -26,6 +26,11 @@ h1 { margin: 8px 0 6px; font-size: 26px; font-weight: 600; letter-spacing: -.02e
   font: 600 13px/52px var(--mono); letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
 .rl-btn:active { transform: scale(.98); }
 .rl-error { color: var(--red); font-size: 14px; margin: 0 0 12px; }
+.rl-loading .rl-btn { opacity: .65; }
+.rl-loading .rl-btn::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rls .8s linear infinite; vertical-align: -2px; }
+@keyframes rls { to { transform: rotate(360deg); } }
+.rl-note { color: var(--text2); font-size: 14px; margin: 0 0 12px; text-align: center; }
+.rl-btn2 { margin-top: 10px; background: transparent; color: var(--accent); border: 1px solid var(--line); }
 .rl-rules { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); text-align: left; font-size: 12.5px; line-height: 1.5; color: var(--text2); max-height: 180px; overflow: auto; }
 .foot { margin-top: 18px; font: 500 9.5px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text3); }
 .ok { width: 84px; height: 84px; margin: 0 auto 12px; display: block; }
