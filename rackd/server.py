@@ -16,7 +16,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.29.0'
+VERSION = '2.30.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -830,9 +830,10 @@ class App:
 
 
 APP = None
+GZ_BIG = {}
 
 
-PHOTO_DIR = lambda: os.path.join(DATA, 'cardphotos')
+PHOTO_DIR =lambda: os.path.join(DATA, 'cardphotos')
 
 
 def photo_path(cid):
@@ -966,7 +967,14 @@ class Handler(BaseHTTPRequestHandler):
         if len(b) > 1400 and 'gzip' in (self.headers.get('Accept-Encoding') or ''):
             self.send_header('Content-Encoding', 'gzip')
             self.send_header('Vary', 'Accept-Encoding')
-            return gzip.compress(b, 5)
+            if len(b) < 200_000:
+                return gzip.compress(b, 5)
+            key = (len(b), hash(b))                    # big libraries (the 3D map, 1 MB): compressed once, not on every request
+            if key not in GZ_BIG:
+                if len(GZ_BIG) > 6:
+                    GZ_BIG.clear()
+                GZ_BIG[key] = gzip.compress(b, 6)
+            return GZ_BIG[key]
         return b
 
     def send(self, obj, code=200, headers=None):
@@ -1310,7 +1318,8 @@ class Handler(BaseHTTPRequestHandler):
         if texty:
             b = self.gz(b)
         self.send_header('Content-Length', str(len(b)))
-        self.send_header('Cache-Control', 'no-cache' if full.endswith(('.html', '.js', '.css')) else 'max-age=86400')
+        fixed = '?v=' in self.path and full.startswith(os.path.join(root, 'vendor') + os.sep)           # a library asked for with its version in the address never changes under it
+        self.send_header('Cache-Control', 'public, max-age=31536000, immutable' if fixed else 'no-cache' if full.endswith(('.html', '.js', '.css')) else 'max-age=86400')
         self.send_header('X-Content-Type-Options', 'nosniff')
         # framing: only ourselves and Telegram Web (mini app); X-Frame-Options can't express that, CSP can
         self.send_header('Content-Security-Policy', "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org")

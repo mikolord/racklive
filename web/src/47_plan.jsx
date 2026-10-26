@@ -152,9 +152,11 @@ function Territory({ plan, enter }) {
   const [bgOpen, setBgOpen] = useState(false);
   const [bgLive, setBgLive] = useState(null);                // фон, который тащат
   const bgDrag = useRef(null);
+  const [liveOpen, setLiveOpen] = useState(() => new URLSearchParams(location.search).get('live') === '1');       // «Живая карта (3D)»; ?live=1 — открыть сразу
   const [bgMove, setBgMove] = useState(null);              // какой фон тащит инструмент «Фон»
   const bgs = (plan.bgs || []).map(b => bgLive && bgLive.id === b.id ? { ...b, x: bgLive.x, y: bgLive.y } : b).sort((a, b) => b.w - a.w);     // большие внизу, подробные поверх
   const moving = (plan.bgs || []).find(b => b.id === bgMove) || (plan.bgs || [])[0];
+  const geo = geoRef(plan.bgs);                            // фон с координатами: по нему знаем, где на земле дома
   const save = (b, l, p) => savePlan({ ...plan, buildings: b || buildings, links: l || links, poles: p || poles });
   const isOut = b => Array.isArray(b.outline) && b.outline.length >= 3;
   const outlineOf = b => live && live.id === b.id ? live.outline : b.outline;
@@ -291,6 +293,16 @@ function Territory({ plan, enter }) {
   const selOut = selB && isOut(selB) ? outlineOf(selB) : null;
   const contentCenter = (() => { const xs = [], ys = []; buildings.forEach(b => { const q = boxOf(b); xs.push(q.x, q.x + q.w); ys.push(q.y, q.y + q.h); });
     return xs.length ? { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 } : { x: 400, y: 300 }; })();
+  const openLive = () => { if (!geo) { toast('Сначала добавьте фон со спутника по адресу («Фон: карта»): по нему карта узнаёт, где на земле ваши дома', true); return; } setLiveOpen(true); };
+  const liveSpec = () => {                                  // дома, столбы и магистрали в координатах для 3D-карты
+    const ll = (x, y) => { const g = worldToGeo(x, y, geo); return [g.lon, g.lat]; };
+    const houses = buildings.filter(isOut).map(b => { const o = b.outline, c = polyCenter(o), g = worldToGeo(c.x, c.y, geo); const devs = (b.floors || []).flatMap(f => floorDevices(f, data, devById));
+      return { id: b.id, name: b.name, ring: o.map(([x, y]) => ll(x, y)), center: { lon: g.lon, lat: g.lat }, floors: Math.max(1, (b.floors || []).filter(f => !f.outdoor).length), devs: devs.length, status: worst(devs) }; });
+    const polesG = poles.map(p => { const g = worldToGeo(p.x, p.y, geo); return { id: p.id, name: p.name, lon: g.lon, lat: g.lat }; });
+    const linksG = links.map(l => { const a = center(l.from), b2 = center(l.to); return a && b2 ? { coords: [ll(a.x, a.y), ll(b2.x, b2.y)] } : null; }).filter(Boolean);
+    const mid = houses.length ? { lon: houses.reduce((s, h) => s + h.center.lon, 0) / houses.length, lat: houses.reduce((s, h) => s + h.center.lat, 0) / houses.length } : { lon: geo.lon, lat: geo.lat };
+    return { center: [mid.lon, mid.lat], houses, poles: polesG, links: linksG };
+  };
   const r1 = 7 / view.k;                                         // кружки углов одного размера на экране при любом зуме
   return <div className="plan">
     {edit ? <div className="plan-tools">
@@ -299,6 +311,7 @@ function Territory({ plan, enter }) {
         { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }, ...(bgs.length ? [{ value: 'bg', label: 'Фон', icon: 'resize' }] : [])]} />
       <Btn size="sm" icon="plus" onClick={addBuilding}>Дом</Btn>
       <Btn size="sm" icon="map" onClick={() => setBgOpen(true)}>{bgs.length ? 'Фон…' : 'Фон: карта'}</Btn>
+      <Btn size="sm" icon="eye" onClick={openLive}>Живая карта 3D</Btn>
       {tool === 'outline' ? <>{draft.length >= 3 ? <Btn size="sm" kind="primary" icon="check" onClick={finishOutline}>Готово</Btn> : null}
         {draft.length ? <Btn size="sm" onClick={() => setDraft(draft.slice(0, -1))}>Убрать угол</Btn> : null}
         {draft.length ? <Btn size="sm" onClick={() => setDraft([])}>Сбросить</Btn> : null}</> : null}
@@ -310,6 +323,7 @@ function Territory({ plan, enter }) {
         <Btn size="sm" onClick={() => { const name = prompt('Название столба', selP.name); if (name && name.trim()) save(null, null, poles.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
         <Btn size="sm" kind="danger" icon="trash" onClick={() => delPole(sel)}>Удалить столб</Btn></> : null}
     </div> : null}
+    {!edit ? <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}><Btn size="sm" icon="eye" onClick={openLive}>Живая карта 3D</Btn></div> : null}
     {linkFrom ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="link" size={15} />От «{nodeName(linkFrom)}» — выберите второй дом или столб</div> : null}
     {tool === 'pole' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="pole" size={15} />Нажмите на план, куда поставить столб</div> : null}
     {tool === 'outline' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="edit" size={15} />{draft.length ? `Углов: ${draft.length}. Чтобы замкнуть, нажмите на первый угол или «Готово»` : 'Нажимайте по углам дома на карте — по кругу'}</div> : null}
@@ -374,6 +388,7 @@ function Territory({ plan, enter }) {
       {bgs.some(b => b.attr) ? <div className="plan-attrib">{(bgs.find(b => b.attr) || {}).attr}</div> : null}
       <ZoomBtns setView={setView} onFit={fitAll} />
     </div>
+    {liveOpen && geo ? <LiveMap3D spec={liveSpec()} onClose={() => setLiveOpen(false)} onOpen={id => { setLiveOpen(false); enter(id); }} /> : null}
     {bgOpen ? <PlanBgModal plan={plan} center={contentCenter} onClose={() => setBgOpen(false)} onMove={id => { setBgMove(id); setBgOpen(false); setTool('bg'); }} /> : null}
     {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}
       onSave={saveLink} onDelete={() => save(null, links.filter(x => x.id !== linkEdit.link.id))} onClose={() => setLinkEdit(null)} /> : null}

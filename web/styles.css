@@ -2641,3 +2641,15 @@ html[data-look="test"] .ai-ctx-row, html[data-look="test"] .ai-note-line { font-
 .plan-draft-line { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 6 4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .plan-attr { fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .7); stroke-width: 2.5px; pointer-events: none; }
 .plan-attrib { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: #fff; text-shadow: 0 0 3px #000, 0 0 6px #000; pointer-events: none; max-width: 70%; }
+
+/* «Живая карта (3D)» */
+.live-overlay { position: fixed; inset: 0; z-index: 120; background: #0b0d10; display: flex; flex-direction: column; }
+.live-head { display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px; color: #fff; background: rgba(0, 0, 0, .6); }
+.live-map { position: relative; flex: 1; min-height: 0; }
+.live-map .maplibregl-canvas { outline: none; }
+.live-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; color: #fff; background: rgba(0, 0, 0, .65); padding: 10px 14px; border-radius: 12px; max-width: 80%; text-align: center; font-size: 14px; }
+.live-msg.err { background: rgba(160, 30, 30, .85); }
+.live-msg.hint { top: auto; bottom: 18px; transform: translateX(-50%); font-size: 13px; }
+.live-label { color: #fff; font: 700 13px/1 -apple-system, system-ui, sans-serif; padding: 5px 9px; border-radius: 9px; background: rgba(0, 0, 0, .58); border: 1px solid rgba(255, 255, 255, .28); white-space: nowrap; cursor: pointer; text-shadow: 0 1px 2px #000; }
+.live-pole { width: 14px; height: 14px; border-radius: 50%; background: #0a84ff; border: 2px solid #fff; box-shadow: 0 0 6px #000; }
+.live-card { position: absolute; left: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 5; display: flex; align-items: center; gap: 10px; max-width: 420px; width: calc(100% - 24px); padding: 10px 12px; border-radius: 14px; background: var(--card-solid); color: var(--text); box-shadow: 0 8px 30px rgba(0, 0, 0, .45); }

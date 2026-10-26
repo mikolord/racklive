@@ -8,6 +8,7 @@ import glob, os, shutil, subprocess, sys, urllib.request
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, 'web')
 REACT = '18.3.1'
+MAPLIBRE = '5.24.0'          # the last 5.x: one UMD file (6.x is ES modules with separate workers)
 VENDOR = {
     'react.production.min.js': f'https://unpkg.com/react@{REACT}/umd/react.production.min.js',
     'react-dom.production.min.js': f'https://unpkg.com/react-dom@{REACT}/umd/react-dom.production.min.js',
@@ -15,6 +16,9 @@ VENDOR = {
     'xterm.css': 'https://unpkg.com/xterm@5.3.0/css/xterm.css',
     'xterm-addon-fit.js': 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js',
     'jsQR.js': 'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',                          # reads the QR sticker in the port scanner (/scan, Apache-2.0)
+    'maplibre-gl.js': f'https://unpkg.com/maplibre-gl@{MAPLIBRE}/dist/maplibre-gl.js',     # «Живая карта (3D)» in the plan — loaded only when it is opened (BSD-3-Clause)
+    'maplibre-gl.css': f'https://unpkg.com/maplibre-gl@{MAPLIBRE}/dist/maplibre-gl.css',
+    'maplibre-gl.LICENSE.txt': f'https://unpkg.com/maplibre-gl@{MAPLIBRE}/LICENSE.txt',
 }
 
 
