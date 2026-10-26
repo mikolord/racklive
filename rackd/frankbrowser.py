@@ -89,23 +89,47 @@ def prune(data_dir):
 
 
 def _run(args, url, wait, timeout, profile):
-    """one Chromium run; → (output, error text)"""
+    """one Chromium run; → (stdout text, stderr text)
+
+    Chromium starts helper processes that inherit its stdout/stderr and outlive the parent for a moment. Reading a pipe would wait for all of them
+    (and hang when one stays), so the output goes to real files and the whole process group is killed on a timeout."""
     base = list(FORCE) if FORCE else [binary()]
     argv = base + ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--hide-scrollbars', '--mute-audio',
                    '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-background-networking',
                    '--disable-sync', '--disable-features=Translate,BackForwardCache', f'--user-data-dir={profile}',
                    f'--virtual-time-budget={wait}'] + args + [url]
+    d = tempfile.mkdtemp(prefix='rl-browse-')
+    fo, fe = os.path.join(d, 'out'), os.path.join(d, 'err')
     try:
-        r = subprocess.run(argv, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        raise BrowserError(f'страница не открылась за {timeout} с — возможно, адрес недоступен или отвечает слишком долго')
-    except FileNotFoundError:
-        raise BrowserError('в этой установке нет браузера (Chromium) — мини-браузер работает только там, где он есть')
-    except OSError as e:
-        raise BrowserError(f'не удалось запустить браузер: {e}')
-    out = (r.stdout or b'').decode('utf-8', 'replace')
-    err = (r.stderr or b'').decode('utf-8', 'replace')
-    return out, err
+        with open(fo, 'wb') as o, open(fe, 'wb') as e:
+            try:
+                p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=o, stderr=e, start_new_session=(os.name == 'posix'))
+            except FileNotFoundError:
+                raise BrowserError('в этой установке нет браузера (Chromium) — мини-браузер работает только там, где он есть')
+            except OSError as ex:
+                raise BrowserError(f'не удалось запустить браузер: {ex}')
+            try:
+                p.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    if os.name == 'posix':
+                        os.killpg(os.getpgid(p.pid), 15)          # chromium's helpers go with it
+                    else:
+                        p.kill()
+                except OSError:
+                    pass
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise BrowserError(f'страница не открылась за {timeout} с — возможно, адрес недоступен или отвечает слишком долго')
+        with open(fo, 'rb') as f1:
+            out = f1.read(MAX_DOM).decode('utf-8', 'replace')
+        with open(fe, 'rb') as f2:
+            err = f2.read(200_000).decode('utf-8', 'replace')
+        return out, err
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def _text_of(dom):
