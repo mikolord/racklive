@@ -36,7 +36,8 @@ rl_esc() {
 }
 
 rl_form() {
-	RL_form="<form class=\"rl-form\" action=\"/opennds_preauth/\" method=\"get\"><input type=\"hidden\" name=\"fas\" value=\"$fas\">"
+	# pressed → the button says «Подключаем…» and is locked at once (no second press); disabled after submit so its rlgo=1 still goes out
+	RL_form="<form class=\"rl-form\" data-wait=\"Подключаем…\" onsubmit=\"var f=this;if(f.getAttribute('data-sent'))return false;f.setAttribute('data-sent','1');f.classList.add('rl-loading');var s=event.submitter||f.querySelector('.rl-btn');setTimeout(function(){if(s)s.textContent=f.getAttribute('data-wait');Array.prototype.forEach.call(f.querySelectorAll('button'),function(x){x.disabled=true})},0)\" action=\"/opennds_preauth/\" method=\"get\"><input type=\"hidden\" name=\"fas\" value=\"$fas\">"
 	if [ "$RL_LOGIN" = "password" ]; then
 		RL_form="$RL_form<input class=\"rl-field\" type=\"password\" name=\"rlpass\" placeholder=\"Пароль\" autocomplete=\"off\" required>"
 	fi
@@ -50,7 +51,10 @@ rl_login() {
 	RL_error=""
 	RL_continue=$(printf "${originurl//%/\\x}" | rl_esc)
 	[ -n "$RL_after" ] && RL_continue="$RL_after"                # the owner chose where guests go after login
-	[ -z "$RL_continue" ] && RL_continue="https://ya.ru"
+	# never back to the portal itself or to a phone's «is there internet» check: after login that shows openNDS's own status page
+	case "$RL_continue" in
+		""|*status.client*|*:2050*|*captive.apple.com*|*hotspot-detect*|*generate_204*|*connectivitycheck*|*msftconnecttest*|*detectportal*|*nmcheck*) RL_continue="https://ya.ru" ;;
+	esac
 	[ "$RL_LOGIN" = "sms" ] && rl_sms
 	if [ "$rlgo" = "1" ]; then
 		ok=1
@@ -128,17 +132,25 @@ rl_sms() {
 }
 
 rl_grant() {
+	# the phone repeats the request when the answer is slow (iOS sends the same «Подключиться» several times): only the first one signs in,
+	# the repeats within two minutes get the «you are online» page at once instead of queueing for ndsctl («busy» → 5 s sleeps, up to 80 s)
+	K=/tmp/rl-auth; mkdir -p "$K"; K="$K/$(printf '%s' "${clientmac:-${clientip:-x}}" | tr -c 'A-Za-z0-9' '_')"
+	if [ -f "$K" ] && [ $(( $(date +%s) - $(cat "$K" 2>/dev/null || echo 0) )) -lt 120 ]; then
+		RL_form=""
+		rl_page done.html
+	fi
+	date +%s > "$K"
 	session_length="$RL_MIN"
 	quotas="$session_length $RL_UP $RL_DOWN 0 0"
 	configure_log_location
 	. $mountpoint/ndscids/ndsinfo
 	userinfo="$title"
-	auth_log
-	if [ "$ndsstatus" = "authenticated" ]; then
-		RL_form=""
-		rl_page done.html
-	fi
-	RL_error="<p class=\"rl-error\">Не получилось подключиться. Попробуйте ещё раз.</p>"
+	# answer first, let the guest in a moment later: on a slow router signing in + writing the log takes seconds, the phone sees the internet open
+	# before the page arrives and closes the login window with «the connection was interrupted». The sign-in runs on its own (output off,
+	# so openNDS is not kept waiting); if it fails, the mark is removed and the next press shows the form again.
+	( sleep 1; auth_log; [ "$ndsstatus" = "authenticated" ] || rm -f "$K" ) </dev/null >/dev/null 2>&1 &
+	RL_form=""
+	rl_page done.html
 }
 
 #### main ####

@@ -469,6 +469,18 @@ def theme_script():
     return open(os.path.join(ASSETS, 'theme_rl.sh'), encoding='utf-8').read()
 
 
+# openNDS runs the binauth script inside its ndsctl thread on every login; the stock binauth_log.sh held it for ~16 s on a MikroTik RB2011
+# (ndsctl «busy» for everyone), the phone repeated the request and showed «the connection was interrupted». Ours lets the guest in at once.
+BINAUTH = '''cat > /usr/lib/opennds/binauth_rl.sh <<'RLBIN'
+#!/bin/sh
+# Rack Live: the guest is let in at once (the stock binauth_log.sh could hold openNDS for many seconds on slow routers)
+exit 0
+RLBIN
+chmod 755 /usr/lib/opennds/binauth_rl.sh
+'''
+BINAUTH_UCI = 'uci set opennds.@opennds[0].binauth=/usr/lib/opennds/binauth_rl.sh'
+
+
 def _hosts(net):
     n = ipaddress.ip_interface(net).network
     return max(4, n.num_addresses - 2)
@@ -531,7 +543,7 @@ rm -f /tmp/rl-restart.done /tmp/rl-portal-error
 mkdir -p /usr/lib/opennds /etc/opennds/htdocs
 echo "@@step Копирую шаблон страницы входа"
 ''', push_files_script(b64),
-         "cat > /usr/lib/opennds/theme_rl.sh <<'RLEOF'\n" + theme_script() + "\nRLEOF\nchmod 644 /usr/lib/opennds/theme_rl.sh\n",
+         "cat > /usr/lib/opennds/theme_rl.sh <<'RLEOF'\n" + theme_script() + "\nRLEOF\nchmod 644 /usr/lib/opennds/theme_rl.sh\n" + BINAUTH,
          "cat > $B/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n",
          "cat > $B/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 $B/profile.json $B/conf\n" + (SMS_KEY if p.get("login") == "sms" else ""),
          # откат: если Rack Live не подтвердит связь — вернуть прежние настройки
@@ -618,6 +630,7 @@ if have opennds; then
   uci set opennds.@opennds[0].gatewayname={_q(p['name'])}; uci set opennds.@opennds[0].login_option_enabled=3
   uci set opennds.@opennds[0].themespec_path=/usr/lib/opennds/theme_rl.sh; uci set opennds.@opennds[0].sessiontimeout={p['hours'] * 60}
   uci set opennds.@opennds[0].preauthidletimeout=15; uci set opennds.@opennds[0].authidletimeout={p['hours'] * 60}
+  [ -x /usr/lib/opennds/binauth_rl.sh ] && {BINAUTH_UCI}
   uci commit opennds
   if [ "$(uci -q get opennds.@opennds[0].enabled)" = 1 ]; then /etc/init.d/opennds enable; /etc/init.d/opennds restart; else /etc/init.d/opennds stop; /etc/init.d/opennds disable; fi
 else
@@ -755,7 +768,9 @@ def sms_send_script(p, number, text):
 
 def login_script(p):
     """only the guest login (button / password, hours, speed, name, rules, where to go after) — the network is not touched, nothing restarts"""
-    return ("cat > /usr/lib/opennds/theme_rl.sh <<'RLTHEME'\n" + theme_script().rstrip('\n') + "\nRLTHEME\nchmod 755 /usr/lib/opennds/theme_rl.sh\n"
+    return ("cat > /usr/lib/opennds/theme_rl.sh <<'RLTHEME'\n" + theme_script().rstrip('\n') + "\nRLTHEME\nchmod 755 /usr/lib/opennds/theme_rl.sh\n" + BINAUTH
+            + "[ \"$(uci -q get opennds.@opennds[0].binauth)\" = /usr/lib/opennds/binauth_rl.sh ] || { " + BINAUTH_UCI
+            + "; uci commit opennds; /etc/init.d/opennds restart >/dev/null 2>&1; }\n"
             + "cat > /etc/rl-portal/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n"
             + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n"
             + (SMS_KEY if p.get('login') == 'sms' else '')

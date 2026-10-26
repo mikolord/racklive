@@ -110,11 +110,20 @@ try:
 except ValueError:
     check('основная Wi-Fi включена — название обязательно', True)
 
+# login on a slow router (MikroTik, 26.10.2026): the page goes first, the sign-in a moment later; repeats are not signed in again;
+# a fast binauth instead of the stock binauth_log.sh; never «continue» to the portal itself or to a phone's internet check
+T = portal.theme_script()
+check('тема: сначала страница, вход в фоне', '( sleep 1; auth_log;' in T and T.index('( sleep 1; auth_log;') < T.index('rl_page done.html\n}'))
+check('тема: повторный запрос не входит заново', '/tmp/rl-auth' in T and '-lt 120' in T)
+check('тема: кнопка показывает нажатие и не жмётся дважды', 'data-sent' in T and 'Подключаем…' in T)
+check('тема: после входа не на служебные адреса', '*status.client*|*:2050*|*captive.apple.com*' in T)
+check('быстрый binauth при установке и при смене входа', portal.BINAUTH in S and 'binauth_rl.sh' in S and portal.BINAUTH in portal.login_script(PN))
+
 # shell syntax of the whole script (if a POSIX shell is around)
 import shutil, subprocess, tempfile
 sh = shutil.which('sh') or next((p for p in (r'C:\Users\Admin\network-tools\bin\git\usr\bin\sh.exe', r'C:\Program Files\Git\usr\bin\sh.exe') if os.path.exists(p)), None)
 if sh:
-    for name, script in (('swconfig', S), ('swconfig без основной Wi-Fi', SN), ('DSA', SD)):
+    for name, script in (('swconfig', S), ('swconfig без основной Wi-Fi', SN), ('DSA', SD), ('тема входа', T), ('смена входа', portal.login_script(PN))):
         with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False, newline='\n', encoding='utf-8') as tf:
             tf.write(script)
         r = subprocess.run([sh, '-n', tf.name], capture_output=True, text=True)
