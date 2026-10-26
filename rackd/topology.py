@@ -236,6 +236,12 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
             edge(internet(), main_id, **wan_kw)
         attached.add(internet())
 
+    # «Удалённые» устройства (VPS, роутер на другой площадке) — всегда прямо от «Интернета». Первыми, до всех остальных связей: иначе устройство,
+    # чей адрес совпал с адресом клиента домашней сети (удалённый роутер, который пока стоит дома), цепляется как клиент и тянет за собой цепочку.
+    for nid, n in list(nodes.items()):
+        if n.get('remote') and nid != main_id:
+            edge(internet(), nid, kind='remote')
+
     # unmanaged switches (rackd/drivers/unmanaged.py): «plugged into device X, port N» — what that port sees hangs on them
     um = {(d['uplinkDevice'], str(d.get('uplinkPort') or '').strip()): 'd:' + d['id'] for d in active
           if d.get('driver') == 'unmanaged' and d.get('uplinkDevice') and str(d.get('uplinkPort') or '').strip()}

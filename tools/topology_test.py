@@ -41,5 +41,22 @@ ok('каждый клиент один раз', len([x for x in t['nodes'] if x[
 t = topology.build(devices, states(3), [], [], False, {}, {})
 ok('при выключенных клиентах их нет', not [x for x in t['nodes'] if str(x.get('label', '')).startswith('guest-')])
 
+# remote devices (a VPS, a router on another site) hang straight under the internet — each by its own line, never under each other or under a home device
+rdev = devices + [
+    {'id': 'vps', 'name': 'VPS Германия', 'driver': 'ssh', 'host': '203.0.113.40', 'location': 'remote'},
+    {'id': 'rr1', 'name': 'Роутер Виктор', 'driver': 'openwrt', 'host': '192.168.1.53', 'location': 'remote'},     # its address is in the HOME network (still at home before moving)
+    {'id': 'rr2', 'name': 'Роутер Кристина', 'driver': 'openwrt', 'host': '172.20.5.1', 'location': 'remote'},
+]
+st = states(2, [{'mac': 'de:ad:be:ef:00:53', 'ip': '192.168.1.53', 'name': 'Виктор', 'port': '3', 'online': True}])
+st['rr1'] = {'status': 'online', 'summary': {'ip': '192.168.1.53', 'mac': 'de:ad:be:ef:00:53'}, 'ports': [{'n': 1, 'link': True, 'peers': []}], 'clients': []}
+st['rr2'] = {'status': 'online', 'summary': {'ip': '172.20.5.1'}, 'ports': [{'n': 1, 'link': True, 'peers': []}], 'clients': [mk(40)]}
+t = topology.build(rdev, st, [], [], True, {}, {})
+parent = {e['target']: e['source'] for e in t['edges'] if not e.get('extra') and not e.get('manual')}
+for did in ('vps', 'rr1', 'rr2'):
+    ok(f'удалённое {did}: прямо от «Интернета»', parent.get('d:' + did) == 'inet', parent.get('d:' + did))
+ok('у «Интернета» нет цепочки: удалённые не висят друг на друге', not any(parent.get('d:' + b) == 'd:' + a for a in ('vps', 'rr1', 'rr2') for b in ('vps', 'rr1', 'rr2')))
+ok('клиенты удалённого роутера — под ним', parent.get('h:aa:bb:cc:00:00:28') == 'd:rr2', parent.get('h:aa:bb:cc:00:00:28'))
+ok('домашние устройства по-прежнему от главного роутера', parent.get('d:ow') in ('d:kn', None) and parent.get('d:kn') == 'inet', (parent.get('d:ow'), parent.get('d:kn')))
+
 print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)
