@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import models as models_mod
 from . import icons as icons_mod
 from . import usage as usage_mod
-from . import frankfiles, frank_agent
+from . import frankfiles, frank_agent, frankdev
 from . import portal as portal_mod
 from . import remote as remote_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
@@ -15,7 +15,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.21.0'
+VERSION = '2.22.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -65,6 +65,7 @@ APP_MANIFESTS = {'/manifest.json': 'rack', '/frank-manifest.json': 'frank', '/sp
 class App:
     def __init__(self):
         load_all()
+        self.demo = DEMO                           # the demo office: nothing real is touched (Frank's project refuses to be made or deployed here)
         self.store = Store(DATA)
         s = self.store.cfg['settings']
         if 'tourDone' not in s:                    # Frank's welcome tour: only for a brand-new installation (no administrator yet); never for one that already works
@@ -545,6 +546,28 @@ class App:
         threading.Thread(target=run, daemon=True).start()
         return job
 
+    def start_frank_job(self, title, fn):
+        """a long operation on Frank's project (clone, build, tests, deploy): progress is polled with /api/dev/job (device='*')"""
+        with self.lock:
+            cur = next((j for j in self.jobs.values() if j.get('device') == '*' and not j['done']), None)
+            if cur:
+                raise ValueError(f"сейчас уже идёт: «{cur['op']}» — дождитесь окончания")
+            job = {'id': secrets.token_hex(6), 'device': '*', 'plugin': 'frank', 'op': title, 't': time.time(), 'stage': 'Запуск…', 'done': False}
+            self.jobs = {k: v for k, v in self.jobs.items() if time.time() - v['t'] < 6 * 3600}
+            self.jobs[job['id']] = job
+
+        def run():
+            try:
+                job['result'] = fn(lambda s: job.update(stage=s))
+                self.store.add_event(None, 'Frank', 'info', f'{title}: готово')
+            except Exception as e:
+                job['error'] = str(e)
+                self.store.add_event(None, 'Frank', 'warning', f'{title}: {e}'[:300])
+            finally:
+                job['done'], job['dur'] = True, round(time.time() - job['t'])
+        threading.Thread(target=run, daemon=True).start()
+        return job
+
     def _host_exec(self, script, timeout, progress=None):
         out = self.host.run(script, timeout, on_line=(lambda l: progress(l[:140]) if progress and l and not l.startswith('@@') else None))
         ok, why, lines = hostops._result(out)
@@ -785,7 +808,8 @@ class App:
             traceback.print_exc()
             sec = None
         admin_extra = {'sysEvents': [e for e in self.store.events if e.get('name') in SYS_EVENTS][-120:][::-1],        # «События → Системные»: the technical journal (page, tour, starts)
-                       'ai': self.ai.public(), 'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
+                       'ai': dict(self.ai.public(), project=frankdev.status(self.store.dir, frankdev.panel_root(), DEMO)),
+                       'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
@@ -2502,6 +2526,9 @@ class Handler(BaseHTTPRequestHandler):
                 new['limit'] = max(0, int(new.get('limit') or 0))
                 new['window'] = max(0, min(10_000_000, int(new.get('window') or 0)))
                 new['agent'] = bool(new.get('agent'))
+                new['full'] = bool(new.get('full'))
+                if new['full']:                              # «полный доступ» is the agent with everything switched on
+                    new['agent'] = True
                 if new.get('agentMode') not in frank_agent.MODES:
                     new['agentMode'] = 'ask'
                 if path == '/api/ai/test':
@@ -2534,6 +2561,28 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(dict(APP.ai.models(), ok=True))
                 except assistant.AiError as e:
                     return self.err(str(e))
+            if path == '/api/ai/project' and method == 'POST':     # проект Frank: создать, собрать, проверить, выложить в панель, откатить
+                ai = assistant.merged(st.cfg.get('ai'))
+                if not ai.get('full'):
+                    return self.err('полный доступ выключен: Настройки → Frank → «Полный доступ»')
+                op = str(body.get('op') or 'status')
+                root, demo = frankdev.panel_root(), DEMO
+                if op == 'status':
+                    return self.send({'ok': True, 'project': frankdev.status(st.dir, root, demo, fresh=True)})
+                titles = {'seed': 'Проект Frank: создание', 'build': 'Проект Frank: сборка', 'test': 'Проект Frank: проверка',
+                          'deploy': 'Проект Frank: выкладка в панель', 'rollback': 'Проект Frank: откат'}
+                if op not in titles:
+                    return self.err('неизвестное действие: ' + op)
+                fns = {'seed': lambda pr: frankdev.seed(st.dir, root, demo, pr),
+                       'build': lambda pr: frankdev.build(st.dir, pr),
+                       'test': lambda pr: frankdev.test(st.dir, pr),
+                       'deploy': lambda pr: frankdev.deploy(st.dir, root, demo, pr),
+                       'rollback': lambda pr: frankdev.rollback(root, st.dir)}
+                try:
+                    job = APP.start_frank_job(titles[op], fns[op])
+                except ValueError as e:
+                    return self.err(str(e))
+                return self.send({'ok': True, 'job': job['id']})
             if path == '/api/ai/act' and method == 'POST':     # run / drop an action Frank proposed — only by this press
                 try:
                     p = APP.ai.act(str(body.get('chat') or ''), str(body.get('proposal') or ''), bool(body.get('run')))

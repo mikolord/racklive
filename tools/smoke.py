@@ -355,7 +355,7 @@ def main():
         P({'plugin': 'hydraroute', 'op': 'remove'})
         ow = next(d for d in st['devices'] if d['driver'] == 'demo_openwrt')
         OP = lambda body: api(f"/api/devices/{ow['id']}/plugins", body, 'POST')
-        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'modem', 'portal', 'remote', 'meshnode'])
+        check('openwrt plugins: status', [p['id'] for p in OP({'op': 'status'})['plugins']] == ['forkop', 'podkop', 'tachyon', 'modem', 'portal', 'remote', 'meshnode'])
         mj = OP({'plugin': 'meshnode', 'op': 'install'})
         for _ in range(40):
             if not mj.get('job'):
@@ -372,6 +372,13 @@ def main():
             OP({'plugin': 'podkop', 'op': 'install'}); check('openwrt: podkop refused while forkop installed', False)
         except urllib.error.HTTPError as e:
             check('openwrt: podkop refused while forkop installed', e.code == 400)
+        tc = next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'tachyon')
+        check('openwrt: tachyon warns that it replaces forkop', 'Forkop' in (tc.get('warning') or '') and not tc['installed'])
+        OP({'plugin': 'tachyon', 'op': 'install', 'core': False})
+        tc = next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'tachyon')
+        check('openwrt: tachyon installed, forkop replaced (demo)', tc['installed'] and not next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'forkop')['installed'])
+        OP({'plugin': 'tachyon', 'op': 'remove'})
+        check('openwrt: tachyon removed (demo)', not next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'tachyon')['installed'])
         OP({'plugin': 'forkop', 'op': 'remove'})
         OP({'plugin': 'modem', 'op': 'install', 'profile': 'mm'})
         check('openwrt: modem variant installed', next(m for m in next(p for p in OP({'op': 'status'})['plugins'] if p['id'] == 'modem')['profiles'] if m['id'] == 'mm')['installed'])
@@ -565,6 +572,19 @@ def main():
         api('/api/ai/chats/' + r['chat'], {}, 'DELETE')
         check('assistant: chat deleted', not api('/api/ai/chats')['chats'])
         api('/api/ai', {'enabled': False, 'preset': 'custom'}, 'PUT')
+        # «полный доступ»: Frank как самостоятельный агент со своим проектом Rack Live (в демо проект и выкладка запрещены)
+        api('/api/ai', {'agent': True, 'full': True, 'agentMode': 'ask'}, 'PUT')
+        st2 = api('/api/state')['ai']
+        check('Frank: «полный доступ» включается, проект виден', st2['full'] and st2['agent'] and isinstance(st2.get('project'), dict), json.dumps(st2, ensure_ascii=False)[:200])
+        pj = api('/api/ai/project', {'op': 'status'}, 'POST')
+        check('Frank: проект отвечает состоянием', 'project' in pj and pj['project'].get('exists') is False, json.dumps(pj, ensure_ascii=False)[:200])
+        jb = api('/api/ai/project', {'op': 'seed'}, 'POST')['job']
+        for _ in range(80):
+            jj = api('/api/dev/job', {'job': jb}, 'POST')
+            if jj.get('done'):
+                break
+            time.sleep(.2)
+        check('Frank: в демо проект не создаётся', 'демо' in (jj.get('error') or ''), jj)
         # remote router as a web panel: link + login in the card, the password only through /creds
         rw = api('/api/devices', {'driver': 'remote_web', 'name': 'Роутер · дача', 'kind': 'router', 'location': 'remote',
                                   'host': base, 'username': 'admin', 'password': 'smoke-web-pw'}, 'POST')['device']
@@ -776,6 +796,7 @@ def main():
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':
                 check('карточка помощника в настройках', 'ai-settings' in out)
+                check('агент: есть галочка «Полный доступ» со своим проектом', 'Полный доступ' in out and 'как opencode' in out)
             if name == 'Настройки · Приложения':
                 check('карточка «Приложения на телефон»', 'Приложения на телефон' in out and out.count('plugin-head') >= 4 and 'Frank' in out and 'Сканер' in out)
             if name == 'Настройки · Уведомления':

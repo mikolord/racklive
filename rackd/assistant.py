@@ -9,7 +9,7 @@ every tool result goes through scrub(). Device names, hostnames and Wi-Fi names 
 """
 import copy, json, re, secrets, threading, time, urllib.error, urllib.parse, urllib.request
 
-from . import backups, frank_agent, frankfiles
+from . import backups, frank_agent, frankdev, frankfiles
 
 PRESETS = {
     'deepseek': {'title': 'DeepSeek', 'proto': 'openai', 'base': 'https://api.deepseek.com', 'model': 'deepseek-flash',
@@ -32,10 +32,13 @@ DEFAULT = {'enabled': False, 'preset': 'deepseek', 'base': '', 'model': '', 'key
            'window': 0,             # the model's context window in tokens; 0 = guess by the model name (ctx_window)
            'autoCompact': True,     # squeeze the chat by itself before it no longer fits
            'agent': False,          # the agent: files and commands on the machine where Rack Live runs (rackd/frank_agent.py)
-           'agentMode': 'ask'}      # ask | edits | full — what the agent does without a press
+           'agentMode': 'ask',      # ask | edits | full — what the agent does without a press
+           'full': False}           # «полный доступ»: the agent becomes a real one — his own project of Rack Live, no cards at all, may change the panel
 ROUNDS = 8                  # tool rounds per question
 AGENT_ROUNDS = 40           # the agent works longer: read, change, check
+FULL_ROUNDS = 80            # полный доступ: a whole task with a project, a build and a deployment takes many steps
 AGENT_OPS = 60              # steps that change or run something, per answer
+FULL_OPS = 150
 RESULT_MAX = 14000          # characters of one tool result
 KEEP_RAW = 4                # /compact keeps the last messages as they are (two exchanges), the rest becomes a summary
 COMPACT_AT = 0.85           # auto-compact when the chat fills this share of the window
@@ -96,7 +99,7 @@ def resolved(c):
 
 def public(c):
     r = resolved(c)
-    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram', 'admin', 'window', 'autoCompact', 'agent', 'agentMode')}
+    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram', 'admin', 'window', 'autoCompact', 'agent', 'agentMode', 'full')}
     out['agentWhere'] = frank_agent.where()
     out.update(base=merged(c)['base'], model=merged(c)['model'], keySet=bool(r['key']), title=r['title'],
                ready=bool(r['enabled'] and r['base'] and r['model'] and (r['key'] or r['noKey'])), effModel=r['model'], effWindow=ctx_window(r))
@@ -362,9 +365,21 @@ AGENT_ON = """РЕЖИМ АГЕНТА — файлы и команды. Рабо
 4) Если что-то пошло не так — разберись в причине, не повторяй вслепую. Если не хватает данных или есть выбор — спроси.
 5) В конце коротко отчитайся: что сделано, что изменилось, где лежит результат, что осталось.
 Проекты. Над любым кодом (в том числе над самой Rack Live) работай в своей рабочей папке: git clone публичного репозитория (Rack Live — https://github.com/mikolord/racklive),
-правки и тесты — в копии (git, curl, Python, Node.js и npm на машине есть). Показывай, что изменил (git diff, список файлов) и как проверил. Работающую панель Rack Live
-и её данные ты не трогаешь, и публиковать код никуда не можешь: выложить правки в GitHub и на NAS пользователь решает и делает сам.
+правки и тесты — в копии (git, curl, Python, Node.js и npm на машине есть). Показывай, что изменил (git diff, список файлов) и как проверил. @PANEL@
 Никогда: удалять систему, форматировать диски, выключать машину, менять пароли и пользователей; трогать данные и программу Rack Live (сервер не даст)."""
+PANEL_KEEP = ('Работающую панель Rack Live и её данные ты не трогаешь, и публиковать код никуда не можешь: '
+              'выложить правки в GitHub и на NAS пользователь решает и делает сам.')
+PANEL_FULL = ('Работающую панель Rack Live ты можешь менять — только через свой проект (сначала файлы проекта, потом project op=deploy); '
+              'данные панели (пароли устройств, вход, история) не трогаешь; публиковать код в GitHub не можешь — это решает человек.')
+FULL_ON = """ПОЛНЫЙ ДОСТУП — ты работаешь как самостоятельный агент (Claude Code, opencode): файлы, команды и свой проект, без карточек подтверждения.
+У тебя есть проект Rack Live — отдельная копия кода в твоей папке. Меняешь саму панель так: правишь файлы в проекте → project op=build → project op=test → project op=deploy
+(панель перезапускается на коде проекта; прежний код остаётся в .prev и вернётся сам, если новый не запустится; project op=rollback возвращает прежний вручную).
+Когда выкладывать: если человек прямо просит изменить или починить что-то в Rack Live — доводи до выкладки и проверь, что панель поднялась;
+если вы только обсуждаете или пробуете — не выкладывай, покажи, что получилось в проекте, и спроси.
+Действуй как на живом сервере: сначала посмотри, потом меняй; маленькими шагами; после правки собери, прогони тесты и только тогда выкладывай;
+в конце коротко отчитайся: что изменил, что проверил, что осталось.
+Никогда: не трогай данные панели (пароли устройств, вход, история, photos), не публикуй код в GitHub, не выключай и не переустанавливай машину, не меняй пароли и пользователей.
+Если для задачи нужна перезагрузка машины или установка системных пакетов — скажи об этом человеку и объясни, что произойдёт."""
 AGENT_MODE_TEXT = {
     'ask': 'Смотреть (читать файлы, команды чтения) можешь сам; запись файлов и остальные команды станут карточкой «Выполнить» — пользователь нажмёт сам. '
            'Когда показал карточку — остановись, скажи, что нужно нажать, и жди; продолжишь после результата.',
@@ -588,26 +603,33 @@ def _post(c, url, payload, headers):
         raise AiError(f'{host} не ответил за 3 минуты')
 
 
+PROJECT_TOOL = ('project', 'Твой проект Rack Live — отдельная копия кода в твоей папке (правь файлы обычными read_file/write_file/edit_file). '
+                             'op=status — состояние (git, версия, собран ли фронт); op=seed — создать проект (git clone репозитория с build.py и тестами); '
+                             'op=build — собрать фронт; op=test — прогнать smoke-тест проекта; '
+                             'op=deploy — выложить код проекта в работающую панель (прежний код в .prev, панель перезапускается, при сбое вернётся сама); '
+                             'op=rollback — вернуть прежний код панели вручную.',
+                {'op': ('string', 'status | seed | build | test | deploy | rollback')})
+
 MEMORY_TOOL = ('remember', 'Записать в память Frank (FRANK.md) правило, предпочтение или факт, который пользователь просит запомнить надолго — '
                            'память видна во всех разговорах. Пиши коротко, одной фразой, от третьего лица («Пользователь просит отвечать кратко»). '
                            'В request — дословная цитата просьбы пользователя из последнего сообщения; без неё появится карточка «Запомнить», и пользователь решит сам.',
                {'text': ('string', 'что запомнить, одной фразой'), 'request': ('string', 'дословная цитата просьбы пользователя')})
 
 
-def _tool_defs(actions, admin=False, agent=False):
+def _tool_defs(actions, admin=False, agent=False, full=False):
     return (TOOLS + [MEMORY_TOOL] + ([ACTION_TOOL, CLIENT_TOOL] if actions else []) + (ADMIN_TOOLS if actions and admin else [])
-            + (frank_agent.TOOLS if agent else []))
+            + (frank_agent.TOOLS if agent else []) + ([PROJECT_TOOL] if full else []))
 
 
-def _anthropic_tools(actions=False, admin=False, agent=False):
+def _anthropic_tools(actions=False, admin=False, agent=False, full=False):
     return [{'name': n, 'description': d, 'input_schema': {'type': 'object', 'properties': {k: {'type': t, 'description': ds} for k, (t, ds) in p.items()}}}
-            for n, d, p in _tool_defs(actions, admin, agent)]
+            for n, d, p in _tool_defs(actions, admin, agent, full)]
 
 
-def _openai_tools(actions=False, admin=False, agent=False):
+def _openai_tools(actions=False, admin=False, agent=False, full=False):
     return [{'type': 'function', 'function': {'name': n, 'description': d,
                                               'parameters': {'type': 'object', 'properties': {k: {'type': t, 'description': ds} for k, (t, ds) in p.items()}}}}
-            for n, d, p in _tool_defs(actions, admin, agent)]
+            for n, d, p in _tool_defs(actions, admin, agent, full)]
 
 
 def _context(app):
@@ -673,13 +695,17 @@ def build_system(app, c, summary=''):
     """the system prompt exactly as the model gets it (also used to measure how much of the window it takes)"""
     acts = bool(c.get('actions'))
     admin = acts and bool(c.get('admin'))
-    agent = bool(c.get('agent'))
+    full = bool(c.get('full'))
+    agent = bool(c.get('agent')) or full
     base = SYSTEM.replace(FIRST_LINE, AGENT_HEAD) if agent else SYSTEM
     system = base.replace('{ACTIONS}', (ACTIONS_ON + '\n- ' + ADMIN_ON) if admin else ACTIONS_ON if acts else ACTIONS_OFF) + '\n\n' + _context(app)
     if agent:
-        mode = c.get('agentMode') if c.get('agentMode') in frank_agent.MODES else 'ask'
+        mode = 'full' if full else (c.get('agentMode') if c.get('agentMode') in frank_agent.MODES else 'ask')
         system += '\n\n' + (AGENT_ON.replace('@WHERE@', frank_agent.where()).replace('@WORK@', frank_agent.work(app.store.dir))
-                            .replace('@FILES@', frankfiles.folder(app.store.dir)).replace('@MODE@', frank_agent.MODES[mode]).replace('@MODE_TEXT@', AGENT_MODE_TEXT[mode]))
+                            .replace('@FILES@', frankfiles.folder(app.store.dir)).replace('@MODE@', frank_agent.MODES[mode])
+                            .replace('@MODE_TEXT@', AGENT_MODE_TEXT[mode]).replace('@PANEL@', PANEL_FULL if full else PANEL_KEEP))
+    if full:
+        system += '\n\n' + FULL_ON + '\n\n' + frankdev.guide(app.store.dir, frankdev.panel_root())
     mem = frankfiles.memory_get(app.store.dir).strip()
     if mem:                                                     # FRANK.md: written or confirmed by the person (Settings, /memory, a pressed «Запомнить») — not by the network
         system += ('\n\nПамять Frank (FRANK.md) — правила и заметки самого пользователя. Учитывай их в каждом ответе, если они не противоречат '
@@ -694,7 +720,8 @@ def fixed_tokens(app, c, summary=''):
     """what every request carries before the chat itself: the system prompt and the tool descriptions"""
     acts = bool(c.get('actions'))
     admin = acts and bool(c.get('admin'))
-    return est_tokens(build_system(app, c, summary)), est_tokens(json.dumps(_openai_tools(acts, admin, bool(c.get('agent'))), ensure_ascii=False))
+    full = bool(c.get('full'))
+    return est_tokens(build_system(app, c, summary)), est_tokens(json.dumps(_openai_tools(acts, admin, bool(c.get('agent')) or full, full), ensure_ascii=False))
 
 
 def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
@@ -707,10 +734,11 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
         raise AiError('не задан ключ API — Настройки → Frank')
     acts = bool(c.get('actions'))
     admin = acts and bool(c.get('admin'))
-    agent = bool(c.get('agent'))
-    mode = c.get('agentMode') if c.get('agentMode') in frank_agent.MODES else 'ask'
-    rounds = AGENT_ROUNDS if agent else ROUNDS * 2 if admin else ROUNDS
-    max_ops = AGENT_OPS if agent else MAX_OPS
+    full = bool(c.get('full'))
+    agent = bool(c.get('agent')) or full
+    mode = 'full' if full else (c.get('agentMode') if c.get('agentMode') in frank_agent.MODES else 'ask')
+    rounds = FULL_ROUNDS if full else AGENT_ROUNDS if agent else ROUNDS * 2 if admin else ROUNDS
+    max_ops = FULL_OPS if full else AGENT_OPS if agent else MAX_OPS
     deepseek = 'deepseek.com' in c['base']
     system = build_system(app, c, summary)
     users = [str(m.get('text') or '') for m in chat if m.get('role') == 'user']
@@ -769,6 +797,39 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
             ops.append({'device': 'Рабочая машина', 'command': str(args.get('command')) if name == 'shell' else lab, 'kind': 'read' if kind == 'read' else 'change',
                         'ok': ok, 'out': out[:400]})
             used.append(lab[:60])
+            return out
+        if name == 'project':                              # полный доступ: свой проект Rack Live и путь обратно в панель
+            if not full:
+                return err('полный доступ выключен в настройках Frank (Настройки → Frank → «Полный доступ»)')
+            op = str(args.get('op') or 'status').lower()
+            lab = {'status': 'Смотрю проект Rack Live', 'seed': 'Создаю проект Rack Live', 'build': 'Собираю проект',
+                   'test': 'Проверяю проект', 'deploy': 'Выкладываю проект в панель', 'rollback': 'Откатываю панель'}.get(op)
+            if not lab:
+                return err('op: status, seed, build, test, deploy или rollback')
+            progress(lab + '…', used)
+            root, demo = frankdev.panel_root(), bool(getattr(app, 'demo', False))
+            try:
+                if op == 'status':
+                    out = json.dumps(frankdev.status(app.store.dir, root, demo, fresh=True), ensure_ascii=False, default=str)
+                elif op == 'seed':
+                    out = frankdev.seed(app.store.dir, root, demo, lambda s: progress(s, used))
+                elif op == 'build':
+                    out = frankdev.build(app.store.dir, lambda s: progress(s, used))
+                elif op == 'test':
+                    out = frankdev.test(app.store.dir, lambda s: progress(s, used))
+                elif op == 'deploy':
+                    out = frankdev.deploy(app.store.dir, root, demo, lambda s: progress(s, used))
+                else:
+                    out = frankdev.rollback(root, app.store.dir)
+            except frankdev.DevError as e:
+                app.store.add_event(None, 'Frank', 'warning', f'{lab}: {e}'[:250])
+                return err(str(e))
+            except Exception as e:                         # a broken project must not kill the whole answer
+                return err(f'{type(e).__name__}: {e}'[:300])
+            ops.append({'device': 'Проект Rack Live', 'command': lab, 'kind': 'read' if op == 'status' else 'change', 'ok': True, 'out': out[:400]})
+            used.append(lab)
+            if op != 'status':
+                app.store.add_event(None, 'Frank', 'info', f'{lab}: готово')
             return out
         if name == 'remember':
             t = re.sub(r'\s+', ' ', str(args.get('text') or '')).strip()[:1000]
@@ -896,7 +957,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
     def talk(hist):
         if c['proto'] == 'anthropic':
             msgs = list(hist)
-            tools = _anthropic_tools(acts, admin, agent)
+            tools = _anthropic_tools(acts, admin, agent, full)
             for rnd in range(rounds + 1):
                 progress('Думаю…' if rnd == 0 else 'Анализирую…', used)
                 body = {'model': c['model'], 'max_tokens': 16000, 'system': system, 'messages': msgs, 'tools': tools, 'fallbacks': 'default'}
@@ -929,7 +990,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
                 msgs.append({'role': 'user', 'content': results})
         else:
             msgs = [{'role': 'system', 'content': system}] + hist
-            tools = _openai_tools(acts, admin, agent)
+            tools = _openai_tools(acts, admin, agent, full)
             headers = {'Authorization': 'Bearer ' + c['key']} if c['key'] else {}
             if 'openrouter.ai' in c['base']:
                 headers.update({'X-Title': 'Rack Live', 'HTTP-Referer': 'https://github.com/mikolord/racklive'})

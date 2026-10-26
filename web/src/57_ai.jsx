@@ -490,11 +490,66 @@ function AdviceSettings({ ai }) {
   </div>;
 }
 
+/* «Полный доступ»: Frank как самостоятельный агент со своим проектом Rack Live (rackd/frankdev.py).
+   Панель привязана к проекту: правки в проекте → «Собрать» → «Проверить» → «Выложить в панель» (прежний код в .prev, панель перезапускается сама). */
+const PROJECT_OPS = [['seed', 'Создать проект', 'plus'], ['build', 'Собрать', 'wrench'], ['test', 'Проверить', 'check'],
+  ['deploy', 'Выложить в панель', 'upload'], ['rollback', 'Откатить', 'refresh']];
+function useProjectJob(onDone) {
+  const toast = useToast();
+  const [job, setJob] = useState(null);
+  const start = async op => {
+    try {
+      const r = await api('/api/ai/project', { method: 'POST', body: { op } });
+      if (r.job) setJob({ id: r.job, stage: 'Запуск…', done: false }); else { toast('Готово'); if (onDone) onDone(r); }
+      return r;
+    } catch (e) { toast(e.message, true); return null; }
+  };
+  useEffect(() => {
+    if (!job || job.done) return;
+    const t = setInterval(async () => {
+      try {
+        const j = await api('/api/dev/job', { method: 'POST', body: { job: job.id } });
+        setJob(x => ({ ...x, ...j }));
+        if (j.done) { toast(j.error ? 'Не получилось: ' + j.error : 'Готово', !!j.error); if (onDone) onDone(); }
+      } catch (e) { }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [job && job.id, job && job.done]);
+  return { job, start, running: !!job && !job.done };
+}
+function ProjectCard({ ai }) {
+  const { refresh } = useApp(); const confirm = useConfirm();
+  const p = ai.project || {};
+  const { job, start, running } = useProjectJob(() => refresh());
+  const ask = { deploy: 'Выложить код проекта в работающую панель? Прежний код сохранится в .prev, панель перезапустится на несколько секунд.',
+    rollback: 'Вернуть прежний код панели и перезапустить её?', seed: 'Создать проект: склонировать Rack Live с GitHub в папку Frank?' };
+  const run = async op => {
+    if (ask[op] && !(await confirm(ask[op], { danger: op !== 'seed', ok: 'Продолжить' }))) return;
+    await start(op);
+  };
+  return <div className="col" style={{ gap: 8, marginTop: 10, padding: 12, borderRadius: 12, border: '1px solid var(--line2)', background: 'var(--bg2)' }}>
+    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}><span className="badge">проект Frank</span>
+      <b className="mono" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{p.path || '…'}</b></div>
+    <div className="dim3" style={{ fontSize: 12, lineHeight: 1.45 }}>
+      {p.exists ? <>версия {p.version || '?'}{p.runningVersion && p.runningVersion !== p.version ? ` · в панели сейчас ${p.runningVersion}` : ' · совпадает с панелью'}
+        {p.git ? ` · ${p.git.branch} @ ${p.git.head}${p.git.changes ? `, изменено файлов: ${p.git.changes}` : ', без изменений'}` : ' · без git (копия кода)'}
+        {p.build && p.build.stale ? ' · фронт не собран после правок' : ''}
+        {p.lastDeploy && p.lastDeploy.t ? ` · выложено ${new Date(p.lastDeploy.t * 1000).toLocaleString('ru-RU')}` : ''}
+        {p.lastTest && p.lastTest.t ? ` · тесты ${p.lastTest.ok ? 'прошли' : 'нашли ошибки'}` : ''}</>
+        : 'Проекта ещё нет: «Создать проект» склонирует Rack Live с GitHub (с build.py и тестами). Без сети — скопирует работающий код.'}</div>
+    {p.exists && !p.canDeploy ? <div style={{ fontSize: 12, color: 'var(--orange)' }}>Выкладка сейчас недоступна: {p.why}</div> : null}
+    <div className="row wrap" style={{ gap: 6 }}>
+      {PROJECT_OPS.map(([op, label, icon]) => <Btn key={op} size="sm" icon={icon} busy={running && job && job.stage && job.stage === label}
+        onClick={() => !running && run(op)}>{label}</Btn>)}
+    </div>
+    {running ? <div className="row" style={{ gap: 8, fontSize: 12.5 }}><span className="spin-dot" />{(job && job.stage) || 'Работаю…'}</div> : null}
+  </div>;
+}
 function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
   const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false, admin: !!ai.admin,
-    window: ai.window || 0, autoCompact: ai.autoCompact !== false, agent: !!ai.agent, agentMode: ai.agentMode || 'ask' }));
+    window: ai.window || 0, autoCompact: ai.autoCompact !== false, agent: !!ai.agent, agentMode: ai.agentMode || 'ask', full: !!ai.full }));
   const [res, setRes] = useState(null); const [mem, setMem] = useState(() => new URLSearchParams(location.search).get('memory') === '1');
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
@@ -522,10 +577,20 @@ function AiCard() {
         <div className={'row' + (s.agent ? ' ai-admin-on' : '')}><Switch on={!!s.agent} onChange={v => set('agent', v)} /><div className="grow"><div>Агент: файлы и команды <span className="ai-badge">как Claude Code</span></div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Frank становится универсальным помощником: читает и пишет файлы, ищет по ним, выполняет команды на машине, где работает Rack Live
             ({ai.agentWhere}). Своя рабочая папка для проектов и скриптов; ваши вложения он тоже может открыть. Не только про сеть — любые задачи.</div>
-          {s.agent ? <div style={{ marginTop: 8 }}><Seg value={s.agentMode || 'ask'} onChange={v => set('agentMode', v)} options={AGENT_MODES.map(([value, label]) => ({ value, label }))} />
-            <div className="dim3" style={{ fontSize: 12.5, marginTop: 6 }}>{(AGENT_MODES.find(x => x[0] === (s.agentMode || 'ask')) || [])[2]} Каждое изменение и команда — в журнале событий.</div>
-            {s.agentMode === 'full' ? <div className="ai-admin-warn">Модель может ошибиться — например, удалить не тот файл в рабочей папке или установить лишнее. Данные и программа Rack Live
+          {s.agent ? <div style={{ marginTop: 8 }}>{s.full ? null : <Seg value={s.agentMode || 'ask'} onChange={v => set('agentMode', v)} options={AGENT_MODES.map(([value, label]) => ({ value, label }))} />}
+            <div className="dim3" style={{ fontSize: 12.5, marginTop: 6 }}>{s.full ? 'Права: полный доступ — все шаги без подтверждения (включается галочкой «Полный доступ» ниже).'
+              : ((AGENT_MODES.find(x => x[0] === (s.agentMode || 'ask')) || [])[2] + ' Каждое изменение и команда — в журнале событий.')}</div>
+            {!s.full && s.agentMode === 'full' ? <div className="ai-admin-warn">Модель может ошибиться — например, удалить не тот файл в рабочей папке или установить лишнее. Данные и программа Rack Live
               защищены, разрушительные команды запрещены всегда, но остальное Frank делает без вопросов.</div> : null}</div> : null}</div></div>
+        {s.agent ? <div className={'row' + (s.full ? ' ai-admin-on' : '')}><Switch on={!!s.full} onChange={v => setS(x => ({ ...x, full: v, agent: v ? true : x.agent, agentMode: v ? 'full' : (x.agentMode === 'full' ? 'edits' : x.agentMode) }))} /><div className="grow">
+          <div>Полный доступ <span className="ai-badge">как opencode</span></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Frank становится самостоятельным агентом со своим проектом Rack Live: работает без карточек, правит код проекта, собирает,
+            проверяет тестами и по вашей просьбе выкладывает его в панель — панель остаётся связанной с проектом, что в проекте, то и работает.
+            По умолчанию выключено: без галочки Frank такой же, как раньше.</div>
+          {s.full && !ai.full ? <div className="ai-admin-warn">Сохраните настройки — после этого Frank получит полный доступ и появится карточка проекта.</div> : null}
+          {s.full && ai.full ? <div className="ai-admin-warn">Полный доступ разрешает модели менять и саму панель — по вашей просьбе. Прежний код всегда остаётся в .prev: «Откатить» вернёт его,
+            и при сбое панель откатится сама. Данные панели (пароли устройств, вход, история) Frank не трогает, разрушительные команды запрещены всегда.</div> : null}
+          {ai.full ? <ProjectCard ai={ai} /> : null}</div></div> : null}
         <div className="row"><span className="ico-circle"><Icon name="brain" size={16} /></span><div className="grow"><div>Память Frank (FRANK.md)</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Ваши правила и заметки, которые Frank читает в каждом разговоре — как CLAUDE.md у Claude Code. Попросите «запомни…» в разговоре или впишите сами.</div></div>
           <Btn size="sm" onClick={() => setMem(true)}>Открыть</Btn></div>
