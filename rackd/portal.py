@@ -24,7 +24,7 @@ CONFIGS = ('network', 'wireless', 'dhcp', 'firewall', 'opennds')
 PORT_ROLES = ('main', 'guest', 'trunk', 'off')
 PORT_TEXT = {'main': 'основная сеть', 'guest': 'гостевая (портал)', 'trunk': 'обе сети (для точек доступа)', 'off': 'выключен'}
 
-DEFAULTS = {'role': 'gateway', 'mainSsid': '', 'mainKey': '', 'guestSsid': 'Guest', 'guestKey': '', 'bands': ['2g', '5g'],
+DEFAULTS = {'role': 'gateway', 'mainWifi': True, 'mainSsid': '', 'mainKey': '', 'guestSsid': 'Guest', 'guestKey': '', 'bands': ['2g', '5g'],
             'lan': '192.168.10.1/24', 'guest': '10.20.0.1/22', 'vlan': 10, 'portal': True, 'login': 'click', 'password': '',
             'hours': 24, 'down': 0, 'up': 0, 'name': 'Гостевой Wi-Fi', 'rules': '', 'after': 'https://ya.ru', 'template': 'default', 'ports': {},
             'mgmtWan': True, 'country': 'RU', 'smsHost': '', 'smsUser': 'root', 'smsPort': 22, 'smsPass': '', 'smsReady': False, 'smsInfo': ''}
@@ -88,11 +88,15 @@ def validate(p, hw, strict_sms=False):
     """профиль от интерфейса + что есть на роутере (порты, радио, WAN) → чистый профиль или ValueError с понятной причиной"""
     p = dict(DEFAULTS, **{k: v for k, v in (p or {}).items() if k in DEFAULTS})
     out = {'role': 'gateway'}
-    out['mainSsid'] = _ssid(p['mainSsid'], 'Основная Wi-Fi')
-    out['mainKey'] = _key(p['mainKey'], 'Основная Wi-Fi', True)
+    out['mainWifi'] = p['mainWifi'] is not False        # без основной Wi-Fi: на роутере только гостевая сеть (Wi-Fi раздают другие точки)
+    if out['mainWifi']:
+        out['mainSsid'] = _ssid(p['mainSsid'], 'Основная Wi-Fi')
+        out['mainKey'] = _key(p['mainKey'], 'Основная Wi-Fi', True)
+    else:
+        out['mainSsid'], out['mainKey'] = str(p['mainSsid'] or ''), str(p['mainKey'] or '')
     out['guestSsid'] = _ssid(p['guestSsid'], 'Гостевая Wi-Fi')
     out['guestKey'] = _key(p['guestKey'], 'Гостевая Wi-Fi', False)
-    if out['guestSsid'] == out['mainSsid']:
+    if out['mainWifi'] and out['guestSsid'] == out['mainSsid']:
         raise ValueError('У основной и гостевой Wi-Fi должны быть разные названия')
     have = [r['band'] for r in hw.get('radios', [])]
     out['bands'] = [b for b in ('2g', '5g') if b in (p['bands'] or []) and b in have]
@@ -202,7 +206,20 @@ for p in $(jsonfilter -i /etc/board.json -e '@.network.lan.ports[*]' 2>/dev/null
 for r in $(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)=wifi-device$/\1/p"); do echo "@@radio $r $(uci -q get wireless.$r.band)"; done
 V=$( (apk list --installed 2>/dev/null | grep -o '^opennds-[0-9][^ ]*' | sed 's/^opennds-//') || true); [ -z "$V" ] && V=$(opkg list-installed 2>/dev/null | awk '$1=="opennds"{print $3}'); echo "@@nds ${V:--} $(uci -q get opennds.@opennds[0].enabled || echo 0) $(pidof opennds >/dev/null && echo 1 || echo 0)"
 [ -f /etc/rl-portal/profile.json ] && echo "@@profile $(cat /etc/rl-portal/profile.json)"
-uci -q show network | grep -q '=switch_vlan' && echo "@@swconfig 1"
+if uci -q show network | grep -q '=switch_vlan'; then
+  echo "@@swconfig 1"
+  i=0
+  for SW in $(uci -q show network | sed -n "s/^network\.@switch\[[0-9]*\]\.name='\(.*\)'$/\1/p"); do
+    ETH=$(jsonfilter -i /etc/board.json -e "@.switch.$SW.ports[@.device].device" 2>/dev/null | head -1)
+    CPU=$(jsonfilter -i /etc/board.json -e "@.switch.$SW.ports[@.device].num" 2>/dev/null | head -1)
+    VID=$(jsonfilter -i /etc/board.json -e "@.switch.$SW.roles[@.role='lan'].device" 2>/dev/null | head -1 | sed 's/.*\.//')
+    for n in $(jsonfilter -i /etc/board.json -e "@.switch.$SW.ports[@.role='lan'].num" 2>/dev/null); do
+      L=$(swconfig dev $SW port $n get link 2>/dev/null); U=down; case "$L" in *link:up*) U=up;; esac
+      echo "@@swp s${i}p${n} $SW $n ${CPU:-0} ${ETH:-eth$i} ${VID:-1} $U $(echo "$L" | sed -n 's/.*speed:\([0-9]*\).*/\1/p' | grep . || echo 0)"
+    done
+    i=$((i+1))
+  done
+fi
 [ ! -f /etc/rl-portal/profile.json ] && [ "$(uci -q get opennds.@opennds[0].enabled)" = 1 ] && echo "@@foreign $(uci -q get opennds.@opennds[0].gatewayname | tr -d '|')|$(basename "$(uci -q get opennds.@opennds[0].themespec_path)" 2>/dev/null)|$(uci -q get opennds.@opennds[0].sessiontimeout)"
 command -v ndsctl >/dev/null 2>&1 && echo "@@clients $(ndsctl json 2>/dev/null | grep -c '"mac"')"
 echo "@@wanip $(ip -4 -o addr show dev $(uci -q get network.wan.device || echo $W) 2>/dev/null | awk '{print $4}' | head -1)"
@@ -223,7 +240,7 @@ echo "@@end"
 
 def parse_status(out):
     hw = {'model': '', 'rel': '', 'pm': 'opkg', 'free': 0, 'lan': [], 'wan': '', 'links': {}, 'radios': [], 'nds': None, 'ndsEnabled': False,
-          'ndsRunning': False, 'profile': None, 'foreign': None, 'swconfig': False, 'clients': None, 'wanip': '', 'lanip': '', 'via': '', 'mgmt': '', 'rollback': False, 'wanmac': '', 'nopass': False}
+          'ndsRunning': False, 'profile': None, 'foreign': None, 'swconfig': False, 'swports': {}, 'clients': None, 'wanip': '', 'lanip': '', 'via': '', 'mgmt': '', 'rollback': False, 'wanmac': '', 'nopass': False}
     for line in out.splitlines():
         if not line.startswith('@@'):
             continue
@@ -253,8 +270,13 @@ def parse_status(out):
                 hw['profile'] = json.loads(v)
             except ValueError:
                 pass
-        elif k == 'swconfig':                   # старый коммутатор (swconfig, switch_vlan): установка плагина рассчитана на DSA (bridge-vlan)
+        elif k == 'swconfig':                   # старый коммутатор (swconfig, switch_vlan, как MikroTik RB2011): VLAN настраиваются иначе, чем в DSA (bridge-vlan)
             hw['swconfig'] = True
+        elif k == 'swp':                        # порт s<коммутатор>p<номер> <switch> <номер> <порт CPU> <eth CPU> <vlan LAN> <up|down> <скорость>
+            a = v.split()
+            if len(a) >= 8 and a[2].isdigit() and a[3].isdigit() and a[5].isdigit():
+                hw['swports'][a[0]] = {'switch': a[1], 'num': int(a[2]), 'cpu': int(a[3]), 'eth': a[4], 'vid': int(a[5]), 'up': a[6] == 'up',
+                                       'speed': int(a[7]) if a[7].isdigit() and int(a[7]) > 0 else None}
         elif k == 'foreign':                    # OpenNDS включён, а нашего профиля нет: портал настроен вручную (имя | файл темы | минут сессии)
             name, theme, mins = (v.split('|') + ['', '', ''])[:3]
             hw['foreign'] = {'name': name.strip() or 'без имени', 'theme': theme.strip(), 'hours': round(int(mins) / 60, 1) if mins.strip().isdigit() else None}
@@ -266,6 +288,10 @@ def parse_status(out):
             hw['nopass'] = True
     if hw['wanip'] and '/' not in hw['wanip']:
         hw['wanip'] = ''
+    if hw['swconfig'] and hw['swports']:        # порты у такого роутера — гнёзда коммутатора, а не имена из board.json
+        hw['lan'] = list(hw['swports'])
+        for n, sp in hw['swports'].items():
+            hw['links'][n] = {'up': sp['up'], 'speed': sp['speed']}
     return hw
 
 
@@ -455,6 +481,35 @@ def check_root_pass(v):
     return v
 
 
+def _swconfig_net(p, hw):
+    """Сеть для роутеров со старым коммутатором (swconfig, switch_vlan — например MikroTik RB2011), где нет bridge-vlan.
+    Основная сеть остаётся на br-lan (VLAN 1 коммутатора), гостевая — отдельный VLAN коммутатора и свой мост br-guest.
+    Порты: main — только VLAN 1; guest — только гостевой VLAN; trunk — VLAN 1 без тега и гостевой с тегом; off — ни в одном.
+    VLAN с WAN и всё, чего нет в списке портов, не трогаем: управление по WAN от перенастройки не зависит."""
+    v, roles, sp = p['vlan'], p['ports'], hw['swports']
+    by = {}
+    for name, role in roles.items():
+        if name in sp:
+            by.setdefault(sp[name]['switch'], []).append((role, sp[name]))
+    out = [r'''for x in $(uci -q show network | sed -n "s/^network\.\(rl_[^.=]*\)=\(switch_vlan\|device\)$/\1/p"); do uci delete network.$x; done
+''']
+    guest_eth = []
+    for sw in sorted(by):
+        items = by[sw]
+        cpu, eth, vid = items[0][1]['cpu'], items[0][1]['eth'], items[0][1]['vid']
+        main = [str(i['num']) for r, i in items if r in ('main', 'trunk')]
+        guest = [str(i['num']) for r, i in items if r == 'guest'] + [f"{i['num']}t" for r, i in items if r == 'trunk']
+        out.append(f'''for s in $(uci -q show network | sed -n "s/^network\\.\\(@switch_vlan\\[[0-9]*\\]\\)\\.device='{sw}'$/\\1/p"); do [ "$(uci -q get network.$s.vlan)" = "{vid}" ] && uci set network.$s.ports={_q(' '.join(main + [f'{cpu}t']))}; done
+''')
+        if guest:
+            out.append(f"uci set network.rl_vg_{sw}=switch_vlan; uci set network.rl_vg_{sw}.device={sw}; uci set network.rl_vg_{sw}.vlan={v}; "
+                       f"uci set network.rl_vg_{sw}.ports={_q(' '.join(guest + [f'{cpu}t']))}\n")
+            guest_eth.append(f'{eth}.{v}')
+    out.append('uci set network.rl_brg=device; uci set network.rl_brg.name=br-guest; uci set network.rl_brg.type=bridge\n')
+    out += [f'uci add_list network.rl_brg.ports={_q(e)}\n' for e in guest_eth]
+    return ''.join(out)
+
+
 def apply_script(p, hw, b64, hello_url, token, root_pass=''):
     """полная настройка роли «Главный роутер»: пакеты и файлы — сразу; сеть — фоном после ответа, с таймером отката"""
     lan, guest = ipaddress.ip_interface(p['lan']), ipaddress.ip_interface(p['guest'])
@@ -492,20 +547,26 @@ RLEOF
 setsid sh -c "sleep ''' + str(ROLLBACK_SEC) + r'''; sh /tmp/rl-rollback.sh" </dev/null >/dev/null 2>&1 &
 echo $! > /tmp/rl-rollback.pid
 echo "@@step Записываю настройки сети"
-''' + (f"printf '%s\\n%s\\n' {_q(root_pass)} {_q(root_pass)} | passwd root >/dev/null 2>&1 && echo '@@rootpass ok'\n" if root_pass else '') + r'''BR=$(for s in $(uci -q show network | sed -n "s/^network\.\([^.=]*\)=device$/\1/p"); do [ "$(uci -q get network.$s.name)" = br-lan ] && echo $s; done | head -1)
+''' + (f"printf '%s\\n%s\\n' {_q(root_pass)} {_q(root_pass)} | passwd root >/dev/null 2>&1 && echo '@@rootpass ok'\n" if root_pass else '')]
+    if hw.get('swconfig'):
+        s.append(_swconfig_net(p, hw))
+        lan_dev, guest_dev = 'br-lan', 'br-guest'
+    else:
+        s.append(r'''BR=$(for s in $(uci -q show network | sed -n "s/^network\.\([^.=]*\)=device$/\1/p"); do [ "$(uci -q get network.$s.name)" = br-lan ] && echo $s; done | head -1)
 [ -z "$BR" ] && { BR=rl_br; uci set network.rl_br=device; uci set network.rl_br.name=br-lan; uci set network.rl_br.type=bridge; }
 uci -q delete network.$BR.ports
-''']
-    s += [f'uci add_list network.$BR.ports={_q(n)}\n' for n in br_ports]
-    s.append(f'''for x in $(uci -q show network | sed -n "s/^network\\.\\(rl_[^.=]*\\)=bridge-vlan$/\\1/p"); do uci delete network.$x; done
+''')
+        s += [f'uci add_list network.$BR.ports={_q(n)}\n' for n in br_ports]
+        s.append(f'''for x in $(uci -q show network | sed -n "s/^network\\.\\(rl_[^.=]*\\)=bridge-vlan$/\\1/p"); do uci delete network.$x; done
 uci set network.rl_v1=bridge-vlan; uci set network.rl_v1.device=br-lan; uci set network.rl_v1.vlan=1
 uci set network.rl_vg=bridge-vlan; uci set network.rl_vg.device=br-lan; uci set network.rl_vg.vlan={v}
 ''')
-    s += [f'uci add_list network.rl_v1.ports={_q(x)}\n' for x in main_ports]
-    s += [f'uci add_list network.rl_vg.ports={_q(x)}\n' for x in guest_ports]
-    s.append(f'''uci set network.lan.device=br-lan.1; uci set network.lan.proto=static; uci set network.lan.ipaddr={_q(str(lan))}
+        s += [f'uci add_list network.rl_v1.ports={_q(x)}\n' for x in main_ports]
+        s += [f'uci add_list network.rl_vg.ports={_q(x)}\n' for x in guest_ports]
+        lan_dev, guest_dev = 'br-lan.1', f'br-lan.{v}'
+    s.append(f'''uci set network.lan.device={lan_dev}; uci set network.lan.proto=static; uci set network.lan.ipaddr={_q(str(lan))}
 uci -q delete network.lan.netmask; uci -q delete network.lan.gateway; uci -q delete network.lan.dns
-uci set network.rl_guest=interface; uci set network.rl_guest.proto=static; uci set network.rl_guest.device=br-lan.{v}; uci set network.rl_guest.ipaddr={_q(str(guest))}
+uci set network.rl_guest=interface; uci set network.rl_guest.proto=static; uci set network.rl_guest.device={guest_dev}; uci set network.rl_guest.ipaddr={_q(str(guest))}
 uci set network.wan.device={_q(hw['wan'] or 'wan')}; uci set network.wan.proto=dhcp
 uci -q delete dhcp.lan.ignore; uci set dhcp.lan.interface=lan; uci set dhcp.lan.start={l_start}; uci set dhcp.lan.limit={l_limit}; uci set dhcp.lan.leasetime=12h
 uci set dhcp.lan.dhcpv4=server; uci set dhcp.lan.dhcpv6=server; uci set dhcp.lan.ra=server
@@ -530,10 +591,11 @@ uci add_list firewall.rl_mgmt.src_ip=10.0.0.0/8; uci add_list firewall.rl_mgmt.s
         enc_main = f"uci set wireless.rl_main_{band}.encryption=sae-mixed; uci set wireless.rl_main_{band}.key={_q(p['mainKey'])}"
         enc_g = (f"uci set wireless.rl_guest_{band}.encryption=sae-mixed; uci set wireless.rl_guest_{band}.key={_q(p['guestKey'])}" if p['guestKey']
                  else f"uci set wireless.rl_guest_{band}.encryption=none")
-        s.append(f'''uci set wireless.{r}.disabled=0; uci set wireless.{r}.country={p['country']}
-uci set wireless.rl_main_{band}=wifi-iface; uci set wireless.rl_main_{band}.device={r}; uci set wireless.rl_main_{band}.mode=ap; uci set wireless.rl_main_{band}.network=lan; uci set wireless.rl_main_{band}.ssid={_q(p['mainSsid'])}
+        main_lines = (f'''uci set wireless.rl_main_{band}=wifi-iface; uci set wireless.rl_main_{band}.device={r}; uci set wireless.rl_main_{band}.mode=ap; uci set wireless.rl_main_{band}.network=lan; uci set wireless.rl_main_{band}.ssid={_q(p['mainSsid'])}
 {enc_main}
-uci set wireless.rl_guest_{band}=wifi-iface; uci set wireless.rl_guest_{band}.device={r}; uci set wireless.rl_guest_{band}.mode=ap; uci set wireless.rl_guest_{band}.network=rl_guest; uci set wireless.rl_guest_{band}.ssid={_q(p['guestSsid'])}
+''' if p.get('mainWifi', True) else '')
+        s.append(f'''uci set wireless.{r}.disabled=0; uci set wireless.{r}.country={p['country']}
+{main_lines}uci set wireless.rl_guest_{band}=wifi-iface; uci set wireless.rl_guest_{band}.device={r}; uci set wireless.rl_guest_{band}.mode=ap; uci set wireless.rl_guest_{band}.network=rl_guest; uci set wireless.rl_guest_{band}.ssid={_q(p['guestSsid'])}
 uci set wireless.rl_guest_{band}.isolate=1
 {enc_g}
 ''')
@@ -552,7 +614,7 @@ n=0; while ! have opennds && [ $n -lt 6 ]; do
 done
 if have opennds; then
   uci -q get opennds.@opennds[0] >/dev/null || uci add opennds opennds >/dev/null
-  uci set opennds.@opennds[0].enabled={1 if p['portal'] else 0}; uci set opennds.@opennds[0].gatewayinterface=br-lan.{v}
+  uci set opennds.@opennds[0].enabled={1 if p['portal'] else 0}; uci set opennds.@opennds[0].gatewayinterface={guest_dev}
   uci set opennds.@opennds[0].gatewayname={_q(p['name'])}; uci set opennds.@opennds[0].login_option_enabled=3
   uci set opennds.@opennds[0].themespec_path=/usr/lib/opennds/theme_rl.sh; uci set opennds.@opennds[0].sessiontimeout={p['hours'] * 60}
   uci set opennds.@opennds[0].preauthidletimeout=15; uci set opennds.@opennds[0].authidletimeout={p['hours'] * 60}
@@ -616,7 +678,7 @@ echo "@@confirmed"
 
 VERIFY = r'''[ -f /tmp/rl-restart.done ] && echo "@@done 1"
 [ -f /tmp/rl-portal-error ] && echo "@@err $(cat /tmp/rl-portal-error)"
-echo "@@g $(ip -4 -o addr show dev br-lan.$(uci -q get network.rl_vg.vlan) 2>/dev/null | awk '{print $4}' | head -1)"
+echo "@@g $(ip -4 -o addr show dev $(uci -q get network.rl_guest.device) 2>/dev/null | awk '{print $4}' | head -1)"
 echo "@@w $(ubus call network.wireless status 2>/dev/null | grep -c '"ifname"')"
 echo "@@n $(pidof opennds >/dev/null && echo 1 || echo 0)"
 echo "@@d $(pidof dnsmasq >/dev/null && echo 1 || echo 0)"

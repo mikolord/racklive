@@ -385,7 +385,9 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                           {'label': 'Кабель провайдера в WAN-порту' + (f" ({hw['wanip']})" if hw['wanip'] else ''), 'ok': bool((hw['links'].get(hw['wan']) or {}).get('up')), 'optional': True,
                            'hint': 'без него гости не получат интернет' if not (hw['links'].get(hw['wan']) or {}).get('up') else ''}]
         if hw.get('swconfig') and not prof:
-            card['checks'].append({'label': 'У роутера старый коммутатор (swconfig, как у MikroTik RB2011): плагин рассчитан на современные роутеры (DSA) и здесь сеть настроить не сможет', 'ok': False})
+            card['checks'].append({'label': 'Старый коммутатор (swconfig, как у MikroTik RB2011): гостевая сеть настроится отдельным VLAN коммутатора и своим мостом', 'ok': True})
+            if hw.get('via') and hw['via'] != hw.get('wan'):
+                card['checks'].append({'label': f"Rack Live заходит на роутер через {hw['via']}, а не через WAN ({hw.get('wan')}): на этой модели порты делятся по VLAN, и связь могла бы оборваться. Подключите роутер к сети через порт WAN", 'ok': False})
         fg = None if prof else hw.get('foreign')
         if fg:                                  # портал уже стоит, но не нашим плагином: показываем его и не даём плагину его перенастроить
             card['foreign'] = fg
@@ -406,9 +408,11 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
         if op == 'install':
             prog('Проверяю роутер…')
             hw = status(cfg)
-            if hw.get('swconfig') and not hw['profile']:
-                raise DriverError('у этого роутера старый коммутатор (swconfig, как у MikroTik RB2011). Установка плагина настраивает гостевую сеть для современных роутеров (DSA) '
-                                  'и здесь могла бы нарушить сеть, поэтому она отключена — ничего не изменено.')
+            if hw.get('swconfig') and hw.get('via') and hw['via'] != hw.get('wan'):
+                raise DriverError(f"Rack Live заходит на роутер через {hw['via']}, а не через WAN ({hw.get('wan')}). У роутера со старым коммутатором (swconfig) порты делятся по VLAN, "
+                                  'и при перенастройке связь могла бы оборваться. Подключите роутер к сети через порт WAN — ничего не изменено.')
+            if hw.get('swconfig') and not hw['swports']:
+                raise DriverError('не удалось определить порты старого коммутатора (swconfig) — ничего не изменено.')
             if hw['foreign'] and not hw['profile']:
                 raise DriverError(f"на роутере уже работает портал «{hw['foreign']['name']}», настроенный вручную. Установка плагина перенастроила бы сеть, Wi-Fi, DHCP и "
                                   'межсетевой экран и заменила бы его, поэтому она отключена — ничего не изменено.')

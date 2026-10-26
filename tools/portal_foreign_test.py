@@ -56,21 +56,72 @@ except DriverError as e:
     check('установка поверх ручного портала отказана', 'настроенный вручную' in str(e))
 check('на роутер ничего не записано (только чтение статуса)', len(sent) == 1 and sent[0] == portal.STATUS)
 
-# a router with the old switch (swconfig, MikroTik RB2011): no portal at all, but the plugin must not try to set it up
-OLD_SWITCH = MANUAL.replace('@@foreign Mira|theme_mira.sh|1440\n', '@@swconfig 1\n').replace('@@nds 10.3.1-r1 1 1', '@@nds - 0 0')
+# the old switch (swconfig) of the MikroTik RB2011: ports come from board.json/swconfig, the plugin builds the guest VLAN itself
+SW = '''@@swconfig 1
+@@swp s0p2 switch0 2 0 eth0 1 up 1000
+@@swp s0p3 switch0 3 0 eth0 1 down 0
+@@swp s0p4 switch0 4 0 eth0 1 down 0
+@@swp s0p5 switch0 5 0 eth0 1 down 0
+@@swp s0p6 switch0 6 0 eth0 1 up 1000
+@@swp s1p1 switch1 1 0 eth1 1 down 0
+@@swp s1p2 switch1 2 0 eth1 1 down 0
+'''
+OLD_SWITCH = MANUAL.replace('@@foreign Mira|theme_mira.sh|1440\n', SW).replace('@@nds 10.3.1-r1 1 1', '@@nds - 0 0').replace('@@wan eth0.2', '@@wan eth0.2\n@@via eth0.2')
 hw2 = portal.parse_status(OLD_SWITCH)
 check('старый коммутатор распознан', hw2['swconfig'] is True and hw2['foreign'] is None and portal.parse_status(OURS)['swconfig'] is False)
-check('скрипт ищет switch_vlan', '=switch_vlan' in portal.STATUS and '@@swconfig' in portal.STATUS)
+check('порты — гнёзда коммутатора', hw2['lan'] == ['s0p2', 's0p3', 's0p4', 's0p5', 's0p6', 's1p1', 's1p2'] and hw2['swports']['s0p2']['eth'] == 'eth0' and hw2['swports']['s0p2']['cpu'] == 0)
+check('связь по портам видна', hw2['links']['s0p2'] == {'up': True, 'speed': 1000} and hw2['links']['s0p3']['up'] is False)
+check('скрипт ищет switch_vlan и порты', '=switch_vlan' in portal.STATUS and '@@swp' in portal.STATUS)
 card2 = OpenWrt._portal_card(hw2)
-check('карточка: установка заблокирована из-за swconfig', any(not c['ok'] and 'swconfig' in c['label'] for c in card2['checks']))
-sent.clear()
-drv._ssh = lambda cfg, script, timeout=30: (sent.append(script), OLD_SWITCH)[1]
+check('карточка: установка разрешена (все проверки пройдены)', all(c['ok'] or c.get('optional') for c in card2['checks']))
+check('карточка: про коммутатор сказано, мешающих проверок нет', any('Старый коммутатор' in c['label'] and c['ok'] for c in card2['checks']) and not any('заходит на роутер через' in c['label'] for c in card2['checks']))
+card3 = OpenWrt._portal_card(portal.parse_status(OLD_SWITCH.replace('@@via eth0.2', '@@via br-lan')))
+check('карточка: через LAN управлять нельзя', any('заходит на роутер через' in c['label'] and not c['ok'] for c in card3['checks']))
+
+HWF = dict(hw2, radios=[{'name': 'radio0', 'band': '2g'}], wan='eth0.2', wanip='192.168.8.10/24')
+PROF = portal.validate(dict(mainSsid='Mira-Router', mainKey='long-enough-key', guestSsid='Mira Guest', login='click', vlan=10,
+                            ports={'s0p2': 'guest'}), HWF)
+check('профиль принят, порт s0p2 гостевой', PROF['ports']['s0p2'] == 'guest' and PROF['ports']['s0p3'] == 'main' and PROF['ports']['s1p1'] == 'main')
+S = portal.apply_script(PROF, HWF, 'AAAA', 'http://192.168.1.3:9998', 'tok')
+check('swconfig: гостевой VLAN на switch0 (порт 2 без тега + CPU с тегом)', "uci set network.rl_vg_switch0=switch_vlan" in S and "network.rl_vg_switch0.vlan=10" in S and "network.rl_vg_switch0.ports='2 0t'" in S)
+check('swconfig: у switch1 гостевого VLAN нет', 'rl_vg_switch1' not in S)
+check('swconfig: основной VLAN без гостевого порта', "ports='3 4 5 6 0t'" in S and "ports='1 2 0t'" in S)
+check('swconfig: гостевой мост br-guest из eth0.10', "network.rl_brg.name=br-guest" in S and "add_list network.rl_brg.ports='eth0.10'" in S)
+check('swconfig: гостевая сеть и портал на br-guest', 'network.rl_guest.device=br-guest' in S and 'gatewayinterface=br-guest' in S and 'network.lan.device=br-lan;' in S)
+check('swconfig: нет DSA-команд', 'bridge-vlan' not in S and 'br-lan.1' not in S)
+check('swconfig: WAN-VLAN (vlan 2) не трогаем', "= \"2\"" not in S and 'eth0.2' not in S.split('Записываю настройки сети', 1)[1].split('uci set network.wan.device', 1)[0])
+check('откат и проверка работают для обоих типов', 'rl-rollback.sh' in S and 'network.rl_guest.device' in portal.VERIFY and 'rl_vg.vlan' not in portal.VERIFY)
+
+# the same profile on a router with the modern bridge (DSA) is built as before
+HWD = dict(HWF, swconfig=False, swports={}, lan=['lan1', 'lan2', 'lan3', 'lan4'])
+PD = portal.validate(dict(mainSsid='Home', mainKey='long-enough-key', guestSsid='Guest', login='click', vlan=10, ports={'lan4': 'guest'}), HWD)
+SD = portal.apply_script(PD, HWD, 'AAAA', 'http://192.168.1.3:9998', 'tok')
+check('DSA: всё как раньше (bridge-vlan, br-lan.1, br-lan.10)', 'bridge-vlan' in SD and 'network.lan.device=br-lan.1;' in SD and 'network.rl_guest.device=br-lan.10' in SD and 'gatewayinterface=br-lan.10' in SD and 'br-guest' not in SD)
+
+# one network only: no main Wi-Fi on the router, the guest network is called Mira_5/1 (the same name the Keenetic access points broadcast)
+PN = portal.validate(dict(mainWifi=False, guestSsid='Mira_5/1', login='click', vlan=10, guest='192.168.88.1/24', ports={'s0p2': 'guest'}), HWF)
+check('без основной Wi-Fi: профиль принят без её названия и пароля', PN['mainWifi'] is False and PN['guestSsid'] == 'Mira_5/1' and PN['guest'] == '192.168.88.1/24')
+SN = portal.apply_script(PN, HWF, 'AAAA', 'http://192.168.1.3:9998', 'tok')
+check('без основной Wi-Fi: основная сеть Wi-Fi не создаётся', 'rl_main_' not in SN and 'rl_guest_2g.ssid=' in SN and "ssid='Mira_5/1'" in SN)
+check('без основной Wi-Fi: гостевая в гостевой сети', 'rl_guest_2g.network=rl_guest' in SN and 'rl_guest_2g.encryption=none' in SN)
+check('с основной Wi-Fi: как раньше', 'rl_main_2g' in S and PROF['mainWifi'] is True)
 try:
-    drv._portal({'host': '192.168.8.10', 'username': 'root', 'password': 'x'}, 'install', {'profile': {}})
-    check('установка на swconfig отказана', False)
-except DriverError as e:
-    check('установка на swconfig отказана', 'swconfig' in str(e))
-check('на роутер ничего не записано (swconfig)', len(sent) == 1 and sent[0] == portal.STATUS)
+    portal.validate(dict(mainWifi=True, mainSsid='', guestSsid='Guest', ports={'s0p2': 'guest'}), HWF); check('основная Wi-Fi включена — название обязательно', False)
+except ValueError:
+    check('основная Wi-Fi включена — название обязательно', True)
+
+# shell syntax of the whole script (if a POSIX shell is around)
+import shutil, subprocess, tempfile
+sh = shutil.which('sh') or next((p for p in (r'C:\Users\Admin\network-tools\bin\git\usr\bin\sh.exe', r'C:\Program Files\Git\usr\bin\sh.exe') if os.path.exists(p)), None)
+if sh:
+    for name, script in (('swconfig', S), ('swconfig без основной Wi-Fi', SN), ('DSA', SD)):
+        with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False, newline='\n', encoding='utf-8') as tf:
+            tf.write(script)
+        r = subprocess.run([sh, '-n', tf.name], capture_output=True, text=True)
+        os.unlink(tf.name)
+        check('синтаксис скрипта установки (' + name + ')', r.returncode == 0)
+        if r.returncode:
+            print(r.stderr[:400])
 
 print('\nВСЁ OK' if ok else '\nЕСТЬ ОШИБКИ')
 sys.exit(0 if ok else 1)
