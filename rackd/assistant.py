@@ -9,7 +9,7 @@ every tool result goes through scrub(). Device names, hostnames and Wi-Fi names 
 """
 import copy, json, re, secrets, threading, time, urllib.error, urllib.parse, urllib.request
 
-from . import backups, frank_agent, frankdev, frankfiles
+from . import backups, frank_agent, frankbrowser, frankdev, frankfiles
 
 PRESETS = {
     'deepseek': {'title': 'DeepSeek', 'proto': 'openai', 'base': 'https://api.deepseek.com', 'model': 'deepseek-flash',
@@ -33,7 +33,8 @@ DEFAULT = {'enabled': False, 'preset': 'deepseek', 'base': '', 'model': '', 'key
            'autoCompact': True,     # squeeze the chat by itself before it no longer fits
            'agent': False,          # the agent: files and commands on the machine where Rack Live runs (rackd/frank_agent.py)
            'agentMode': 'ask',      # ask | edits | full — what the agent does without a press
-           'full': False}           # «полный доступ»: the agent becomes a real one — his own project of Rack Live, no cards at all, may change the panel
+           'full': False,           # «полный доступ»: the agent becomes a real one — his own project of Rack Live, no cards at all, may change the panel
+           'browser': True}         # the mini browser (headless Chromium): let Frank look at pages and send pictures
 ROUNDS = 8                  # tool rounds per question
 AGENT_ROUNDS = 40           # the agent works longer: read, change, check
 FULL_ROUNDS = 80            # полный доступ: a whole task with a project, a build and a deployment takes many steps
@@ -99,7 +100,7 @@ def resolved(c):
 
 def public(c):
     r = resolved(c)
-    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram', 'admin', 'window', 'autoCompact', 'agent', 'agentMode', 'full')}
+    out = {k: r[k] for k in ('enabled', 'preset', 'proxy', 'limit', 'effort', 'actions', 'telegram', 'admin', 'window', 'autoCompact', 'agent', 'agentMode', 'full', 'browser')}
     out['agentWhere'] = frank_agent.where()
     out.update(base=merged(c)['base'], model=merged(c)['model'], keySet=bool(r['key']), title=r['title'],
                ready=bool(r['enabled'] and r['base'] and r['model'] and (r['key'] or r['noKey'])), effModel=r['model'], effWindow=ctx_window(r))
@@ -356,7 +357,7 @@ AGENT_HEAD = ('Тебя зовут Frank. Ты — личный ИИ-агент 
               'код и скрипты, файлы, тексты, расчёты. Ты встроен в Rack Live — панель мониторинга его сети, поэтому сеть видишь лучше всего.')
 AGENT_ON = """РЕЖИМ АГЕНТА — файлы и команды. Рабочая машина: та, где работает Rack Live (@WHERE@). Твоя рабочая папка: @WORK@ — здесь проекты, скрипты и файлы
 пользователя; относительные пути считаются от неё. Инструменты: read_file, write_file, edit_file, list_dir, find_files, search_text, shell (команды sh на этой машине).
-Роутеры, NAS и серверы из Rack Live — через device_command (если включён полный доступ к устройствам). Вложения пользователя лежат в @FILES@ — их можно читать.
+Роутеры, NAS и серверы из Rack Live — через device_command (если включён полный доступ к устройствам). Вложения пользователя лежат в @FILES@ — их можно читать. Увидеть страницу глазами — browse (мини-браузер): он откроет адрес, прочитает заголовок и текст и снимет скриншот, а картинка сразу покажется человеку в чате.
 Права сейчас: «@MODE@». @MODE_TEXT@
 Как работать (как опытный инженер):
 1) Сначала разберись: посмотри файлы и состояние командами чтения. Не выдумывай содержимое файлов и вывод команд.
@@ -610,26 +611,33 @@ PROJECT_TOOL = ('project', 'Твой проект Rack Live — отдельна
                              'op=rollback — вернуть прежний код панели вручную.',
                 {'op': ('string', 'status | seed | build | test | deploy | rollback')})
 
+BROWSE_TOOL = ('browse', 'Мини-браузер: открыть страницу в headless Chromium на машине панели и получить заголовок, читаемый текст и скриншот. '
+                          'Скриншот приходит пользователю картинкой в чат (и в Telegram) — когда он просит «покажи, как это выглядит» или когда надо убедиться, '
+                          'что веб-интерфейс открывается. Только http и https, без входа: страница за паролем покажет форму входа. size: M (1280×900, по умолчанию), '
+                          'S (как с телефона), L, FULL (длинная страница).',
+                {'url': ('string', 'адрес страницы (http:// или https://)'), 'size': ('string', 'M | S | L | FULL (необязательно)'),
+                 'full': ('boolean', 'снять длинную страницу целиком (необязательно)'), 'text': ('boolean', 'читать текст страницы (по умолчанию да)')})
+
 MEMORY_TOOL = ('remember', 'Записать в память Frank (FRANK.md) правило, предпочтение или факт, который пользователь просит запомнить надолго — '
                            'память видна во всех разговорах. Пиши коротко, одной фразой, от третьего лица («Пользователь просит отвечать кратко»). '
                            'В request — дословная цитата просьбы пользователя из последнего сообщения; без неё появится карточка «Запомнить», и пользователь решит сам.',
                {'text': ('string', 'что запомнить, одной фразой'), 'request': ('string', 'дословная цитата просьбы пользователя')})
 
 
-def _tool_defs(actions, admin=False, agent=False, full=False):
+def _tool_defs(actions, admin=False, agent=False, full=False, browse=False):
     return (TOOLS + [MEMORY_TOOL] + ([ACTION_TOOL, CLIENT_TOOL] if actions else []) + (ADMIN_TOOLS if actions and admin else [])
-            + (frank_agent.TOOLS if agent else []) + ([PROJECT_TOOL] if full else []))
+            + (frank_agent.TOOLS if agent else []) + ([BROWSE_TOOL] if browse and agent else []) + ([PROJECT_TOOL] if full else []))
 
 
-def _anthropic_tools(actions=False, admin=False, agent=False, full=False):
+def _anthropic_tools(actions=False, admin=False, agent=False, full=False, browse=False):
     return [{'name': n, 'description': d, 'input_schema': {'type': 'object', 'properties': {k: {'type': t, 'description': ds} for k, (t, ds) in p.items()}}}
-            for n, d, p in _tool_defs(actions, admin, agent, full)]
+            for n, d, p in _tool_defs(actions, admin, agent, full, browse)]
 
 
-def _openai_tools(actions=False, admin=False, agent=False, full=False):
+def _openai_tools(actions=False, admin=False, agent=False, full=False, browse=False):
     return [{'type': 'function', 'function': {'name': n, 'description': d,
                                               'parameters': {'type': 'object', 'properties': {k: {'type': t, 'description': ds} for k, (t, ds) in p.items()}}}}
-            for n, d, p in _tool_defs(actions, admin, agent, full)]
+            for n, d, p in _tool_defs(actions, admin, agent, full, browse)]
 
 
 def _context(app):
@@ -721,7 +729,8 @@ def fixed_tokens(app, c, summary=''):
     acts = bool(c.get('actions'))
     admin = acts and bool(c.get('admin'))
     full = bool(c.get('full'))
-    return est_tokens(build_system(app, c, summary)), est_tokens(json.dumps(_openai_tools(acts, admin, bool(c.get('agent')) or full, full), ensure_ascii=False))
+    browse = bool(c.get('browser'))
+    return est_tokens(build_system(app, c, summary)), est_tokens(json.dumps(_openai_tools(acts, admin, bool(c.get('agent')) or full, full, browse), ensure_ascii=False))
 
 
 def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
@@ -739,6 +748,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
     mode = 'full' if full else (c.get('agentMode') if c.get('agentMode') in frank_agent.MODES else 'ask')
     rounds = FULL_ROUNDS if full else AGENT_ROUNDS if agent else ROUNDS * 2 if admin else ROUNDS
     max_ops = FULL_OPS if full else AGENT_OPS if agent else MAX_OPS
+    browse = bool(c.get('browser'))     # the mini browser: only for the agent, and only when switched on
     deepseek = 'deepseek.com' in c['base']
     system = build_system(app, c, summary)
     users = [str(m.get('text') or '') for m in chat if m.get('role') == 'user']
@@ -762,7 +772,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
         hist.pop(0)
     if not hist or hist[-1]['role'] != 'user':
         raise AiError('пустой вопрос')
-    used, usage, proposals, ops = [], {'in': 0, 'out': 0, 'last': 0, 'lastOut': 0}, [], []
+    used, usage, proposals, ops, shots = [], {'in': 0, 'out': 0, 'last': 0, 'lastOut': 0}, [], [], []
 
     def err(text):
         return json.dumps({'error': text}, ensure_ascii=False)
@@ -798,6 +808,24 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
                         'ok': ok, 'out': out[:400]})
             used.append(lab[:60])
             return out
+        if name == 'browse':                               # мини-браузер: посмотреть страницу и снять скриншот
+            if not (agent and browse):
+                return err('мини-браузер выключен (нужен режим агента и тумблер «Мини-браузер» в Настройки → Frank)')
+            progress('Открываю страницу…', used)
+            try:
+                res = frankbrowser.open_page(app.store.dir, args.get('url'), args.get('size') or 'M',
+                                             text=args.get('text') is not False, full=bool(args.get('full')))
+            except frankbrowser.BrowserError as e:
+                return err(str(e))
+            except Exception as e:
+                return err(f'{type(e).__name__}: {e}'[:300])
+            shots.append(res['shot'])
+            used.append('открыл ' + res['url'][:70])
+            ops.append({'device': 'Мини-браузер', 'command': res['url'], 'kind': 'read', 'ok': True, 'out': (res.get('title') or '')[:200]})
+            app.store.add_event(None, 'Frank', 'info', f"браузер: {res['url']}"[:200])
+            res['note'] = ('Скриншот уже показан пользователю картинкой в этом ответе — не пиши, что показать не можешь. '
+                           'Скажи коротко, что на странице и что это значит для задачи.')
+            return json.dumps(res, ensure_ascii=False)
         if name == 'project':                              # полный доступ: свой проект Rack Live и путь обратно в панель
             if not full:
                 return err('полный доступ выключен в настройках Frank (Настройки → Frank → «Полный доступ»)')
@@ -951,13 +979,13 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
         return tool_result(app, name, args)
 
     def done(text, reasoning=''):
-        return {'text': text or ('' if proposals or ops else '(пустой ответ)'), 'tools': used, 'usage': usage, 'proposals': proposals,
-                'reasoning': reasoning, 'ops': ops}
+        return {'text': text or ('' if proposals or ops or shots else '(пустой ответ)'), 'tools': used, 'usage': usage, 'proposals': proposals,
+                'reasoning': reasoning, 'ops': ops, 'shots': shots}
 
     def talk(hist):
         if c['proto'] == 'anthropic':
             msgs = list(hist)
-            tools = _anthropic_tools(acts, admin, agent, full)
+            tools = _anthropic_tools(acts, admin, agent, full, browse)
             for rnd in range(rounds + 1):
                 progress('Думаю…' if rnd == 0 else 'Анализирую…', used)
                 body = {'model': c['model'], 'max_tokens': 16000, 'system': system, 'messages': msgs, 'tools': tools, 'fallbacks': 'default'}
@@ -990,7 +1018,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
                 msgs.append({'role': 'user', 'content': results})
         else:
             msgs = [{'role': 'system', 'content': system}] + hist
-            tools = _openai_tools(acts, admin, agent, full)
+            tools = _openai_tools(acts, admin, agent, full, browse)
             headers = {'Authorization': 'Bearer ' + c['key']} if c['key'] else {}
             if 'openrouter.ai' in c['base']:
                 headers.update({'X-Title': 'Rack Live', 'HTTP-Referer': 'https://github.com/mikolord/racklive'})
@@ -1440,6 +1468,8 @@ class Assistant:
                     msg['proposals'] = res['proposals']
                 if res.get('ops'):
                     msg['ops'] = res['ops']
+                if res.get('shots'):
+                    msg['shots'] = res['shots']
                 if res.get('reasoning'):
                     msg['reasoning'] = res['reasoning'][:20000]
                 self._count(res['usage'])

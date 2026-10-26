@@ -2620,3 +2620,10 @@ html[data-look="test"] .ai-ctx-row, html[data-look="test"] .ai-note-line { font-
 .ai-foot > .btn:first-of-type { flex: none; }
 .ai-mem { width: 100%; min-height: 280px; font-size: 13px; line-height: 1.5; resize: vertical; }
 .ai-note-line { text-align: left; }
+
+/* ── мини-браузер Frank: скриншоты страниц прямо в ответе ─────────────────────────────────────────────────────────────────────────── */
+.ai-shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.ai-shot { display: block; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--card); max-width: 100%; line-height: 0; }
+.ai-shot img { display: block; width: auto; max-width: 100%; max-height: 340px; object-fit: contain; }
+.ai-shot:hover { border-color: var(--line2); }
+@media (max-width: 700px) { .ai-shot img { max-height: 260px; } }

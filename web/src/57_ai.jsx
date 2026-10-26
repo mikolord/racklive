@@ -134,6 +134,12 @@ function AiText({ text }) {
 
 /* an action Frank proposed: runs only when the admin presses «Выполнить» */
 /* full access: what Frank ran himself in this answer (commands with their output) */
+/* скриншоты мини-браузера: Frank открыл страницу — картинка показывается прямо в ответе */
+function ShotList({ shots }) {
+  if (!shots || !shots.length) return null;
+  return <div className="ai-shots">{shots.map(s => <a key={s} href={'/api/ai/shot/' + s} target="_blank" rel="noreferrer" className="ai-shot">
+    <img src={'/api/ai/shot/' + s} alt="снимок страницы" loading="lazy" /></a>)}</div>;
+}
 function OpsList({ ops }) {
   const [open, setOpen] = useState(false);
   const changed = ops.filter(o => o.kind !== 'read').length;
@@ -400,6 +406,7 @@ function AiPanel({ initial, onClose, standalone }) {
           {m.role === 'user' ? <div className="ai-bubble">{m.files && m.files.length ? <MsgFiles files={m.files} /> : null}{m.text}</div> : <div className="ai-bubble">
             {m.err ? <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="alert" size={16} color="var(--red)" /><span>{m.text}</span></div> : <AiText text={m.text} />}
             {m.tools && m.tools.length ? <div className="ai-tools">{[...new Set(m.tools)].map(t => <span key={t}><Icon name="eye" size={11} />{t}</span>)}</div> : null}
+            <ShotList shots={m.shots} />
             {m.ops && m.ops.length ? <OpsList ops={m.ops} /> : null}
             {(m.proposals || []).filter(p => !(p.auto && !p.command)).map(p => <ProposalCard key={p.id} p={p} onAct={act} />)}
           </div>}
@@ -549,7 +556,7 @@ function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
   const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false, admin: !!ai.admin,
-    window: ai.window || 0, autoCompact: ai.autoCompact !== false, agent: !!ai.agent, agentMode: ai.agentMode || 'ask', full: !!ai.full }));
+    window: ai.window || 0, autoCompact: ai.autoCompact !== false, agent: !!ai.agent, agentMode: ai.agentMode || 'ask', full: !!ai.full, browser: ai.browser !== false }));
   const [res, setRes] = useState(null); const [mem, setMem] = useState(() => new URLSearchParams(location.search).get('memory') === '1');
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
@@ -582,6 +589,10 @@ function AiCard() {
               : ((AGENT_MODES.find(x => x[0] === (s.agentMode || 'ask')) || [])[2] + ' Каждое изменение и команда — в журнале событий.')}</div>
             {!s.full && s.agentMode === 'full' ? <div className="ai-admin-warn">Модель может ошибиться — например, удалить не тот файл в рабочей папке или установить лишнее. Данные и программа Rack Live
               защищены, разрушительные команды запрещены всегда, но остальное Frank делает без вопросов.</div> : null}</div> : null}</div></div>
+        {s.agent ? <div className="row"><Switch on={s.browser !== false} onChange={v => set('browser', v)} /><div className="grow"><div>Мини-браузер <span className="ai-badge">скриншоты</span></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Frank может открыть страницу (роутер, панель, VPS, любой сайт) в headless-браузере, прочитать её и прислать скриншот в
+            чат — «покажи, как это выглядит». {ai.browserReady ? <>Браузер есть: <b className="mono">{ai.browserBin}</b>.</> : <b style={{ color: 'var(--orange)' }}>В этой установке браузера нет — он ставится в образ Docker при сборке.</b>}
+            Ограничения: http/https, без входа (страница за паролем покажет только форму входа).</div></div></div> : null}
         {s.agent ? <div className={'row' + (s.full ? ' ai-admin-on' : '')}><Switch on={!!s.full} onChange={v => setS(x => ({ ...x, full: v, agent: v ? true : x.agent, agentMode: v ? 'full' : (x.agentMode === 'full' ? 'edits' : x.agentMode) }))} /><div className="grow">
           <div>Полный доступ <span className="ai-badge">как opencode</span></div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Frank становится самостоятельным агентом со своим проектом Rack Live: работает без карточек, правит код проекта, собирает,

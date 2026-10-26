@@ -585,6 +585,14 @@ def main():
                 break
             time.sleep(.2)
         check('Frank: в демо проект не создаётся', 'демо' in (jj.get('error') or ''), jj)
+        # мини-браузер: инструмент и картинки (в демо Chromium может отсутствовать — проверяем, что состояние честное)
+        st3 = api('/api/state')['ai']
+        check('Frank: мини-браузер виден в состоянии', 'browserReady' in st3 and st3.get('browser') is True, {k: st3.get(k) for k in ('browser', 'browserReady')})
+        try:                                            # 404 — так и должно быть: такого снимка нет
+            api('/api/ai/shot/1700000000-deadbeef.png')
+            check('мини-браузер: чужой снимок не отдаётся', False)
+        except urllib.error.HTTPError as e:
+            check('мини-браузер: чужой снимок не отдаётся', e.code in (400, 401, 404), e.code)
         # remote router as a web panel: link + login in the card, the password only through /creds
         rw = api('/api/devices', {'driver': 'remote_web', 'name': 'Роутер · дача', 'kind': 'router', 'location': 'remote',
                                   'host': base, 'username': 'admin', 'password': 'smoke-web-pw'}, 'POST')['device']
@@ -797,6 +805,7 @@ def main():
             if name == 'Настройки · Frank':
                 check('карточка помощника в настройках', 'ai-settings' in out)
                 check('агент: есть галочка «Полный доступ» со своим проектом', 'Полный доступ' in out and 'как opencode' in out)
+                check('агент: есть тумблер «Мини-браузер»', 'Мини-браузер' in out)
             if name == 'Настройки · Приложения':
                 check('карточка «Приложения на телефон»', 'Приложения на телефон' in out and out.count('plugin-head') >= 4 and 'Frank' in out and 'Сканер' in out)
             if name == 'Настройки · Уведомления':

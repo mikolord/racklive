@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import models as models_mod
 from . import icons as icons_mod
 from . import usage as usage_mod
-from . import frankfiles, frank_agent, frankdev
+from . import frankfiles, frank_agent, frankbrowser, frankdev
 from . import portal as portal_mod
 from . import remote as remote_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
@@ -15,7 +15,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.22.1'
+VERSION = '2.23.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -808,7 +808,8 @@ class App:
             traceback.print_exc()
             sec = None
         admin_extra = {'sysEvents': [e for e in self.store.events if e.get('name') in SYS_EVENTS][-120:][::-1],        # «События → Системные»: the technical journal (page, tour, starts)
-                       'ai': dict(self.ai.public(), project=frankdev.status(self.store.dir, frankdev.panel_root(), DEMO)),
+                       'ai': dict(self.ai.public(), project=frankdev.status(self.store.dir, frankdev.panel_root(), DEMO),
+                                  browserReady=bool(frankbrowser.binary()), browserBin=frankbrowser.where()),
                        'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
@@ -1418,6 +1419,16 @@ class Handler(BaseHTTPRequestHandler):
                     b = fh.read()
                 return self.send_raw(b, {'png': 'image/png', 'webp': 'image/webp', 'svg': 'image/svg+xml'}[ext],
                                      {'Cache-Control': 'private, max-age=604800', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:", 'X-Content-Type-Options': 'nosniff'})
+            m = re.match(r'^/api/ai/shot/([0-9]{10}-[0-9a-f]{8}\.png)$', path)
+            if m:                                              # a screenshot of Frank's mini browser: admin only
+                if not self.need_admin():
+                    return
+                f = frankbrowser.shot_file(DATA, m.group(1))
+                if not f:
+                    return self.err('нет такого снимка', 404)
+                with open(f, 'rb') as fh:
+                    b = fh.read()
+                return self.send_raw(b, 'image/png', {'Cache-Control': 'private, max-age=86400', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data:"})
             m = re.match(r'^/api/cards/photo/([A-Za-z0-9_-]{3,40})$', path)
             if m:
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
