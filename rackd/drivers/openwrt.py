@@ -384,6 +384,8 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                           {'label': 'OpenNDS ' + (f"установлен ({hw['nds']})" if hw['nds'] else f"поставится сам (нужно ~2 МБ, свободно {free_mb} МБ)"), 'ok': bool(hw['nds']) or free_mb >= 2},
                           {'label': 'Кабель провайдера в WAN-порту' + (f" ({hw['wanip']})" if hw['wanip'] else ''), 'ok': bool((hw['links'].get(hw['wan']) or {}).get('up')), 'optional': True,
                            'hint': 'без него гости не получат интернет' if not (hw['links'].get(hw['wan']) or {}).get('up') else ''}]
+        if hw.get('swconfig') and not prof:
+            card['checks'].append({'label': 'У роутера старый коммутатор (swconfig, как у MikroTik RB2011): плагин рассчитан на современные роутеры (DSA) и здесь сеть настроить не сможет', 'ok': False})
         fg = None if prof else hw.get('foreign')
         if fg:                                  # портал уже стоит, но не нашим плагином: показываем его и не даём плагину его перенастроить
             card['foreign'] = fg
@@ -404,6 +406,9 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
         if op == 'install':
             prog('Проверяю роутер…')
             hw = status(cfg)
+            if hw.get('swconfig') and not hw['profile']:
+                raise DriverError('у этого роутера старый коммутатор (swconfig, как у MikroTik RB2011). Установка плагина настраивает гостевую сеть для современных роутеров (DSA) '
+                                  'и здесь могла бы нарушить сеть, поэтому она отключена — ничего не изменено.')
             if hw['foreign'] and not hw['profile']:
                 raise DriverError(f"на роутере уже работает портал «{hw['foreign']['name']}», настроенный вручную. Установка плагина перенастроила бы сеть, Wi-Fi, DHCP и "
                                   'межсетевой экран и заменила бы его, поэтому она отключена — ничего не изменено.')

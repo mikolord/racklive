@@ -56,5 +56,21 @@ except DriverError as e:
     check('установка поверх ручного портала отказана', 'настроенный вручную' in str(e))
 check('на роутер ничего не записано (только чтение статуса)', len(sent) == 1 and sent[0] == portal.STATUS)
 
+# a router with the old switch (swconfig, MikroTik RB2011): no portal at all, but the plugin must not try to set it up
+OLD_SWITCH = MANUAL.replace('@@foreign Mira|theme_mira.sh|1440\n', '@@swconfig 1\n').replace('@@nds 10.3.1-r1 1 1', '@@nds - 0 0')
+hw2 = portal.parse_status(OLD_SWITCH)
+check('старый коммутатор распознан', hw2['swconfig'] is True and hw2['foreign'] is None and portal.parse_status(OURS)['swconfig'] is False)
+check('скрипт ищет switch_vlan', '=switch_vlan' in portal.STATUS and '@@swconfig' in portal.STATUS)
+card2 = OpenWrt._portal_card(hw2)
+check('карточка: установка заблокирована из-за swconfig', any(not c['ok'] and 'swconfig' in c['label'] for c in card2['checks']))
+sent.clear()
+drv._ssh = lambda cfg, script, timeout=30: (sent.append(script), OLD_SWITCH)[1]
+try:
+    drv._portal({'host': '192.168.8.10', 'username': 'root', 'password': 'x'}, 'install', {'profile': {}})
+    check('установка на swconfig отказана', False)
+except DriverError as e:
+    check('установка на swconfig отказана', 'swconfig' in str(e))
+check('на роутер ничего не записано (swconfig)', len(sent) == 1 and sent[0] == portal.STATUS)
+
 print('\nВСЁ OK' if ok else '\nЕСТЬ ОШИБКИ')
 sys.exit(0 if ok else 1)
