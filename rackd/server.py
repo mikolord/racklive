@@ -16,7 +16,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.28.0'
+VERSION = '2.29.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -68,6 +68,8 @@ class App:
         load_all()
         self.demo = DEMO                           # the demo office: nothing real is touched (Frank's project refuses to be made or deployed here)
         self.store = Store(DATA)
+        if planmap.migrate(self.store.cfg, DATA):   # the single plan picture of 2.28.0 becomes the first of several
+            self.store.save()
         s = self.store.cfg['settings']
         if 'tourDone' not in s:                    # Frank's welcome tour: only for a brand-new installation (no administrator yet); never for one that already works
             s['tourDone'] = bool(self.store.cfg.get('auth')) or DEMO
@@ -1441,10 +1443,11 @@ class Handler(BaseHTTPRequestHandler):
                 with open(f, 'rb') as fh:
                     b = fh.read()
                 return self.send_raw(b, {'png': 'image/png', 'jpg': 'image/jpeg', 'webp': 'image/webp'}[f.rsplit('.', 1)[1]], {'Cache-Control': 'private, max-age=604800'})
-            if path == '/api/plan/bg':                       # «План»: the picture under the plan; the browser keeps it for a year (the address carries ?v=<version>)
+            m = re.match(r'^/api/plan/bg/([a-z0-9]{3,12})$', path)
+            if m:                                            # «План»: one of the pictures under the plan; the browser keeps it for a year (the address carries ?v=<version>)
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
                     return self.err('нужен вход', 401)
-                f = planmap.path_of(DATA)
+                f = planmap.path_of(DATA, m.group(1))
                 if not f:
                     return self.err('нет фона', 404)
                 with open(f, 'rb') as fh:
@@ -1701,34 +1704,46 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(card_photo(st, m.group(1), self.rfile.read(int(self.headers.get('Content-Length') or 0)) if method == 'POST' and 0 < int(self.headers.get('Content-Length') or 0) <= 8_000_000 else None, method))
-            if path == '/api/plan/bg' and method in ('POST', 'DELETE'):   # «План»: the picture under the plan (raw JPEG / PNG / WebP) with its place; DELETE removes it
+            if path == '/api/plan/bg' and method == 'POST':   # «План»: add a picture under the plan (raw JPEG / PNG / WebP) with its place; up to 6 of them
+                if not self.need_admin():
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > planmap.MAX_BYTES:
+                    return self.err('картинка пустая или больше 3 МБ', 413)
+                q = {k: urllib.parse.unquote(v) for k, v in self.query().items()}
+                raw = self.rfile.read(n)
+                ext = planmap.kind_of(raw)
+                with st.lock:
+                    plan = dict(st.cfg.get('plan') or {'buildings': [], 'links': [], 'poles': []})
+                    bgs = list(plan.get('bgs') or [])
+                    if len(bgs) >= planmap.MAX_BGS:
+                        return self.err(f'фонов уже {planmap.MAX_BGS} — уберите ненужный')
+                    bid = planmap.new_id()
+                    bg = planmap.make_bg(q, ext, bid) if ext else None
+                    if not ext or not bg:
+                        return self.err('нужна картинка JPEG, PNG или WebP и её место на плане' if not ext else 'у фона неверные размеры или положение')
+                    ext, err = planmap.save(DATA, bid, raw)
+                    if err:
+                        return self.err(err)
+                    plan['bgs'] = bgs + [bg]
+                    st.cfg['plan'] = plan
+                    st.save()
+                st.add_event(None, 'План', 'info', 'загружен фон плана' + (f" «{bg['name']}»" if bg.get('name') else '') + (f" ({bg['attr']})" if bg.get('attr') else ''))
+                return self.send({'ok': True, 'id': bid, 'plan': plan})
+            m = re.match(r'^/api/plan/bg/([a-z0-9]{3,12})$', path)
+            if m and method == 'DELETE':
                 if not self.need_admin():
                     return
                 with st.lock:
-                    if method == 'DELETE':
-                        planmap.remove(DATA)
-                        plan = dict(st.cfg.get('plan') or {})
-                        plan.pop('bg', None)
-                        st.cfg['plan'] = plan
-                        st.save()
-                        return self.send({'ok': True, 'plan': plan})
-                    n = int(self.headers.get('Content-Length') or 0)
-                    if n <= 0 or n > planmap.MAX_BYTES:
-                        return self.err('картинка пустая или больше 3 МБ', 413)
-                    q = {k: urllib.parse.unquote(v) for k, v in self.query().items()}
-                    raw = self.rfile.read(n)
-                    ext = planmap.kind_of(raw)
-                    bg = planmap.make_bg(q, ext) if ext else None
-                    if not ext or not bg:
-                        return self.err('нужна картинка JPEG, PNG или WebP и её место на плане' if not ext else 'у фона неверные размеры или положение')
-                    ext, err = planmap.save(DATA, raw)
-                    if err:
-                        return self.err(err)
-                    plan = dict(st.cfg.get('plan') or {'buildings': [], 'links': [], 'poles': []})
-                    plan['bg'] = bg
+                    plan = dict(st.cfg.get('plan') or {})
+                    left = [b for b in (plan.get('bgs') or []) if b.get('id') != m.group(1)]
+                    planmap.remove(DATA, m.group(1))
+                    if left:
+                        plan['bgs'] = left
+                    else:
+                        plan.pop('bgs', None)
                     st.cfg['plan'] = plan
                     st.save()
-                st.add_event(None, 'План', 'info', 'загружен фон плана' + (f" ({bg['attr']})" if bg.get('attr') else ''))
                 return self.send({'ok': True, 'plan': plan})
             if path == '/api/portal/templates' and method == 'POST':  # a guest-page design (.zip): raw bytes, checked, kept in the library
                 if not self.need_admin():
@@ -2324,9 +2339,9 @@ class Handler(BaseHTTPRequestHandler):
                 b = body.get('buildings')
                 if not isinstance(b, list):
                     return self.err('неверные данные')
-                bg = planmap.clean_bg(body.get('bg'), (st.cfg.get('plan') or {}).get('bg'))        # the picture itself is never replaced from here, only moved / made more or less transparent
+                bgs = planmap.clean_bgs(body.get('bgs'), (st.cfg.get('plan') or {}).get('bgs'))        # the pictures themselves are never added or removed from here, only moved / dimmed / renamed
                 st.cfg['plan'] = {'buildings': planmap.clean_buildings(b), 'links': body.get('links') if isinstance(body.get('links'), list) else [],
-                                  'poles': body.get('poles') if isinstance(body.get('poles'), list) else [], **({'bg': bg} if bg else {})}
+                                  'poles': body.get('poles') if isinstance(body.get('poles'), list) else [], **({'bgs': bgs} if bgs else {})}
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/speedtest' and method == 'POST':

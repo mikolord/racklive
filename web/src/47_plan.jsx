@@ -152,7 +152,9 @@ function Territory({ plan, enter }) {
   const [bgOpen, setBgOpen] = useState(false);
   const [bgLive, setBgLive] = useState(null);                // фон, который тащат
   const bgDrag = useRef(null);
-  const bg = plan.bg ? { ...plan.bg, ...(bgLive || {}) } : null;
+  const [bgMove, setBgMove] = useState(null);              // какой фон тащит инструмент «Фон»
+  const bgs = (plan.bgs || []).map(b => bgLive && bgLive.id === b.id ? { ...b, x: bgLive.x, y: bgLive.y } : b).sort((a, b) => b.w - a.w);     // большие внизу, подробные поверх
+  const moving = (plan.bgs || []).find(b => b.id === bgMove) || (plan.bgs || [])[0];
   const save = (b, l, p) => savePlan({ ...plan, buildings: b || buildings, links: l || links, poles: p || poles });
   const isOut = b => Array.isArray(b.outline) && b.outline.length >= 3;
   const outlineOf = b => live && live.id === b.id ? live.outline : b.outline;
@@ -197,21 +199,21 @@ function Territory({ plan, enter }) {
   };
   /* фон: тащить пальцем / мышью (инструмент «Фон») */
   const onBgDraw = (w0, w1, fin) => {
-    if (!plan.bg) return;
-    if (!bgDrag.current) bgDrag.current = { x: plan.bg.x, y: plan.bg.y };
+    if (!moving) return;
+    if (!bgDrag.current) bgDrag.current = { x: moving.x, y: moving.y };
     const nx = Math.round(bgDrag.current.x + w1.x - w0.x), ny = Math.round(bgDrag.current.y + w1.y - w0.y);
-    if (fin) { savePlan({ ...plan, bg: { ...plan.bg, x: nx, y: ny } }); setBgLive(null); bgDrag.current = null; } else setBgLive({ x: nx, y: ny });
+    if (fin) { savePlan({ ...plan, bgs: (plan.bgs || []).map(b => b.id === moving.id ? { ...b, x: nx, y: ny } : b) }); setBgLive(null); bgDrag.current = null; } else setBgLive({ id: moving.id, x: nx, y: ny });
   };
   // viewing: a swipe that starts on a house pans the plan instead of opening it
   const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select' || tool === 'outline', onTap, panItems: () => !edit || tool === 'outline' || tool === 'bg',
-    onDraw: edit && tool === 'bg' && plan.bg ? onBgDraw : null });
+    onDraw: edit && tool === 'bg' && moving ? onBgDraw : null });
   // open centred on all buildings, poles and their yards — not on an empty corner of the grid
   const fitAll = () => { const xs = [], ys = [];
     buildings.forEach(b => { const q = boxOf(b); xs.push(q.x - 18, q.x + q.w + 18); ys.push(q.y - 18, q.y + q.h + 18); });
     poles.forEach(p => { xs.push(p.x - 20, p.x + 20); ys.push(p.y - 20, p.y + 34); });
-    if (!xs.length && plan.bg) { xs.push(plan.bg.x, plan.bg.x + plan.bg.w); ys.push(plan.bg.y, plan.bg.y + plan.bg.h); }
+    if (!xs.length && bgs.length) { const s = [...bgs].sort((a, b) => a.w - b.w)[0]; xs.push(s.x, s.x + s.w); ys.push(s.y, s.y + s.h); }          // без домов — на самый подробный фон
     fitView(wrap.current, xs, ys, setView); };
-  useEffect(() => { const t = setTimeout(fitAll, 30); return () => clearTimeout(t); }, [buildings.length, poles.length, plan.bg ? plan.bg.v : 0]);
+  useEffect(() => { const t = setTimeout(fitAll, 30); return () => clearTimeout(t); }, [buildings.length, poles.length, bgs.map(b => b.id).join()]);
   const delPole = async id => { const p = poles.find(x => x.id === id);
     if (!(await confirm(`Удалить «${p.name}» и его магистрали?`, { danger: true, ok: 'Удалить' }))) return;
     save(null, links.filter(l => l.from !== id && l.to !== id), poles.filter(x => x.id !== id)); setSel(null); };
@@ -274,7 +276,7 @@ function Territory({ plan, enter }) {
     if (b.outline.length <= 3) { toast('У дома должно остаться хотя бы три угла', true); return; }
     setOutline(b, b.outline.filter((_, k) => k !== selV)); setSelV(null); };
 
-  if (!buildings.length && !bg) return <div className="plan-empty card pad">
+  if (!buildings.length && !bgs.length) return <div className="plan-empty card pad">
     <div style={{ fontSize: 42 }}>🏠</div><div style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 4px' }}>Плана пока нет</div>
     <div className="dim" style={{ marginBottom: 16, maxWidth: 440 }}>Добавьте дом, нарисуйте этажи и двор, начертите комнаты и расставьте шкафы, щитки и устройства. Несколько домов можно соединить магистралью.
       Можно подложить настоящую карту участка и обвести на ней дома.</div>
@@ -294,9 +296,9 @@ function Territory({ plan, enter }) {
     {edit ? <div className="plan-tools">
       <Seg value={tool} onChange={v => { setTool(v); setLinkFrom(null); setDraft([]); setSelV(null); }} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' },
         { value: 'outline', label: 'Обвести дом', icon: 'edit' },
-        { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }, ...(bg ? [{ value: 'bg', label: 'Фон', icon: 'resize' }] : [])]} />
+        { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }, ...(bgs.length ? [{ value: 'bg', label: 'Фон', icon: 'resize' }] : [])]} />
       <Btn size="sm" icon="plus" onClick={addBuilding}>Дом</Btn>
-      <Btn size="sm" icon="map" onClick={() => setBgOpen(true)}>{bg ? 'Фон…' : 'Фон: карта'}</Btn>
+      <Btn size="sm" icon="map" onClick={() => setBgOpen(true)}>{bgs.length ? 'Фон…' : 'Фон: карта'}</Btn>
       {tool === 'outline' ? <>{draft.length >= 3 ? <Btn size="sm" kind="primary" icon="check" onClick={finishOutline}>Готово</Btn> : null}
         {draft.length ? <Btn size="sm" onClick={() => setDraft(draft.slice(0, -1))}>Убрать угол</Btn> : null}
         {draft.length ? <Btn size="sm" onClick={() => setDraft([])}>Сбросить</Btn> : null}</> : null}
@@ -311,14 +313,15 @@ function Territory({ plan, enter }) {
     {linkFrom ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="link" size={15} />От «{nodeName(linkFrom)}» — выберите второй дом или столб</div> : null}
     {tool === 'pole' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="pole" size={15} />Нажмите на план, куда поставить столб</div> : null}
     {tool === 'outline' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="edit" size={15} />{draft.length ? `Углов: ${draft.length}. Чтобы замкнуть, нажмите на первый угол или «Готово»` : 'Нажимайте по углам дома на карте — по кругу'}</div> : null}
-    {tool === 'bg' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="resize" size={15} />Тащите карту, чтобы совместить её с домами</div> : null}
+    {tool === 'bg' && edit && moving ? <div className="toast" style={{ marginBottom: 8, gap: 8 }}><Icon name="resize" size={15} />Тащите карту «{moving.name || 'Фон'}», чтобы совместить её с домами
+      {bgs.length > 1 ? <select className="select" style={{ width: 'auto', padding: '2px 8px' }} value={moving.id} onChange={e => setBgMove(e.target.value)}>{[...bgs].sort((a, b) => b.w - a.w).map(b => <option key={b.id} value={b.id}>{b.name || 'Фон'}</option>)}</select> : null}</div> : null}
     <div className="plan-canvas" ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridT" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
         <rect x={0} y={0} width="100%" height="100%" fill="url(#pgridT)" />
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-          {bg ? <image href={`/api/plan/bg?v=${plan.bg.v}`} x={bg.x} y={bg.y} width={bg.w} height={bg.h} preserveAspectRatio="none" opacity={bg.op} style={{ pointerEvents: 'none' }} /> : null}
+          {bgs.map(b => <image key={b.id} href={`/api/plan/bg/${b.id}?v=${b.v}`} x={b.x} y={b.y} width={b.w} height={b.h} preserveAspectRatio="none" opacity={b.op} style={{ pointerEvents: 'none' }} />)}
           {links.map((l, idx) => { const c1 = center(l.from), c2 = center(l.to); if (!c1 || !c2) return null;
             const key = [l.from, l.to].sort().join('>');                    // offset parallel links between the same pair
             const sib = links.filter(x => [x.from, x.to].sort().join('>') === key);
@@ -338,7 +341,7 @@ function Territory({ plan, enter }) {
                 <polygon points={o.map(q => q.join(',')).join(' ')} className="plan-outline" />
                 <circle cx={c.x} cy={c.y - fs * 1.9} r={fs * .36} fill={statusColor(st)} />
                 <text x={c.x} y={c.y - fs * .25} textAnchor="middle" className="plan-outline-name" style={{ fontSize: fs }}>{nm}</text>
-                <text x={c.x} y={c.y + fs * .95} textAnchor="middle" className="plan-outline-sub" style={{ fontSize: fs * .82 }}>{(b.floors || []).length} эт. · {devs.length} устр.{bg ? ` · ${Math.round(polyArea(o) / (PPM * PPM))} м²` : ''}</text>
+                <text x={c.x} y={c.y + fs * .95} textAnchor="middle" className="plan-outline-sub" style={{ fontSize: fs * .82 }}>{(b.floors || []).length} эт. · {devs.length} устр.{bgs.length ? ` · ${Math.round(polyArea(o) / (PPM * PPM))} м²` : ''}</text>
               </g>; }
             return <g key={b.id} className={'plan-item plan-building' + (sel === b.id ? ' sel' : '') + (linkFrom === b.id ? ' sel' : '')} transform={`translate(${p.x},${p.y})`}
               onPointerDown={e => dragB(b, e)} style={{ cursor: edit && tool === 'select' ? 'move' : 'pointer' }}>
@@ -363,14 +366,15 @@ function Territory({ plan, enter }) {
           {draft.length ? <g className="plan-draft" style={{ pointerEvents: 'none' }}>
             <polyline points={draft.map(q => q.join(',')).join(' ')} className="plan-draft-line" />
             {draft.map((q, i) => <circle key={i} cx={q[0]} cy={q[1]} r={i === 0 && draft.length >= 3 ? r1 * 1.5 : r1 * .8} className={'plan-vtx' + (i === 0 ? ' first' : '')} />)}</g> : null}
-          {bg && bg.attr ? <text x={bg.x + 8} y={bg.y + bg.h - 8} className="plan-attr" style={{ fontSize: 11 / view.k }}>{bg.attr}</text> : null}
+
         </g>
       </svg>
       {selB && tool === 'select' ? <button className="plan-open" onClick={() => enter(selB.id)}>
         <Icon name="home" size={16} />Открыть «{selB.name.length > 18 ? selB.name.slice(0, 17) + '…' : selB.name}»<Icon name="chevron" size={15} /></button> : null}
+      {bgs.some(b => b.attr) ? <div className="plan-attrib">{(bgs.find(b => b.attr) || {}).attr}</div> : null}
       <ZoomBtns setView={setView} onFit={fitAll} />
     </div>
-    {bgOpen ? <PlanBgModal plan={plan} center={contentCenter} onClose={() => setBgOpen(false)} onMove={() => { setBgOpen(false); setTool('bg'); }} /> : null}
+    {bgOpen ? <PlanBgModal plan={plan} center={contentCenter} onClose={() => setBgOpen(false)} onMove={id => { setBgMove(id); setBgOpen(false); setTool('bg'); }} /> : null}
     {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}
       onSave={saveLink} onDelete={() => save(null, links.filter(x => x.id !== linkEdit.link.id))} onClose={() => setLinkEdit(null)} /> : null}
   </div>;

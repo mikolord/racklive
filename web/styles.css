@@ -2640,3 +2640,4 @@ html[data-look="test"] .ai-ctx-row, html[data-look="test"] .ai-note-line { font-
 .plan-vtx.ghost { fill: color-mix(in srgb, var(--accent) 35%, #fff); opacity: .75; }
 .plan-draft-line { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 6 4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .plan-attr { fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .7); stroke-width: 2.5px; pointer-events: none; }
+.plan-attrib { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: #fff; text-shadow: 0 0 3px #000, 0 0 6px #000; pointer-events: none; max-width: 70%; }

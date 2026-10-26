@@ -38,6 +38,35 @@ t('север выше: чем севернее, тем меньше y', mercato
 const mp = mPerPx(55.75, 18), side = 1024 * mp;
 t('снимок 1024 px на зуме 18 у Москвы ≈ 350 м', side > 340 && side < 360, side);
 t('в единицах плана это ≈ 3500 (10 единиц = 1 м)', near(side * PPM, 3500, 120), side * PPM);
+// radius → zoom and size of the snapshot
+const lat0 = 43.41, lon0 = 40.0016;
+let prevZ = 99, sizesOk = true, mono = true;
+for (const R of [50, 100, 300, 500, 1000, 2000, 5000, 10000, 20000]) { const p = snapPlan(lat0, R);
+  if (p.S > MAX_SIDE || p.S < 256) sizesOk = false; if (p.z > prevZ) mono = false; prevZ = p.z; }
+t('для любого радиуса 50 м…20 км снимок от 256 до 2048 точек', sizesOk);
+t('чем больше радиус, тем дальше зум (не ближе)', mono);
+t('радиус 100 м: самый подробный зум 19', snapPlan(lat0, 100).z === 19, JSON.stringify(snapPlan(lat0, 100)));
+t('радиус 10 км: зум 12–13, снимок почти во весь предел', (p => p.z >= 12 && p.z <= 13 && p.S > 1000)(snapPlan(lat0, 10000)), JSON.stringify(snapPlan(lat0, 10000)));
+t('радиус 20 км помещается', snapPlan(lat0, 20000).S <= 2048 && snapPlan(lat0, 20000).z >= 11);
+t('снимок реально покрывает диаметр (метров на точку × размер ≥ 2R)', [100, 500, 5000, 20000].every(R => { const p = snapPlan(lat0, R); return p.S * mPerPx(lat0, p.z) >= 2 * R * 0.999; }));
+// the overview and a detailed snapshot lie exactly over each other (same coefficient for the whole plan)
+const ov = snapPlace(lat0, lon0, snapPlan(lat0, 10000).S, snapPlan(lat0, 10000).z, null, { x: 0, y: 0 });
+t('первый снимок центрируется на заданной точке', Math.abs(ov.x + ov.w / 2) <= 1 && Math.abs(ov.y + ov.h / 2) <= 1, JSON.stringify(ov));
+t('его размер в единицах плана = диаметр в метрах × 10', (d => Math.abs(d - 20000 * PPM) / (20000 * PPM) < 0.05)(ov.w), ov.w);
+const refBg = { x: ov.x, y: ov.y, w: ov.w, h: ov.h, lat: lat0, lon: lon0 };
+const kk = Math.cos(lat0 * Math.PI / 180), m0 = mercM(lat0, lon0);
+const east = 500, north = 300;                                                       // метров на местности
+const g = fromMercM(m0.x + east / kk, m0.y + north / kk);
+const sp = snapPlan(g.lat, 300), dt = snapPlace(g.lat, g.lon, sp.S, sp.z, refBg, null);
+const dc = { x: dt.x + dt.w / 2, y: dt.y + dt.h / 2 };
+t('подробный фон ложится на 500 м восточнее и 300 м севернее центра обзора', Math.abs(dc.x - east * PPM) <= 3 && Math.abs(dc.y + north * PPM) <= 3, JSON.stringify(dc));
+t('его размер совпадает с масштабом обзора (метров на точку)', Math.abs(dt.w / sp.S - (ov.w / snapPlan(lat0, 10000).S) * (156543.03392 / 2 ** sp.z) / (156543.03392 / 2 ** snapPlan(lat0, 10000).z)) < 0.05, dt.w / sp.S);
+const back = worldToGeo(dc.x, dc.y, refBg);
+t('обратный перевод: точка плана → широта и долгота', Math.abs(back.lat - g.lat) < 1e-5 && Math.abs(back.lon - g.lon) < 1e-5, JSON.stringify(back));
+t('обратный перевод центра обзора', (b => Math.abs(b.lat - lat0) < 1e-6 && Math.abs(b.lon - lon0) < 1e-6)(worldToGeo(ov.x + ov.w / 2, ov.y + ov.h / 2, refBg)));
+t('север — вверх: меньший y на плане = больше широта', worldToGeo(0, -1000, refBg).lat > worldToGeo(0, 1000, refBg).lat);
+t('образец — самый большой фон с координатами, свой файл не считается', geoRef([{ w: 100, lat: 1, lon: 2 }, { w: 900, lat: 3, lon: 4 }, { w: 5000 }]).lat === 3 && geoRef([{ w: 5 }]) === null && geoRef([]) === null);
+t('подписи расстояний', kmText(300) === '300 м' && kmText(1500) === '1.5 км' && kmText(20000) === '20 км' && kmText(999) === '999 м');
 console.log(JSON.stringify(out));
 '''
 tmp = os.path.join(tempfile.mkdtemp(), 'geo.js')

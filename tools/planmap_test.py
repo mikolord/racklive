@@ -1,5 +1,5 @@
-"""The picture under the «План» and the outlines of houses: file checks, numbers clamped, the whole way through a real server (demo copy).
-Run: python tools/planmap_test.py   (prints ВСЁ OK)"""
+"""The pictures under the «План» and the outlines of houses: file checks, numbers clamped, several pictures, the move from the single picture of 2.28.0,
+the whole way through a real server (demo copy). Run: python tools/planmap_test.py   (prints ВСЁ OK)"""
 import json, os, shutil, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +16,7 @@ def check(name, ok):
 
 
 JPG = b'\xff\xd8\xff\xe0' + b'\x00' * 200
+JPG2 = b'\xff\xd8\xff\xe1' + b'\x01' * 300
 PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 40
 WEBP = b'RIFF\x00\x00\x00\x00WEBPVP8 ' + b'\x00' * 20
 
@@ -23,27 +24,55 @@ WEBP = b'RIFF\x00\x00\x00\x00WEBPVP8 ' + b'\x00' * 20
 check('jpg, png и webp узнаются по первым байтам', planmap.kind_of(JPG) == 'jpg' and planmap.kind_of(PNG) == 'png' and planmap.kind_of(WEBP) == 'webp')
 check('html и svg под видом картинки отклоняются', planmap.kind_of(b'<html><script>alert(1)</script></html>') is None and planmap.kind_of(b'<svg onload=alert(1)></svg>') is None)
 tmp = tempfile.mkdtemp()
-ext, err = planmap.save(tmp, JPG)
-check('картинка сохраняется одним файлом', ext == 'jpg' and not err and os.path.isfile(os.path.join(tmp, 'plan', 'bg.jpg')))
-ext, err = planmap.save(tmp, PNG)
-check('новая картинка заменяет старую (остаётся один файл)', ext == 'png' and sorted(os.listdir(os.path.join(tmp, 'plan'))) == ['bg.png'])
-check('слишком большая и пустая отклоняются', planmap.save(tmp, JPG + b'0' * 3_000_000)[0] is None and planmap.save(tmp, b'')[0] is None and planmap.save(tmp, b'GIF89a')[0] is None)
-check('файл на месте после отказов', planmap.path_of(tmp).endswith('bg.png'))
-planmap.remove(tmp)
-check('удаление убирает файл', planmap.path_of(tmp) is None)
+ext, err = planmap.save(tmp, 'g1a2b3', JPG)
+check('картинка сохраняется одним файлом с номером', ext == 'jpg' and not err and os.path.isfile(os.path.join(tmp, 'plan', 'bg-g1a2b3.jpg')))
+planmap.save(tmp, 'g4c5d6', JPG2)
+check('вторая картинка лежит рядом, первая цела', sorted(os.listdir(os.path.join(tmp, 'plan'))) == ['bg-g1a2b3.jpg', 'bg-g4c5d6.jpg'])
+ext, err = planmap.save(tmp, 'g1a2b3', PNG)
+check('замена по тому же номеру оставляет один файл', ext == 'png' and sorted(os.listdir(os.path.join(tmp, 'plan'))) == ['bg-g1a2b3.png', 'bg-g4c5d6.jpg'])
+check('слишком большая, пустая и чужой формат отклоняются', planmap.save(tmp, 'g1a2b3', JPG + b'0' * 3_000_000)[0] is None and planmap.save(tmp, 'g1a2b3', b'')[0] is None and planmap.save(tmp, 'g1a2b3', b'GIF89a')[0] is None)
+check('номер из путей и странных знаков не принимается', planmap.save(tmp, '../x', JPG)[0] is None and planmap.save(tmp, 'a/b', JPG)[0] is None and planmap.path_of(tmp, '../../etc') is None and planmap.save(tmp, 'AB', JPG)[0] is None)
+check('файл найден по номеру', planmap.path_of(tmp, 'g4c5d6').endswith('bg-g4c5d6.jpg') and planmap.path_of(tmp, 'nope00') is None)
+planmap.remove(tmp, 'g4c5d6')
+check('удаление убирает только свой файл', planmap.path_of(tmp, 'g4c5d6') is None and planmap.path_of(tmp, 'g1a2b3') is not None)
 shutil.rmtree(tmp, ignore_errors=True)
 
 # --- the record
-ok = planmap.make_bg({'x': '10', 'y': -20, 'w': 3500, 'h': 3500, 'op': .8, 'attr': 'Imagery © Esri', 'lat': '55.75', 'lon': 37.6, 'z': 18}, 'jpg')
-check('запись фона из данных браузера', ok and ok['ext'] == 'jpg' and ok['w'] == 3500 and ok['op'] == .8 and ok['lat'] == 55.75 and ok['z'] == 18 and ok['v'] > 1_700_000_000)
-check('без размера или с мусором — отказ', planmap.make_bg({'x': 0, 'y': 0}, 'jpg') is None and planmap.make_bg({'x': 'abc', 'y': 0, 'w': 100, 'h': 100}, 'jpg') is None
-      and planmap.make_bg({'x': float('nan'), 'y': 0, 'w': 100, 'h': 100}, 'jpg') is None and planmap.make_bg({'x': True, 'y': 0, 'w': 100, 'h': 100}, 'jpg') is None)
-check('числа зажаты в разумные пределы', planmap.make_bg({'x': 9e9, 'y': 0, 'w': 1e12, 'h': 1, 'op': 5}, 'jpg')['w'] == planmap.LIMIT)
-check('подпись обрезается', len(planmap.make_bg({'x': 0, 'y': 0, 'w': 100, 'h': 100, 'attr': 'я' * 500}, 'jpg')['attr']) == 120)
-old = dict(ok)
-mv = planmap.clean_bg({'x': 55, 'op': .4, 'ext': 'exe', 'v': 1, 'attr': 'чужое', 'w': 'abc'}, old)
-check('двигать и менять прозрачность можно, подменить файл и версию нельзя', mv['x'] == 55 and mv['op'] == .4 and mv['ext'] == 'jpg' and mv['v'] == old['v'] and mv['attr'] == old['attr'] and mv['w'] == 3500)
-check('без фона на сервере записи нет', planmap.clean_bg({'x': 1}, None) is None and planmap.clean_bg({'x': 1}, {}) is None)
+meta = {'x': '10', 'y': -20, 'w': 3500, 'h': 3500, 'op': .8, 'attr': 'Imagery © Esri', 'lat': '55.75', 'lon': 37.6, 'z': 18, 'r': 300, 'name': '  Участок   ближе '}
+ok = planmap.make_bg(meta, 'jpg', 'g1a2b3')
+check('запись фона из данных браузера', ok and ok['id'] == 'g1a2b3' and ok['ext'] == 'jpg' and ok['w'] == 3500 and ok['op'] == .8 and ok['lat'] == 55.75 and ok['z'] == 18 and ok['r'] == 300 and ok['v'] > 1_700_000_000)
+check('название приводится в порядок', ok['name'] == 'Участок ближе')
+check('без размера или с мусором — отказ', planmap.make_bg({'x': 0, 'y': 0}, 'jpg', 'g1a2b3') is None and planmap.make_bg({'x': 'abc', 'y': 0, 'w': 100, 'h': 100}, 'jpg', 'g1a2b3') is None
+      and planmap.make_bg({'x': float('nan'), 'y': 0, 'w': 100, 'h': 100}, 'jpg', 'g1a2b3') is None and planmap.make_bg({'x': True, 'y': 0, 'w': 100, 'h': 100}, 'jpg', 'g1a2b3') is None)
+check('числа зажаты в разумные пределы', planmap.make_bg({'x': 9e9, 'y': 0, 'w': 1e12, 'h': 1, 'op': 5}, 'jpg', 'g1a2b3')['w'] == planmap.LIMIT)
+check('большой обзор на 20 км (200 000 единиц) помещается', planmap.make_bg({'x': -100000, 'y': -100000, 'w': 200000, 'h': 200000}, 'jpg', 'g1a2b3')['w'] == 200000)
+check('подпись обрезается', len(planmap.make_bg({'x': 0, 'y': 0, 'w': 100, 'h': 100, 'attr': 'я' * 500}, 'jpg', 'g1a2b3')['attr']) == 120)
+
+# --- what the browser may change
+a = planmap.make_bg(dict(meta, name='Обзор'), 'jpg', 'g1a2b3'); b = planmap.make_bg(dict(meta, name='Двор'), 'png', 'g4c5d6')
+mv = planmap.clean_bgs([{'id': 'g1a2b3', 'x': 55, 'op': .4, 'ext': 'exe', 'v': 1, 'attr': 'чужое', 'w': 'abc', 'name': ' Новое  имя '}, {'id': 'gnew000', 'ext': 'jpg', 'x': 1, 'y': 1, 'w': 500, 'h': 500}], [a, b])
+check('двигать, менять яркость и имя можно', mv[0]['x'] == 55 and mv[0]['op'] == .4 and mv[0]['name'] == 'Новое имя' and mv[0]['w'] == 3500)
+check('подменить файл, версию, подпись нельзя', mv[0]['ext'] == 'jpg' and mv[0]['v'] == a['v'] and mv[0]['attr'] == a['attr'])
+check('чужой номер из браузера не добавляет фон', [x['id'] for x in mv] == ['g1a2b3', 'g4c5d6'])
+check('фон, которого нет в присланном, не пропадает', len(planmap.clean_bgs([], [a, b])) == 2 and len(planmap.clean_bgs(None, [a, b])) == 2)
+check('без фонов на сервере записей нет', planmap.clean_bgs([{'id': 'g1a2b3', 'x': 1}], None) == [] and planmap.clean_bgs([{'id': 'g1a2b3'}], [{'id': '../x', 'ext': 'jpg'}, {'id': 'g1a2b3', 'ext': 'exe'}]) == [])
+
+# --- the move from the single picture of 2.28.0
+tmp = tempfile.mkdtemp()
+os.makedirs(os.path.join(tmp, 'plan'))
+open(os.path.join(tmp, 'plan', 'bg.jpg'), 'wb').write(JPG)
+cfg = {'plan': {'buildings': [{'id': 'b1'}], 'links': [], 'poles': [], 'bg': {'v': 1793035524, 'ext': 'jpg', 'x': -2221.0, 'y': -2993.0, 'w': 4442.0, 'h': 4442.0, 'op': 0.5, 'attr': 'Снимок: Esri', 'lat': 43.410973, 'lon': 40.001625, 'z': 18}}}
+check('старый фон переносится в список', planmap.migrate(cfg, tmp) is True and 'bg' not in cfg['plan'] and len(cfg['plan']['bgs']) == 1)
+e = cfg['plan']['bgs'][0]
+check('все его данные целы (место, яркость, координаты)', e['x'] == -2221.0 and e['w'] == 4442.0 and e['op'] == .5 and e['lat'] == 43.410973 and e['lon'] == 40.001625 and e['z'] == 18 and e['name'] == 'Фон')
+check('файл переименован под новый номер', planmap.path_of(tmp, e['id']) is not None and not os.path.exists(os.path.join(tmp, 'plan', 'bg.jpg')) and open(planmap.path_of(tmp, e['id']), 'rb').read() == JPG)
+check('второй раз ничего не меняется', planmap.migrate(cfg, tmp) is False and len(cfg['plan']['bgs']) == 1)
+check('дома не тронуты', cfg['plan']['buildings'] == [{'id': 'b1'}])
+cfg2 = {'plan': {'buildings': [], 'bg': {'v': 1, 'ext': 'jpg', 'x': 0, 'y': 0, 'w': 100, 'h': 100}}}
+shutil.rmtree(os.path.join(tmp, 'plan'))
+check('запись без файла не плодит пустых фонов', planmap.migrate(cfg2, tmp) is True and 'bg' not in cfg2['plan'] and not cfg2['plan'].get('bgs'))
+check('без плана и без фона — ничего', planmap.migrate({}, tmp) is False and planmap.migrate({'plan': {'buildings': []}}, tmp) is False)
+shutil.rmtree(tmp, ignore_errors=True)
 
 # --- outlines
 sq = [[0, 0], [100, 0], [100, 80], [0, 80]]
@@ -56,6 +85,9 @@ check('в домах остаются только годные контуры',
 # --- through a real server (demo copy: no sign-in)
 port = 9978
 data = tempfile.mkdtemp()
+# a config from 2.28.0: the single picture is already there, the server must carry it over at start
+os.makedirs(os.path.join(data, 'plan'))
+open(os.path.join(data, 'plan', 'bg.png'), 'wb').write(PNG)
 env = dict(os.environ, RL_DEMO='1', RL_PORT=str(port), RL_DATA=data, RL_WEB=os.path.join(ROOT, 'web'), PYTHONIOENCODING='utf-8')
 srv = subprocess.Popen([sys.executable, '-m', 'rackd'], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 base = 'http://127.0.0.1:%d' % port
@@ -86,35 +118,56 @@ try:
         except Exception:
             time.sleep(.5)
     st = call('/api/state')[2]
-    plan0 = st.get('plan') or {}
-    check('в начале фона нет', 'bg' not in plan0)
-    q = urllib.parse.urlencode({'x': 100, 'y': 50, 'w': 3500, 'h': 3500, 'op': .8, 'attr': 'Imagery © Esri, Maxar', 'lat': 55.75, 'lon': 37.6, 'z': 18})
-    c, h, r = call('/api/plan/bg?' + q, 'POST', JPG, {'Content-Type': 'image/jpeg'})
-    check('фон загружается', c == 200 and r.get('ok') and r['plan']['bg']['ext'] == 'jpg' and r['plan']['bg']['w'] == 3500)
-    c, h, b = call('/api/plan/bg', raw=True)
-    check('фон отдаётся как есть', c == 200 and b == JPG and h.get('Content-Type') == 'image/jpeg')
-    check('и браузер держит его год', 'max-age=31536000' in h.get('Cache-Control', '') and 'immutable' in h.get('Cache-Control', '') and h.get('X-Content-Type-Options') == 'nosniff')
+    check('в начале фонов нет', not (st.get('plan') or {}).get('bgs') and 'bg' not in (st.get('plan') or {}))
+    q = lambda **k: urllib.parse.urlencode(dict({'x': 100, 'y': 50, 'w': 3500, 'h': 3500, 'op': .8, 'attr': 'Imagery © Esri, Maxar', 'lat': 55.75, 'lon': 37.6, 'z': 18, 'r': 300, 'name': 'Двор'}, **k))
+    c, h, r = call('/api/plan/bg?' + q(name='Обзор', w=60000, h=60000, x=-30000, y=-30000, z=14, r=3000), 'POST', JPG, {'Content-Type': 'image/jpeg'})
+    id1 = r.get('id')
+    check('первый (обзорный) фон загружается', c == 200 and r.get('ok') and id1 and len(r['plan']['bgs']) == 1 and r['plan']['bgs'][0]['w'] == 60000)
+    c, h, r = call('/api/plan/bg?' + q(), 'POST', JPG2, {'Content-Type': 'image/jpeg'})
+    id2 = r.get('id')
+    check('второй (подробный) фон ложится рядом', c == 200 and id2 and id2 != id1 and [b['name'] for b in r['plan']['bgs']] == ['Обзор', 'Двор'])
+    c, h, b = call('/api/plan/bg/' + id2, raw=True)
+    check('каждый отдаётся своей картинкой', c == 200 and b == JPG2 and call('/api/plan/bg/' + id1, raw=True)[2] == JPG)
+    check('и браузер держит их год', 'max-age=31536000' in h.get('Cache-Control', '') and 'immutable' in h.get('Cache-Control', '') and h.get('X-Content-Type-Options') == 'nosniff' and h.get('Content-Type') == 'image/jpeg')
+    check('чужой номер — 404', call('/api/plan/bg/nope000', raw=True)[0] == 404 and call('/api/plan/bg/..%2f..%2fetc', raw=True)[0] in (400, 404))
     plan = call('/api/state')[2]['plan']
-    check('фон виден всем в состоянии плана', plan['bg']['ext'] == 'jpg' and plan['bg']['attr'].startswith('Imagery') and plan['bg']['v'] > 0)
-    c, h, r = call('/api/plan/bg?' + q, 'POST', '<html>не картинка</html>'.encode(), {'Content-Type': 'image/jpeg'})
-    check('не картинка отклоняется, прежний фон на месте', not (c == 200 and r.get('ok')) and call('/api/plan/bg', raw=True)[2] == JPG)
+    check('фоны видны всем в состоянии плана', [b['id'] for b in plan['bgs']] == [id1, id2] and plan['bgs'][1]['attr'].startswith('Imagery') and plan['bgs'][1]['r'] == 300)
+    c, h, r = call('/api/plan/bg?' + q(), 'POST', '<html>не картинка</html>'.encode(), {'Content-Type': 'image/jpeg'})
+    check('не картинка отклоняется, фонов столько же', not (c == 200 and r.get('ok')) and len(call('/api/state')[2]['plan']['bgs']) == 2)
     c, h, r = call('/api/plan/bg?x=0&y=0', 'POST', JPG, {'Content-Type': 'image/jpeg'})
     check('без размера отказ', not (c == 200 and r.get('ok')))
-    # the plan is saved by the browser: it may move the picture, but not replace it
-    v_before = plan['bg']['v']
-    plan['bg'].update({'x': 300, 'op': .5, 'ext': 'exe', 'v': 1})
+    ids = [id1, id2]
+    for i in range(planmap.MAX_BGS - 2):
+        c, h, r = call('/api/plan/bg?' + q(name=f'Ещё {i}'), 'POST', PNG, {'Content-Type': 'image/png'})
+        ids.append(r.get('id'))
+    c, h, r = call('/api/plan/bg?' + q(), 'POST', JPG, {'Content-Type': 'image/jpeg'})
+    check('больше шести фонов не бывает', len(ids) == planmap.MAX_BGS and not (c == 200 and r.get('ok')) and len(call('/api/state')[2]['plan']['bgs']) == planmap.MAX_BGS)
+    for i in ids[2:]:
+        call('/api/plan/bg/' + i, 'DELETE')
+    # the plan is saved by the browser: it may move and dim a picture, but not replace or add one
+    plan = call('/api/state')[2]['plan']
+    v_before = {b['id']: b['v'] for b in plan['bgs']}
+    plan['bgs'][1].update({'x': 300, 'op': .5, 'ext': 'exe', 'v': 1, 'name': 'Мой двор'})
+    plan['bgs'].append({'id': 'gevil01', 'ext': 'jpg', 'x': 0, 'y': 0, 'w': 100, 'h': 100})
     plan['buildings'] = [{'id': 'b1', 'name': 'Дом', 'x': 0, 'y': 0, 'floors': [], 'outline': sq}, {'id': 'b2', 'name': 'Плохой', 'floors': [], 'outline': [[0, 0], [1, 1]]}]
     c, h, r = put_plan(plan)
     after = call('/api/state')[2]['plan']
-    check('план сохраняется, фон двигается', c == 200 and after['bg']['x'] == 300 and after['bg']['op'] == .5)
-    check('но файл и версию подменить нельзя', after['bg']['ext'] == 'jpg' and after['bg']['v'] == v_before)
-    bd = {b['id']: b for b in after['buildings']}
-    check('контур дома сохраняется, негодный выбрасывается', bd['b1']['outline'] == sq and 'outline' not in bd['b2'])
-    c, h, r = call('/api/plan/bg', 'DELETE')
-    check('фон удаляется', c == 200 and 'bg' not in r['plan'] and call('/api/plan/bg', raw=True)[0] == 404)
-    plan['bg'] = {'x': 1, 'y': 1, 'w': 500, 'h': 500, 'ext': 'jpg', 'v': 5}
+    bd = {b['id']: b for b in after['bgs']}
+    check('план сохраняется, фон двигается и переименовывается', c == 200 and bd[id2]['x'] == 300 and bd[id2]['op'] == .5 and bd[id2]['name'] == 'Мой двор')
+    check('но файл и версию подменить нельзя, чужой фон не добавить', bd[id2]['ext'] == 'jpg' and bd[id2]['v'] == v_before[id2] and 'gevil01' not in bd and len(bd) == 2)
+    byb = {b['id']: b for b in after['buildings']}
+    check('контур дома сохраняется, негодный выбрасывается', byb['b1']['outline'] == sq and 'outline' not in byb['b2'])
+    plan['bgs'] = []                                         # an old tab that does not know about the pictures
     put_plan(plan)
-    check('после удаления фон не воскресает из старой вкладки', 'bg' not in call('/api/state')[2]['plan'])
+    check('вкладка без фонов их не стирает', len(call('/api/state')[2]['plan']['bgs']) == 2)
+    c, h, r = call('/api/plan/bg/' + id1, 'DELETE')
+    check('один фон удаляется, второй остаётся', c == 200 and [b['id'] for b in r['plan']['bgs']] == [id2] and call('/api/plan/bg/' + id1, raw=True)[0] == 404 and call('/api/plan/bg/' + id2, raw=True)[0] == 200)
+    plan = call('/api/state')[2]['plan']
+    plan['bgs'].append({'id': id1, 'ext': 'jpg', 'x': 1, 'y': 1, 'w': 500, 'h': 500})
+    put_plan(plan)
+    check('удалённый фон не воскресает из старой вкладки', [b['id'] for b in call('/api/state')[2]['plan']['bgs']] == [id2])
+    c, h, r = call('/api/plan/bg/' + id2, 'DELETE')
+    check('последний удалён: поля фонов в плане нет', c == 200 and 'bgs' not in r['plan'] and 'bgs' not in call('/api/state')[2]['plan'])
     check('дома при этом целы', len(call('/api/state')[2]['plan']['buildings']) == 2)
 finally:
     srv.terminate()
