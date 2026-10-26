@@ -109,8 +109,9 @@ function layoutMap(data, collapsed) {
   if (inet) pos['inet'] = { x: (hasRack ? fw0 / 2 : M.NW / 2) - M.NW / 2, y: topY, w: M.NW, h: M.NH };
   if (box) { pos['wan:box'] = { x: fw0 / 2 - M.NW / 2, y: topY + M.NH + 70, w: M.NW, h: M.NH }; col['wan:box'] = -1; }
   const remotes = (kids['inet'] || []).filter(e => e.kind === 'remote').map(e => e.target);
-  // remote devices go to the left of the internet node, so they never collide with the columns on the right
-  remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) - (M.NW + 50) * (i + 1), y: topY, w: M.NW, h: M.NH }; col[id] = -1; });
+  // remote devices (a VPS, a router on another site) go to the left of the internet node, in a column going up: each one has its own line from the internet.
+  // In one row the lines ran along it behind the neighbours' cards and looked like a chain «internet → one → another → …»
+  remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) - (M.NW + 90), y: topY - i * (M.NH + 28), w: M.NW, h: M.NH }; col[id] = -1; });
   // nodes never reached (shouldn't happen) go to a bottom row
   let stray = 0; Object.keys(nodes).forEach(id => { if (!pos[id] && !hiddenIds.has(id)) {
     const [w, h] = sizeOf(id); pos[id] = { x: colX(1) + stray * (w + 20), y: stackH + 80, w, h }; stray++; } });
@@ -223,7 +224,7 @@ function edgePath(e, L) {
   }
   if (e.source === 'inet' && b.x + b.w <= a.x) {      // remote device to the left of the internet node
     const sx = a.x, sy = a.y + a.h / 2, tx = b.x + b.w, ty = b.y + b.h / 2;
-    return { d: `M${sx},${sy} C${sx - 30},${sy} ${tx + 30},${ty} ${tx},${ty}`, lx: (sx + tx) / 2, ly: sy - 8 };
+    return { d: `M${sx},${sy} C${sx - 60},${sy} ${tx + 60},${ty} ${tx},${ty}`, lx: (sx + tx) / 2, ly: (sy + ty) / 2 - 8 };
   }
   if (e.source === 'inet') {
     const sx = a.x + a.w, sy = a.y + a.h / 2, tx = b.x, ty = b.y + b.h / 2;

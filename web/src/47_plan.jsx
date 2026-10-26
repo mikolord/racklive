@@ -2,7 +2,7 @@
 const PG = 20;
 const uid = p => p + Math.random().toString(36).slice(2, 7);
 const snap = v => Math.round(v / PG) * PG;
-const clampK = k => Math.min(3, Math.max(.25, k));
+const clampK = k => Math.min(6, Math.max(.08, k));
 
 function placeStatus(rack, devById) {
   const s = (rack.units || []).flatMap(u => unitDevIds(u)).map(id => devById[id] && devById[id].state && devById[id].state.status).filter(Boolean);
@@ -143,11 +143,21 @@ function Territory({ plan, enter }) {
   const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || [];
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   const wrap = useRef(null);
-  const [tool, setTool] = useState('select');               // select | link | pole
+  const [tool, setTool] = useState('select');               // select | link | pole | outline | bg
   const [linkFrom, setLinkFrom] = useState(null);
   const [sel, setSel] = useState(null);
+  const [draft, setDraft] = useState([]);                    // «Обвести»: углы, поставленные до сих пор
+  const [selV, setSelV] = useState(null);                    // выбранный угол выбранного дома (его можно убрать)
+  const [live, setLive] = useState(null);                    // дом, который тащат (контур целиком или один угол): сохраняется один раз, когда отпустили
+  const [bgOpen, setBgOpen] = useState(false);
+  const [bgLive, setBgLive] = useState(null);                // фон, который тащат
+  const bgDrag = useRef(null);
+  const bg = plan.bg ? { ...plan.bg, ...(bgLive || {}) } : null;
   const save = (b, l, p) => savePlan({ ...plan, buildings: b || buildings, links: l || links, poles: p || poles });
+  const isOut = b => Array.isArray(b.outline) && b.outline.length >= 3;
+  const outlineOf = b => live && live.id === b.id ? live.outline : b.outline;
   const pos = b => ({ x: typeof b.x === 'number' ? b.x : 40 + (buildings.indexOf(b) % 3) * (BW + 80), y: typeof b.y === 'number' ? b.y : 40 + Math.floor(buildings.indexOf(b) / 3) * (BH + 120) });
+  const boxOf = b => { if (isOut(b)) { const q = polyBox(outlineOf(b)); return { x: q.x0, y: q.y0, w: q.x1 - q.x0, h: q.y1 - q.y0 }; } const p = pos(b); return { x: p.x, y: p.y, w: BW, h: BH }; };
   const nodeName = id => (buildings.find(x => x.id === id) || poles.find(x => x.id === id) || {}).name || '';
   const [linkEdit, setLinkEdit] = useState(null);             // {link, isNew}
   const pickNode = id => {                                    // link tool: building or pole, two taps
@@ -157,23 +167,51 @@ function Territory({ plan, enter }) {
     setLinkFrom(null);
   };
   const saveLink = l => save(null, linkEdit.isNew ? [...links, l] : links.map(x => x.id === l.id ? l : x));
+  const hit = w => [...buildings].reverse().find(x => { if (isOut(x)) return inPoly(w, x.outline); const p = pos(x); return w.x >= p.x && w.x <= p.x + BW && w.y >= p.y && w.y <= p.y + BH; });
+
+  /* «Обвести»: нажимайте по углам дома; замкнуть — нажать на первый угол или «Готово» */
+  const finishOutline = () => {
+    if (draft.length < 3) { toast('Нужно хотя бы три угла', true); return; }
+    const id = uid('b'), n = buildings.length, b0 = polyBox(draft);
+    const name = ((typeof prompt === 'function' ? prompt('Название дома', `Дом ${n + 1}`) : '') || '').trim() || `Дом ${n + 1}`;
+    save([...buildings, { id, name, x: b0.x0, y: b0.y0, outline: draft, floors: [{ id: uid('f'), name: '1 этаж', walls: [], rooms: [], items: [] }] }]);
+    setDraft([]); setSel(id); setTool('select');
+  };
+  const addCorner = w => {
+    const p = [snapO(w.x), snapO(w.y)];
+    if (draft.length >= 3 && Math.hypot(p[0] - draft[0][0], p[1] - draft[0][1]) <= 16 / view.k) { finishOutline(); return; }
+    const last = draft[draft.length - 1];
+    if (last && last[0] === p[0] && last[1] === p[1]) return;
+    if (draft.length >= 120) { toast('Достаточно углов — нажмите «Готово»', true); return; }
+    setDraft([...draft, p]);
+  };
   const onTap = w => {
+    if (edit && tool === 'outline') { addCorner(w); return; }
     if (tool === 'pole') { save(null, null, [...poles, { id: uid('p'), name: `Столб ${poles.length + 1}`, x: snap(w.x), y: snap(w.y) }]); return; }
     if (!edit) {                                               // viewing: 1st tap selects a house, 2nd tap (or «Открыть») goes inside
-      const b = buildings.find(x => { const p = pos(x); return w.x >= p.x && w.x <= p.x + BW && w.y >= p.y && w.y <= p.y + BH; });
+      const b = hit(w);
       if (b && sel === b.id) { enter(b.id); return; }
       setSel(b ? b.id : null); return;
     }
-    setSel(null);
+    setSel(null); setSelV(null);
+  };
+  /* фон: тащить пальцем / мышью (инструмент «Фон») */
+  const onBgDraw = (w0, w1, fin) => {
+    if (!plan.bg) return;
+    if (!bgDrag.current) bgDrag.current = { x: plan.bg.x, y: plan.bg.y };
+    const nx = Math.round(bgDrag.current.x + w1.x - w0.x), ny = Math.round(bgDrag.current.y + w1.y - w0.y);
+    if (fin) { savePlan({ ...plan, bg: { ...plan.bg, x: nx, y: ny } }); setBgLive(null); bgDrag.current = null; } else setBgLive({ x: nx, y: ny });
   };
   // viewing: a swipe that starts on a house pans the plan instead of opening it
-  const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap, panItems: () => !edit });
+  const { view, setView, bind } = usePanZoom(wrap, { canPan: () => tool === 'select' || tool === 'outline', onTap, panItems: () => !edit || tool === 'outline' || tool === 'bg',
+    onDraw: edit && tool === 'bg' && plan.bg ? onBgDraw : null });
   // open centred on all buildings, poles and their yards — not on an empty corner of the grid
   const fitAll = () => { const xs = [], ys = [];
-    buildings.forEach(b => { const p = pos(b); xs.push(p.x - 18, p.x + BW + 18); ys.push(p.y - 18, p.y + BH + 18); });
+    buildings.forEach(b => { const q = boxOf(b); xs.push(q.x - 18, q.x + q.w + 18); ys.push(q.y - 18, q.y + q.h + 18); });
     poles.forEach(p => { xs.push(p.x - 20, p.x + 20); ys.push(p.y - 20, p.y + 34); });
+    if (!xs.length && plan.bg) { xs.push(plan.bg.x, plan.bg.x + plan.bg.w); ys.push(plan.bg.y, plan.bg.y + plan.bg.h); }
     fitView(wrap.current, xs, ys, setView); };
-  useEffect(() => { const t = setTimeout(fitAll, 30); return () => clearTimeout(t); }, [buildings.length, poles.length]);
+  useEffect(() => { const t = setTimeout(fitAll, 30); return () => clearTimeout(t); }, [buildings.length, poles.length, plan.bg ? plan.bg.v : 0]);
   const delPole = async id => { const p = poles.find(x => x.id === id);
     if (!(await confirm(`Удалить «${p.name}» и его магистрали?`, { danger: true, ok: 'Удалить' }))) return;
     save(null, links.filter(l => l.from !== id && l.to !== id), poles.filter(x => x.id !== id)); setSel(null); };
@@ -193,36 +231,78 @@ function Territory({ plan, enter }) {
       floors: [{ id: uid('f'), name: '1 этаж', walls: [], rooms: [], items: [] }] }]); };
   const delBuilding = async id => { const b = buildings.find(x => x.id === id);
     if (!(await confirm(`Удалить дом «${b.name}» со всеми этажами? Оборудование и шкафы останутся — удалится только их размещение на плане.`, { danger: true, ok: 'Удалить дом' }))) return;
-    save(buildings.filter(x => x.id !== id), links.filter(l => l.from !== id && l.to !== id)); setSel(null); };
+    save(buildings.filter(x => x.id !== id), links.filter(l => l.from !== id && l.to !== id)); setSel(null); setSelV(null); };
   const dragB = (b, e) => {
     if (tool === 'link') { pickNode(b.id); return; }
-    if (tool === 'pole') return;
+    if (tool === 'pole' || tool === 'outline' || tool === 'bg') return;
     if (!edit) return;                                         // handled by the pan/tap hook (onTap)
-    e.stopPropagation(); const p = pos(b); const r = wrap.current.getBoundingClientRect();
+    e.stopPropagation(); const p = pos(b);
     const sx = e.clientX, sy = e.clientY; let moved = false;
+    if (isOut(b)) {                                            // контур: тащим целиком, сохраняем один раз — когда отпустили
+      const o0 = b.outline; let cur = null;
+      const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 5) moved = true; if (moved) {
+        const dx = snapO((ev.clientX - sx) / view.k), dy = snapO((ev.clientY - sy) / view.k);
+        cur = { id: b.id, outline: o0.map(([x, y]) => [x + dx, y + dy]) }; setLive(cur); } };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+        if (moved && cur) { const q = polyBox(cur.outline); save(buildings.map(x => x.id === b.id ? { ...x, outline: cur.outline, x: q.x0, y: q.y0 } : x)); }
+        setLive(null); if (!moved) { setSel(b.id); setSelV(null); } };
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+      return;
+    }
     const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 5) moved = true; if (moved) {
       const nx = snap(p.x + (ev.clientX - sx) / view.k), ny = snap(p.y + (ev.clientY - sy) / view.k);
       savePlan({ ...plan, buildings: buildings.map(x => x.id === b.id ? { ...x, x: nx, y: ny } : x) }); } };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (!moved) { setSel(b.id); } };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
+  /* углы выбранного контура: потянуть — подвинуть, нажать — выбрать (тогда можно убрать), «+» на середине стороны — добавить угол */
+  const setOutline = (b, o) => save(buildings.map(x => x.id === b.id ? { ...x, outline: o, x: polyBox(o).x0, y: polyBox(o).y0 } : x));
+  const worldOf = ev => { const r = wrap.current.getBoundingClientRect(); return { x: (ev.clientX - r.left - view.x) / view.k, y: (ev.clientY - r.top - view.y) / view.k }; };
+  const dragV = (b, i, e) => {
+    if (!edit || tool !== 'select') return;
+    e.stopPropagation(); const sx = e.clientX, sy = e.clientY; let moved = false, cur = null; const o0 = b.outline;
+    const move = ev => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 5) moved = true; if (moved) {
+      const w = worldOf(ev); cur = o0.map((q, k) => k === i ? [snapO(w.x), snapO(w.y)] : q); setLive({ id: b.id, outline: cur }); } };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      if (moved && cur) setOutline(b, cur); else setSelV(i); setLive(null); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const addV = (b, i, e) => { e.stopPropagation(); const o = b.outline, a = o[i], c = o[(i + 1) % o.length];
+    if (o.length >= 120) { toast('Больше углов нельзя', true); return; }
+    setOutline(b, [...o.slice(0, i + 1), [snapO((a[0] + c[0]) / 2), snapO((a[1] + c[1]) / 2)], ...o.slice(i + 1)]); setSelV(i + 1); };
+  const delV = () => { const b = buildings.find(x => x.id === sel); if (!b || !isOut(b) || selV === null) return;
+    if (b.outline.length <= 3) { toast('У дома должно остаться хотя бы три угла', true); return; }
+    setOutline(b, b.outline.filter((_, k) => k !== selV)); setSelV(null); };
 
-  if (!buildings.length) return <div className="plan-empty card pad">
+  if (!buildings.length && !bg) return <div className="plan-empty card pad">
     <div style={{ fontSize: 42 }}>🏠</div><div style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 4px' }}>Плана пока нет</div>
-    <div className="dim" style={{ marginBottom: 16, maxWidth: 440 }}>Добавьте дом, нарисуйте этажи и двор, начертите комнаты и расставьте шкафы, щитки и устройства. Несколько домов можно соединить магистралью.</div>
-    {edit ? <Btn kind="primary" icon="home" onClick={addBuilding}>Создать дом</Btn> : <div className="dim">Включите «Редактирование», чтобы начать.</div>}
+    <div className="dim" style={{ marginBottom: 16, maxWidth: 440 }}>Добавьте дом, нарисуйте этажи и двор, начертите комнаты и расставьте шкафы, щитки и устройства. Несколько домов можно соединить магистралью.
+      Можно подложить настоящую карту участка и обвести на ней дома.</div>
+    {edit ? <div className="row wrap" style={{ gap: 8 }}><Btn kind="primary" icon="home" onClick={addBuilding}>Создать дом</Btn><Btn icon="map" onClick={() => setBgOpen(true)}>Фон: карта участка</Btn></div>
+      : <div className="dim">Включите «Редактирование», чтобы начать.</div>}
+    {bgOpen ? <PlanBgModal plan={plan} center={{ x: 400, y: 300 }} onClose={() => setBgOpen(false)} onMove={() => {}} /> : null}
   </div>;
 
-  const center = id => { const b = buildings.find(x => x.id === id); if (b) { const p = pos(b); return { x: p.x + BW / 2, y: p.y + BH / 2 }; }
+  const center = id => { const b = buildings.find(x => x.id === id); if (b) { if (isOut(b)) return polyCenter(outlineOf(b)); const p = pos(b); return { x: p.x + BW / 2, y: p.y + BH / 2 }; }
     const p = poles.find(x => x.id === id); return p ? { x: p.x, y: p.y } : null; };
   const selB = buildings.find(b => b.id === sel), selP = poles.find(p => p.id === sel);
+  const selOut = selB && isOut(selB) ? outlineOf(selB) : null;
+  const contentCenter = (() => { const xs = [], ys = []; buildings.forEach(b => { const q = boxOf(b); xs.push(q.x, q.x + q.w); ys.push(q.y, q.y + q.h); });
+    return xs.length ? { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 } : { x: 400, y: 300 }; })();
+  const r1 = 7 / view.k;                                         // кружки углов одного размера на экране при любом зуме
   return <div className="plan">
     {edit ? <div className="plan-tools">
-      <Seg value={tool} onChange={v => { setTool(v); setLinkFrom(null); }} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' },
-        { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }]} />
+      <Seg value={tool} onChange={v => { setTool(v); setLinkFrom(null); setDraft([]); setSelV(null); }} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' },
+        { value: 'outline', label: 'Обвести дом', icon: 'edit' },
+        { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }, ...(bg ? [{ value: 'bg', label: 'Фон', icon: 'resize' }] : [])]} />
       <Btn size="sm" icon="plus" onClick={addBuilding}>Дом</Btn>
+      <Btn size="sm" icon="map" onClick={() => setBgOpen(true)}>{bg ? 'Фон…' : 'Фон: карта'}</Btn>
+      {tool === 'outline' ? <>{draft.length >= 3 ? <Btn size="sm" kind="primary" icon="check" onClick={finishOutline}>Готово</Btn> : null}
+        {draft.length ? <Btn size="sm" onClick={() => setDraft(draft.slice(0, -1))}>Убрать угол</Btn> : null}
+        {draft.length ? <Btn size="sm" onClick={() => setDraft([])}>Сбросить</Btn> : null}</> : null}
       {selB ? <><span className="dim" style={{ fontSize: 13 }}>·</span>
         <Btn size="sm" onClick={() => { const name = prompt('Название дома', selB.name); if (name && name.trim()) save(buildings.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
+        {selOut && selV !== null ? <Btn size="sm" icon="minus" onClick={delV}>Убрать угол</Btn> : null}
         <Btn size="sm" kind="danger" icon="trash" onClick={() => delBuilding(sel)}>Удалить дом</Btn></> : null}
       {selP ? <><span className="dim" style={{ fontSize: 13 }}>·</span>
         <Btn size="sm" onClick={() => { const name = prompt('Название столба', selP.name); if (name && name.trim()) save(null, null, poles.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
@@ -230,12 +310,15 @@ function Territory({ plan, enter }) {
     </div> : null}
     {linkFrom ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="link" size={15} />От «{nodeName(linkFrom)}» — выберите второй дом или столб</div> : null}
     {tool === 'pole' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="pole" size={15} />Нажмите на план, куда поставить столб</div> : null}
+    {tool === 'outline' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="edit" size={15} />{draft.length ? `Углов: ${draft.length}. Чтобы замкнуть, нажмите на первый угол или «Готово»` : 'Нажимайте по углам дома на карте — по кругу'}</div> : null}
+    {tool === 'bg' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="resize" size={15} />Тащите карту, чтобы совместить её с домами</div> : null}
     <div className="plan-canvas" ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridT" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
         <rect x={0} y={0} width="100%" height="100%" fill="url(#pgridT)" />
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+          {bg ? <image href={`/api/plan/bg?v=${plan.bg.v}`} x={bg.x} y={bg.y} width={bg.w} height={bg.h} preserveAspectRatio="none" opacity={bg.op} style={{ pointerEvents: 'none' }} /> : null}
           {links.map((l, idx) => { const c1 = center(l.from), c2 = center(l.to); if (!c1 || !c2) return null;
             const key = [l.from, l.to].sort().join('>');                    // offset parallel links between the same pair
             const sib = links.filter(x => [x.from, x.to].sort().join('>') === key);
@@ -249,6 +332,14 @@ function Territory({ plan, enter }) {
                 {[l.label, viaText(data, l.via, true)].filter(Boolean).join(' · ')}</text> : null}</g>; })}
           {buildings.map(b => { const p = pos(b); const devs = (b.floors || []).flatMap(f => floorDevices(f, data, devById)); const st = worst(devs);
             const hasYard = (b.floors || []).some(f => f.outdoor);
+            if (isOut(b)) { const o = outlineOf(b), c = polyCenter(o); const nm = b.name.length > 22 ? b.name.slice(0, 21) + '…' : b.name; const fs = Math.max(14, Math.min(44, 13 / view.k));     // подпись читается на любом зуме
+              return <g key={b.id} className={'plan-item plan-building plan-outlined' + (sel === b.id ? ' sel' : '') + (linkFrom === b.id ? ' sel' : '')}
+                onPointerDown={e => dragB(b, e)} style={{ cursor: edit && tool === 'select' ? 'move' : 'pointer' }}>
+                <polygon points={o.map(q => q.join(',')).join(' ')} className="plan-outline" />
+                <circle cx={c.x} cy={c.y - fs * 1.9} r={fs * .36} fill={statusColor(st)} />
+                <text x={c.x} y={c.y - fs * .25} textAnchor="middle" className="plan-outline-name" style={{ fontSize: fs }}>{nm}</text>
+                <text x={c.x} y={c.y + fs * .95} textAnchor="middle" className="plan-outline-sub" style={{ fontSize: fs * .82 }}>{(b.floors || []).length} эт. · {devs.length} устр.{bg ? ` · ${Math.round(polyArea(o) / (PPM * PPM))} м²` : ''}</text>
+              </g>; }
             return <g key={b.id} className={'plan-item plan-building' + (sel === b.id ? ' sel' : '') + (linkFrom === b.id ? ' sel' : '')} transform={`translate(${p.x},${p.y})`}
               onPointerDown={e => dragB(b, e)} style={{ cursor: edit && tool === 'select' ? 'move' : 'pointer' }}>
               {hasYard ? <rect x={-18} y={-18} width={BW + 36} height={BH + 36} rx={18} className="plan-yard" /> : null}
@@ -265,12 +356,21 @@ function Territory({ plan, enter }) {
             <line x1={0} y1={-8} x2={0} y2={11} className="pole-mast" /><line x1={-9} y1={-8} x2={9} y2={-8} className="pole-mast" />
             <circle cx={-9} cy={-10.5} r={2} className="pole-ins" /><circle cx={0} cy={-10.5} r={2} className="pole-ins" /><circle cx={9} cy={-10.5} r={2} className="pole-ins" />
             <text y={30} textAnchor="middle" className="pi-label">{p.name.length > 16 ? p.name.slice(0, 15) + '…' : p.name}</text></g>)}
+          {edit && tool === 'select' && selOut ? <g className="plan-item plan-vtxs">
+            {selOut.map((q, i) => { const n2 = selOut[(i + 1) % selOut.length];
+              return <circle key={'m' + i} cx={(q[0] + n2[0]) / 2} cy={(q[1] + n2[1]) / 2} r={r1 * .75} className="plan-vtx ghost" onPointerDown={e => addV(selB, i, e)} />; })}
+            {selOut.map((q, i) => <circle key={'v' + i} cx={q[0]} cy={q[1]} r={r1} className={'plan-vtx' + (selV === i ? ' sel' : '')} onPointerDown={e => dragV(selB, i, e)} />)}</g> : null}
+          {draft.length ? <g className="plan-draft" style={{ pointerEvents: 'none' }}>
+            <polyline points={draft.map(q => q.join(',')).join(' ')} className="plan-draft-line" />
+            {draft.map((q, i) => <circle key={i} cx={q[0]} cy={q[1]} r={i === 0 && draft.length >= 3 ? r1 * 1.5 : r1 * .8} className={'plan-vtx' + (i === 0 ? ' first' : '')} />)}</g> : null}
+          {bg && bg.attr ? <text x={bg.x + 8} y={bg.y + bg.h - 8} className="plan-attr" style={{ fontSize: 11 / view.k }}>{bg.attr}</text> : null}
         </g>
       </svg>
       {selB && tool === 'select' ? <button className="plan-open" onClick={() => enter(selB.id)}>
         <Icon name="home" size={16} />Открыть «{selB.name.length > 18 ? selB.name.slice(0, 17) + '…' : selB.name}»<Icon name="chevron" size={15} /></button> : null}
       <ZoomBtns setView={setView} onFit={fitAll} />
     </div>
+    {bgOpen ? <PlanBgModal plan={plan} center={contentCenter} onClose={() => setBgOpen(false)} onMove={() => { setBgOpen(false); setTool('bg'); }} /> : null}
     {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}
       onSave={saveLink} onDelete={() => save(null, links.filter(x => x.id !== linkEdit.link.id))} onClose={() => setLinkEdit(null)} /> : null}
   </div>;

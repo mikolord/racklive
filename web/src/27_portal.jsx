@@ -12,6 +12,7 @@ function PortalPlugin({ p, device, reload }) {
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
   const [tpls, setTpls] = useState(p.templates || [{ id: 'default', name: 'Стандартный (Rack Live)', builtin: true }]);
   const [busy, setBusy] = useState(''); const [stage, setStage] = useState(''); const [result, setResult] = useState(null);
+  const [sel, setSel] = useState(null);      // null — обычный вид; список id — режим «выбрать шаблоны для удаления»
   const [upName, setUpName] = useState(''); const fileRef = useRef(null); const [rootPass, setRootPass] = useState('');
   const [show, setShow] = useState(() => new URLSearchParams(location.search).get('psec') || (p.installed ? '' : 'net'));      // ?psec=ports|login|tpl|adv — for tests
   const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'portal', ...body } });
@@ -59,7 +60,7 @@ function PortalPlugin({ p, device, reload }) {
 
   const apply = async () => {
     const lanIp = (f.lan || '').split('/')[0];
-    const ok = await confirm(`Rack Live настроит роутер: основная Wi-Fi «${f.mainSsid || '—'}», гостевая «${f.guestSsid}»${f.portal ? ' со страницей входа' : ''}, `
+    const ok = await confirm(`Rack Live настроит роутер: ${f.mainWifi === false ? 'без основной Wi-Fi' : `основная Wi-Fi «${f.mainSsid || '—'}»`}, гостевая «${f.guestSsid}»${f.portal ? ' со страницей входа' : ''}, `
       + `основная сеть ${f.lan}, гостевая ${f.guest}. Роутер перезапустит сеть — на 1–2 минуты связь с ним пропадёт, а устройства в его сети получат новые адреса. `
       + `Если Rack Live не сможет снова зайти на роутер, через 4 минуты он сам вернёт прежние настройки. После настройки роутер будет на ${lanIp} (из его сети)`
       + `${f.mgmtWan ? ' и по адресу WAN (из сети, к которой он подключён)' : ''}. Продолжить?`, { title: 'Настроить роутер', ok: 'Настроить' });
@@ -115,13 +116,30 @@ function PortalPlugin({ p, device, reload }) {
     try { const r = await api('/api/portal/templates/' + t.id, { method: 'DELETE' }); setTpls(r.templates); if (f.template === t.id) set('template', 'default'); }
     catch (e) { toast(e.message, true); }
   };
+  // шаблон, который нельзя удалить пачкой: встроенный и тот, что сейчас стоит на роутере
+  const keepTpl = t => !!t.builtin || (p.installed && savedTpl === t.id);
+  const togSel = t => { if (!keepTpl(t)) setSel(s => (s || []).includes(t.id) ? s.filter(x => x !== t.id) : [...(s || []), t.id]); };
+  const delMany = async () => {
+    const ids = (sel || []).filter(id => { const t = tpls.find(x => x.id === id); return t && !keepTpl(t); });
+    if (!ids.length) return;
+    if (!(await confirm(`Удалить выбранные шаблоны из библиотеки: ${ids.length} шт.? Вернуть их можно только загрузив .zip заново. На роутере ничего не меняется.`, { title: 'Удалить шаблоны', ok: `Удалить (${ids.length})`, danger: true }))) return;
+    setBusy('delmany');
+    let list = tpls, done = 0;
+    try {
+      for (const id of ids) { const r = await api('/api/portal/templates/' + id, { method: 'DELETE' }); list = r.templates; done++; }
+      toast(`Удалено шаблонов: ${done}`);
+    } catch (e) { toast(`Удалено ${done} из ${ids.length}: ${e.message}`, true); }
+    setTpls(list); if (!list.some(t => t.id === f.template)) set('template', 'default');
+    setSel(null); setBusy('');
+  };
 
-  const sec = (id, title, sub, body) => <div className={'pt-sec' + (show === id ? ' open' : '')}>
+  const sec =(id, title, sub, body) => <div className={'pt-sec' + (show === id ? ' open' : '')}>
     <button type="button" className="pt-sec-h" onClick={() => setShow(show === id ? '' : id)}><b>{title}</b><span className="dim3">{sub}</span><Icon name="chevron" size={14} /></button>
     {show === id ? <div className="pt-sec-b">{body}</div> : null}</div>;
-  const savedTpl = (p.saved || {}).template || 'default';
+  const savedTpl = (p.saved || p.routerProfile || {}).template || 'default';
   const working = !!busy;
 
+  if (p.foreign) return <ForeignPortal p={p} hw={hw} />;
   return <>
     <PortalGuide installed={p.installed} />
     {!p.installed ? <WanPrep p={p} call={call} reload={reload} /> : null}
@@ -135,10 +153,13 @@ function PortalPlugin({ p, device, reload }) {
       <div className="dim3" style={{ fontSize: 12 }}>Выключите — гостевая Wi-Fi останется, но без страницы входа. Включите — гости снова начнут со страницы.</div>
     </div> : null}
 
-    {sec('net', 'Сеть и Wi-Fi', `«${f.mainSsid || '—'}» · «${f.guestSsid}»`, <>
+    {sec('net', 'Сеть и Wi-Fi', f.mainWifi === false ? `«${f.guestSsid}»` : `«${f.mainSsid || '—'}» · «${f.guestSsid}»`, <>
+      <div className="row" style={{ gap: 10, alignItems: 'center' }}><Switch on={f.mainWifi !== false} onChange={v => set('mainWifi', v)} />
+        <div className="grow"><b style={{ fontSize: 13.5 }}>Основная Wi-Fi роутера</b>
+          <div className="dim3" style={{ fontSize: 12 }}>Выключите, если Wi-Fi раздают другие точки (например, Keenetic), а к роутеру приходит только кабель: тогда у роутера будет одна гостевая сеть.</div></div></div>
       <div className="pt-grid">
-        <Field label="Основная Wi-Fi: название"><input className="input" value={f.mainSsid} placeholder="например, Office" onChange={e => set('mainSsid', e.target.value)} /></Field>
-        <Field label="Основная Wi-Fi: пароль"><input className="input" type="password" value={f.mainKey} placeholder={base.mainKeySet ? 'не менять' : 'от 8 символов'} onChange={e => set('mainKey', e.target.value)} /></Field>
+        {f.mainWifi === false ? null : <Field label="Основная Wi-Fi: название"><input className="input" value={f.mainSsid} placeholder="например, Office" onChange={e => set('mainSsid', e.target.value)} /></Field>}
+        {f.mainWifi === false ? null : <Field label="Основная Wi-Fi: пароль"><input className="input" type="password" value={f.mainKey} placeholder={base.mainKeySet ? 'не менять' : 'от 8 символов'} onChange={e => set('mainKey', e.target.value)} /></Field>}
         <Field label="Гостевая Wi-Fi: название"><input className="input" value={f.guestSsid} onChange={e => set('guestSsid', e.target.value)} /></Field>
         <Field label="Гостевая Wi-Fi: пароль (обычно без)"><input className="input" type="password" value={f.guestKey} placeholder={base.guestKeySet ? 'не менять' : 'без пароля — вход через страницу'} onChange={e => set('guestKey', e.target.value)} /></Field>
       </div>
@@ -186,9 +207,17 @@ function PortalPlugin({ p, device, reload }) {
     </>)}
 
     {sec('tpl', 'Шаблон страницы', (tpls.find(t => t.id === f.template) || {}).name || 'Стандартный', <>
-      <div className="pt-tpls">{tpls.map(t => <div key={t.id} className={'pt-tpl' + (f.template === t.id ? ' on' : '')} onClick={() => set('template', t.id)}>
+      {tpls.some(t => !keepTpl(t)) ? <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+        {sel === null ? <Btn icon="trash" disabled={working} onClick={() => setSel([])}>Выбрать для удаления</Btn> : <>
+          <b style={{ fontSize: 13 }}>Выбрано: {sel.length} из {tpls.filter(t => !keepTpl(t)).length}</b>
+          <Btn disabled={working} onClick={() => setSel(tpls.filter(t => !keepTpl(t)).map(t => t.id))}>Отметить все{p.installed ? ', кроме используемого' : ''}</Btn>
+          <Btn disabled={working || !sel.length} onClick={() => setSel([])}>Снять выбор</Btn>
+          <Btn kind="danger" icon="trash" busy={busy === 'delmany'} disabled={working || !sel.length} onClick={delMany}>Удалить выбранные ({sel.length})</Btn>
+          <Btn disabled={working} onClick={() => setSel(null)}>Готово</Btn></>}
+      </div> : null}
+      <div className="pt-tpls">{tpls.map(t => <div key={t.id} className={'pt-tpl' + (sel === null && f.template === t.id ? ' on' : '') + (sel && sel.includes(t.id) ? ' on' : '')} style={sel && keepTpl(t) ? { opacity: .5 } : null} onClick={() => sel === null ? set('template', t.id) : togSel(t)}>
         <div className="pt-thumb"><iframe title={t.name} src={`/api/portal/templates/${t.id}/preview`} loading="lazy" tabIndex={-1} /></div>
-        <div className="row" style={{ gap: 6, alignItems: 'center' }}><b className="grow ellipsis">{t.name}</b>
+        <div className="row" style={{ gap: 6, alignItems: 'center' }}>{sel !== null && !keepTpl(t) ? <input type="checkbox" checked={sel.includes(t.id)} onChange={() => togSel(t)} onClick={e => e.stopPropagation()} /> : null}<b className="grow ellipsis">{t.name}</b>
           <a className="icon-link" href={`/api/portal/templates/${t.id}/preview`} target="_blank" rel="noreferrer" title="Открыть" onClick={e => e.stopPropagation()}><Icon name="external" size={14} /></a>
           {!t.builtin ? <button type="button" className="icon-link" title="Удалить" onClick={e => { e.stopPropagation(); delTpl(t); }}><Icon name="trash" size={14} /></button> : null}</div>
         {savedTpl === t.id && p.installed ? <span className="dim3" style={{ fontSize: 11.5 }}>сейчас на роутере</span> : null}
@@ -200,7 +229,7 @@ function PortalPlugin({ p, device, reload }) {
         {p.installed && f.template !== savedTpl ? <Btn kind="primary" icon="check" busy={busy === 'template'} disabled={working} onClick={() => quick({ op: 'template', template: f.template }, 'Шаблон заменён')}>Поставить на роутер</Btn> : null}
       </div>
       <details className="guide"><summary>Как сделать свой шаблон</summary>
-        <div style={{ fontSize: 13, lineHeight: 1.55 }}>Архив .zip с файлом <code>index.html</code> (страница входа) и, по желанию, <code>done.html</code> (после входа), <code>style.css</code>, картинками и шрифтами — до 3 МБ.
+        <div style={{ fontSize: 13, lineHeight: 1.55 }}>Архив .zip с файлом <code>index.html</code> (страница входа) и, по желанию, <code>done.html</code> (после входа), <code>style.css</code>, картинками и шрифтами — до 3 МБ. Картинки лучше в <code>png</code>, <code>jpg</code> или <code>svg</code>: роутер (OpenNDS) не отдаёт <code>.webp</code> как картинку, и она не покажется. Если картинок много, можно вшить их прямо в <code>index.html</code> (data:) — страницу любого размера Rack Live разрешит сам.
           В <code>index.html</code> обязательно поставьте метку <code>{'{{form}}'}</code> — на её место Rack Live вставит кнопку «Подключиться» (и поле пароля, и галочку правил, если они включены).
           Другие метки: <code>{'{{name}}'}</code> — название, <code>{'{{hours}}'}</code> — сколько часов действует вход, <code>{'{{error}}'}</code> — сообщение об ошибке, <code>{'{{rules}}'}</code> — правила,
           <code>{'{{assets}}'}</code> — путь к вашим файлам (<code>{'<link rel="stylesheet" href="{{assets}}/style.css">'}</code>), <code>{'{{continue}}'}</code> — куда гость шёл (для кнопки в done.html).
@@ -228,6 +257,20 @@ function PortalPlugin({ p, device, reload }) {
 }
 
 /* step by step: before the setup, how to check it, what «Удалить полностью» does */
+// Портал уже стоит на роутере, но настроен вручную (нет профиля Rack Live): показываем, что нашли, и ничего не предлагаем перенастраивать.
+function ForeignPortal({ p, hw }) {
+  const f = p.foreign || {};
+  const rows = [['Название', '«' + f.name + '»'], ['Файл страницы входа', f.theme || '—'], ['Сессия гостя', f.hours ? f.hours + ' ч' : '—'],
+    ['OpenNDS', (hw.nds ? hw.nds + ' · ' : '') + (hw.ndsRunning ? 'работает' : 'выключен')], ['Гостей сейчас', hw.clients == null ? '—' : hw.clients]];
+  return <div className="pt-live">
+    <div className="row" style={{ gap: 12, alignItems: 'center' }}><Icon name="wifi" size={18} />
+      <div className="grow" style={{ minWidth: 0 }}><b>Captive-портал найден</b><div className="dim3" style={{ fontSize: 12.5 }}>{p.status || ''}</div></div></div>
+    <div className="list" style={{ marginTop: 8 }}>{rows.map(([k, v]) => <div className="li" key={k} style={{ fontSize: 13 }}><span className="dim3">{k}</span><span className="grow" /><b>{v}</b></div>)}</div>
+    <div className="dim3" style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>Портал настроен вручную, не этим плагином. Rack Live его видит и ничего на нём не меняет.
+      Установка плагина здесь отключена: она перенастроила бы сеть, Wi-Fi, DHCP и межсетевой экран роутера и заменила бы ваш портал своим.</div>
+  </div>;
+}
+
 function PortalGuide({ installed }) {
   return <>
     <details className="guide" open={!installed}><summary>Пошагово: как подготовить и подключить роутер</summary>

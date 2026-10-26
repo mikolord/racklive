@@ -2627,3 +2627,16 @@ html[data-look="test"] .ai-ctx-row, html[data-look="test"] .ai-note-line { font-
 .ai-shot img { display: block; width: auto; max-width: 100%; max-height: 340px; object-fit: contain; }
 .ai-shot:hover { border-color: var(--line2); }
 @media (max-width: 700px) { .ai-shot img { max-height: 260px; } }
+
+/* «План»: контуры домов поверх карты, углы, подпись источника снимка */
+.plan-outline { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.plan-outlined:hover .plan-outline { fill: color-mix(in srgb, var(--accent) 32%, transparent); }
+.plan-outlined.sel .plan-outline { stroke-width: 4; fill: color-mix(in srgb, var(--accent) 34%, transparent); }
+.plan-outline-name { font-size: 14px; font-weight: 750; fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .75); stroke-width: 3.5px; stroke-linejoin: round; pointer-events: none; }
+.plan-outline-sub { font-size: 11.5px; font-weight: 600; fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .7); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.plan-vtx { fill: #fff; stroke: var(--accent); stroke-width: 2.5; cursor: grab; vector-effect: non-scaling-stroke; }
+.plan-vtx.sel { fill: var(--accent); }
+.plan-vtx.first { fill: var(--accent); stroke: #fff; }
+.plan-vtx.ghost { fill: color-mix(in srgb, var(--accent) 35%, #fff); opacity: .75; }
+.plan-draft-line { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 6 4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.plan-attr { fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .7); stroke-width: 2.5px; pointer-events: none; }
