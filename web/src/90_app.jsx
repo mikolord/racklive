@@ -98,6 +98,22 @@ function App() {
     if (/iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.standalone) { try { history.replaceState(null, '', '#' + h); } catch (e) { location.hash = h; } } else location.hash = h;
     lsSet('rl_tab', tab); window.scrollTo(0, 0);
   }, [tab, mapView]);
+  // «Карта» и «План» — рабочая область на весь экран (38_workmenu.jsx): размеры шапки и нижней панели в переменных CSS, у <html> метка data-mapfull
+  const mapFull = !APP_MODE && tab === 'map';
+  useLayoutEffect(() => {
+    const h = document.documentElement;
+    if (mapFull) h.setAttribute('data-mapfull', '1'); else h.removeAttribute('data-mapfull');
+    const set = () => {
+      const t = document.querySelector('.topbar'), b = document.querySelector('.bottombar'), bs = b ? getComputedStyle(b) : null;
+      h.style.setProperty('--tb-h', (t ? t.offsetHeight : 62) + 'px');
+      h.style.setProperty('--bb-h', (b && bs.display !== 'none' ? b.offsetHeight + (parseFloat(bs.marginBottom) || 0) : 0) + 'px');
+    };
+    set(); window.addEventListener('resize', set);
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(set) : null;
+    if (ro) { const t = document.querySelector('.topbar'); if (t) ro.observe(t); const b = document.querySelector('.bottombar'); if (b) ro.observe(b); }
+    const t2 = setTimeout(set, 400);                                  // стили темы подключаются чуть позже
+    return () => { window.removeEventListener('resize', set); if (ro) ro.disconnect(); clearTimeout(t2); h.removeAttribute('data-mapfull'); };
+  }, [mapFull, data && data.authed]);
   // «События»: the badge counts new alarming events since the tab was last opened (not the devices that are down right now)
   const [evSeen, setEvSeen] = useState(() => +lsGet('rl_ev_seen', 0));
   useEffect(() => { if (!data || evSeen) return; setEvSeen(data.now); lsSet('rl_ev_seen', String(data.now)); }, [data]);
@@ -145,7 +161,7 @@ function App() {
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
     startTour: () => { lsSet('rl_tour_step', ''); setMode('view'); setTour(true); },       // «Показать обучение» always starts from the beginning
-    askAi: q => setAi({ q, n: Date.now() }) };
+    askAi: q => setAi({ q, n: Date.now() }), openFrank: () => setAi({ n: Date.now() }), mode, setMode, mapView, setMapView };
   if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
   if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
   if (TERM_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><TerminalApp /></AppCtx.Provider>;
@@ -194,14 +210,12 @@ function App() {
       theme={theme} setTheme={setTheme} onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} onClose={() => { if (tourNav.current) setNavKey(k => k + 1); else setNav(false); }} title={data.settings.title} stale={stale} live={stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)} /> : null}
     {menu ? <HeaderMenu admin={admin} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
       onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
-    <main className="page">
-      <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
+    <main className={'page' + (cur === 'map' ? ' page-full' : '')}>
+      {cur === 'map' ? null : <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
         <div className="grow"><div className="page-title">{tabs.find(t => t.id === cur).label}</div><div className="page-sub" style={{ marginBottom: 0 }}>{subtitle}</div></div>
         {edit ? <span className="badge warning"><Icon name="edit" size={12} />Режим редактирования</span> : null}
-      </div>
-      {cur === 'map' ? <div className="view-switch"><Seg value={mapView} onChange={setMapView}
-        options={[{ value: 'map', label: 'Карта сети', icon: 'map' }, { value: 'plan', label: 'План', icon: 'plan' }]} /></div> : null}
-      {TAB_HINTS[view] ? (edit && TAB_HINTS[view][1] ? <Hint key={view + '-edit'} id={view + '-edit'}>{TAB_HINTS[view][1]}</Hint>
+      </div>}
+      {cur === 'map' ? null : TAB_HINTS[view] ? (edit && TAB_HINTS[view][1] ? <Hint key={view + '-edit'} id={view + '-edit'}>{TAB_HINTS[view][1]}</Hint>
         : <Hint key={view} id={view}>{TAB_HINTS[view][0]}</Hint>) : null}
       {cur === 'rack' ? <Dashboard /> : null}
       {view === 'map' ? <MapView /> : null}

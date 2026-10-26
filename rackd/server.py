@@ -16,7 +16,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.30.0'
+VERSION = '2.34.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -2349,8 +2349,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(b, list):
                     return self.err('неверные данные')
                 bgs = planmap.clean_bgs(body.get('bgs'), (st.cfg.get('plan') or {}).get('bgs'))        # the pictures themselves are never added or removed from here, only moved / dimmed / renamed
+                geo = planmap.clean_geo(body.get('geo'))
+                nodes = planmap.clean_nodes(body.get('nodes'))
                 st.cfg['plan'] = {'buildings': planmap.clean_buildings(b), 'links': body.get('links') if isinstance(body.get('links'), list) else [],
-                                  'poles': body.get('poles') if isinstance(body.get('poles'), list) else [], **({'bgs': bgs} if bgs else {})}
+                                  'poles': body.get('poles') if isinstance(body.get('poles'), list) else [], **({'bgs': bgs} if bgs else {}),
+                                  **({'geo': geo} if geo else {}), **({'nodes': nodes} if nodes else {})}
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/speedtest' and method == 'POST':

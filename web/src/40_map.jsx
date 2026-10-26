@@ -266,8 +266,29 @@ function MapNode({ n, p, sel, dim, mark, onDown, onClick, onDoubleClick }) {
 const trunc = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 
 const MAP_GRID = 20;
-function MapView() {
-  const { data, edit, openDevice, saveMap } = useApp();
+/* «Сеть дома»: та же карта сети, но только то, что стоит в доме — его устройства и шкафы, их клиенты (на один-два шага вниз) и вся цепочка вверх до роутера и интернета.
+   seed = { devices: Set(id устройств), racks: Set(id шкафов/мест) }; расположение берётся из общей схемы, поэтому узлы стоят там же, где на «Карте сети». */
+function scopeData(data, seed) {
+  const topo = data.topology || { nodes: [], edges: [] };
+  const racks = (data.racks || []).filter(r => seed.racks.has(r.id));
+  const devIds = new Set(seed.devices);
+  racks.forEach(r => (r.units || []).forEach(u => unitDevIds(u).forEach(id => devIds.add(id))));
+  const keep = new Set();
+  topo.nodes.forEach(n => { if (String(n.id).startsWith('d:') && devIds.has(String(n.id).slice(2))) keep.add(n.id); });
+  racks.forEach(r => (r.units || []).forEach(u => { if (!unitDevIds(u).length) keep.add('u:' + u.id); }));
+  const tree = topo.edges.filter(e => !e.extra && !e.manual), par = {};
+  tree.forEach(e => { par[e.target] = e.source; });
+  let down = new Set(keep);
+  for (let depth = 0; depth < 2; depth++) {                                    // клиенты и подключённое ниже: два шага
+    const nxt = new Set(); tree.forEach(e => { if (down.has(e.source) && !keep.has(e.target)) { keep.add(e.target); nxt.add(e.target); } }); down = nxt; }
+  [...keep].forEach(id => { let p = par[id], n = 0; while (p && n++ < 40) { keep.add(p); p = par[p]; } });             // вверх — до роутера и интернета
+  const edges = topo.edges.filter(e => keep.has(e.source) && keep.has(e.target));
+  return { ...data, topology: { ...topo, nodes: topo.nodes.filter(n => keep.has(n.id)), edges }, racks };
+}
+
+function MapView({ scope }) {
+  const { data: dataAll, edit, openDevice, saveMap } = useApp();
+  const data = useMemo(() => scope ? scopeData(dataAll, scope.seed) : dataAll, [dataAll, scope && scope.key]);
   const toast = useToast(); const confirm = useConfirm();
   const [collapsed, setCollapsed] = useState(data.map.collapsed || {});
   const [view, setView] = useState(null);                 // {x, y, k}
@@ -282,12 +303,13 @@ function MapView() {
   const openCheck = useCheckOpener();
   const wrap = useRef(null); useFillScreen(wrap);
   const [style, setStyle] = useState(() => { const v = new URLSearchParams(location.search).get('mapstyle') || lsGet('rl_map_style', 'columns'); return MAP_STYLES.some(x => x[0] === v) ? v : 'columns'; });
+  const L0 = useMemo(() => style !== 'columns' ? layoutAlt(data, style, collapsed) : layoutMap(data, collapsed), [data, collapsed, style]);       // раскладка считается один раз, а не на каждое движение карточки
   const L = useMemo(() => {
-    if (style !== 'columns') return layoutAlt(data, style, collapsed);
-    const l = layoutMap(data, collapsed);
-    Object.entries(dragPos).forEach(([id, [x, y]]) => { if (l.pos[id]) Object.assign(l.pos[id], { x, y }); });
-    return l;
-  }, [data, collapsed, dragPos, style]);
+    if (style !== 'columns' || !Object.keys(dragPos).length) return L0;
+    const pos = { ...L0.pos };
+    Object.entries(dragPos).forEach(([id, [x, y]]) => { if (pos[id]) pos[id] = { ...pos[id], x, y }; });
+    return { ...L0, pos };
+  }, [L0, dragPos, style]);
 
   const bbox = () => {
     const ps = Object.values(L.pos); if (!ps.length) return { x: 0, y: 0, w: 100, h: 100 };
@@ -324,8 +346,20 @@ function MapView() {
   // so lifting one finger after a pinch no longer snaps the map back.
   const ptrs = useRef({}); const panRef = useRef(null); const viewRef = useRef(view); viewRef.current = view;
   const clampK = k => Math.min(4, Math.max(.12, k));
+  /* пока карту двигают или масштабируют двумя пальцами, перерисовывается только преобразование слоя (по кадру), а React-состояние обновляется один раз — когда отпустили:
+     раньше каждое движение пальца заново строило все карточки и линии */
+  const gRef = useRef(null); const liveV = useRef(null); const rafRef = useRef(0);
+  const applyView = nv => {
+    liveV.current = nv;
+    if (wrap.current) wrap.current.classList.add('moving');
+    if (!rafRef.current) rafRef.current = requestAnimationFrame(() => { rafRef.current = 0; const v = liveV.current; if (!v) return;
+      const tr = `translate(${v.x},${v.y}) scale(${v.k})`;
+      if (gRef.current) gRef.current.setAttribute('transform', tr);
+      const gp = document.getElementById('mapgrid'); if (gp) gp.setAttribute('patternTransform', tr); });
+  };
+  const commitView = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } if (liveV.current) { setView(liveV.current); liveV.current = null; } if (wrap.current) wrap.current.classList.remove('moving'); };
   const baseline = () => {
-    const pts = Object.values(ptrs.current); const v = { ...viewRef.current };
+    const pts = Object.values(ptrs.current); const v = { ...(liveV.current || viewRef.current) };
     if (!pts.length) return null;
     if (pts.length >= 2) { const r = wrap.current.getBoundingClientRect();
       return { pinch: true, dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1, cx: (pts[0].x + pts[1].x) / 2 - r.left, cy: (pts[0].y + pts[1].y) / 2 - r.top, v }; }
@@ -348,10 +382,10 @@ function MapView() {
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       const cx = (pts[0].x + pts[1].x) / 2 - r.left, cy = (pts[0].y + pts[1].y) / 2 - r.top;
       const k = clampK(b.v.k * dist / b.dist);
-      setView({ k, x: cx - (b.cx - b.v.x) * k / b.v.k, y: cy - (b.cy - b.v.y) * k / b.v.k });
-    } else if (!b.pinch) setView({ ...b.v, x: b.v.x + e.clientX - b.sx, y: b.v.y + e.clientY - b.sy });
+      applyView({ k, x: cx - (b.cx - b.v.x) * k / b.v.k, y: cy - (b.cy - b.v.y) * k / b.v.k });
+    } else if (!b.pinch) applyView({ ...b.v, x: b.v.x + e.clientX - b.sx, y: b.v.y + e.clientY - b.sy });
   };
-  const onBgUp = e => { delete ptrs.current[e.pointerId]; panRef.current = baseline(); };
+  const onBgUp = e => { delete ptrs.current[e.pointerId]; if (!Object.keys(ptrs.current).length) { commitView(); panRef.current = null; return; } panRef.current = baseline(); };
   const zoomAt = (factor, cx, cy) => setView(v => {
     const W = wrap.current.clientWidth, H = wrap.current.clientHeight; cx = cx == null ? W / 2 : cx; cy = cy == null ? H / 2 : cy;
     const k = clampK(v.k * factor); return { k, x: cx - (cx - v.x) * k / v.k, y: cy - (cy - v.y) * k / v.k };
@@ -442,26 +476,30 @@ function MapView() {
   const [racksOpen, setRacksOpen] = useState(false);
   const anyCollapsedOpen = Object.values(collapsed).some(v => v === false);
   if (!view) return <div className="map-wrap" ref={wrap} />;
-  return <div className="map-wrap" ref={wrap}>
-    <div className="map-tools">
-      {/* compact: a magnifier that opens the search field, a cabinet button with the list of places */}
-      <div className="map-panel map-find">
-        {findOpen || q ? <><div className="map-search"><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" autoFocus /></div>
-          <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFindOpen(false); }} /></>
-          : <Btn size="sm" icon="search" title="Найти устройство" onClick={() => { setFindOpen(true); setRacksOpen(false); }} />}
-        {((L.racks || []).length + (L.rooms || []).length) > 1 ? <Btn size="sm" icon="rack" kind={racksOpen ? 'primary' : ''} title="Шкафы и места" onClick={() => setRacksOpen(!racksOpen)} /> : null}
-      </div>
-      <div className="grow" />
-      <div className="map-panel">
-        {data.health ? <Btn size="sm" icon="pulse" kind={healthOpen ? 'primary' : ''} onClick={() => setHealthOpen(!healthOpen)} title="Анализ сети">Анализ</Btn> : null}
-        <PickMenu right value={style} options={MAP_STYLES} icon="map" showLabel={false} title="Вид карты" head="Вид карты" defaultValue="columns" onChange={v => { setStyle(v); lsSet('rl_map_style', v); setView(null); setSel(null); }} />
-        <Btn size="sm" icon="fit" onClick={fit} title="Показать всё" />
-        <Btn size="sm" icon="wifi" onClick={() => { const nc = {}; if (!anyCollapsedOpen) Object.keys(L.groups).forEach(g => nc[g.slice(2)] = false); setCollapsed(nc); setView(null); }}
-          title={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'} />
-        {edit ? <><Btn size="sm" icon="link" kind={linking ? 'primary' : ''} onClick={() => setLinking(linking ? null : 'pick')}>{linking ? 'Отмена' : 'Связь'}</Btn>
-          <Btn size="sm" icon="refresh" onClick={async () => { if (await confirm('Сбросить ручное расположение узлов?')) { setDragPos({}); saveMap({ positions: {} }); } }} title="Сбросить раскладку" /></> : null}
-      </div>
-    </div>
+  return <div className={'map-wrap' + (scope ? ' scoped' : '')} ref={wrap}>
+    <WorkMenu title={scope ? 'Сеть дома' : 'Карта сети'}>
+      <WorkSec title="Найти и перейти">
+        <WorkItem icon="search" label="Найти устройство" onClick={() => { setFindOpen(true); setRacksOpen(false); }} />
+        {((L.racks || []).length + (L.rooms || []).length) > 1 ? <WorkItem icon="rack" label="Шкафы и места" on={racksOpen} onClick={() => setRacksOpen(!racksOpen)} /> : null}
+        <WorkItem icon="fit" label="Показать всё" onClick={fit} />
+      </WorkSec>
+      <WorkSec title="Вид">
+        <WorkChoice value={style} keep options={MAP_STYLES.map(([value, label]) => ({ value, label }))} onChange={v => { setStyle(v); lsSet('rl_map_style', v); setView(null); setSel(null); }} />
+        {data.health ? <WorkItem icon="pulse" label="Анализ сети" sub="узкие места и советы" on={healthOpen} onClick={() => setHealthOpen(!healthOpen)} /> : null}
+        <WorkItem icon="wifi" label={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'}
+          onClick={() => { const nc = {}; if (!anyCollapsedOpen) Object.keys(L.groups).forEach(g => nc[g.slice(2)] = false); setCollapsed(nc); setView(null); }} />
+      </WorkSec>
+      {edit ? <WorkSec title="Правка">
+        <WorkItem icon="link" label={linking ? 'Отменить связь' : 'Провести связь'} on={!!linking} onClick={() => setLinking(linking ? null : 'pick')} />
+        <WorkItem icon="refresh" label="Сбросить расположение узлов" onClick={async () => { if (await confirm('Сбросить ручное расположение узлов?')) { setDragPos({}); saveMap({ positions: {} }); } }} />
+      </WorkSec> : null}
+    </WorkMenu>
+    {findOpen || q ? <div className="map-tools"><div className="map-panel map-find">
+      <div className="map-search"><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" autoFocus /></div>
+      <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFindOpen(false); }} /></div></div> : null}
+    {scope && !Object.keys(L.nodes).length ? <div className="live-msg hint plan-ovl">В этом доме пока нет устройств. Откройте дом и поставьте на этажи оборудование и шкафы — они появятся здесь вместе с цепочкой до роутера и интернета.</div> : null}
+    {scope ? <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={scope.back}>{scope.backLabel || 'К дому'}</Btn><b className="ellipsis">Сеть дома · {scope.title}</b>
+      {scope.openHouse ? <Btn size="sm" icon="home" onClick={scope.openHouse}>Дом</Btn> : null}</div> : null}
     {racksOpen && ((L.racks || []).length + (L.rooms || []).length) > 1 ? <div className="map-panel rack-jump">
       <span className="rack-jump-title">Шкафы и места</span>
       {L.racks.map(rk => <button key={rk.id} className="rack-jump-btn" onClick={() => { focusRack(rk); setRacksOpen(false); }} title={`Показать «${rk.name}»`}>
@@ -473,12 +511,12 @@ function MapView() {
     {linking ? <div className="toast" style={{ position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }}>
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
     <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>
-      <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+      {edit ? <><defs><pattern id="mapgrid" width={MAP_GRID} height={MAP_GRID} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}><circle cx="1" cy="1" r="1" fill="var(--text3)" opacity=".35" /></pattern></defs>
+        <rect width="100%" height="100%" fill="url(#mapgrid)" pointerEvents="none" /></> : null}
+      <g ref={gRef} transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
         {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={setSel} /> : null}
         {(L.headers || []).map(h => <g key={h.label} pointerEvents="none"><text x={h.x + 4} y={h.y + 16} fontSize="15" fontWeight="700" fill="var(--text)">{trunc(h.label, 28)}</text>
           <text x={h.x + 4} y={h.y + 34} fontSize="11.5" fill="var(--text3)">{h.count} {ruPlural(h.count, 'устройство', 'устройства', 'устройств')}</text><rect x={h.x} y={h.y + 40} width={h.w} height={2} rx={1} fill="var(--accent)" opacity=".5" /></g>)}
-        {edit ? <><defs><pattern id="mapgrid" width={MAP_GRID} height={MAP_GRID} patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--text3)" opacity=".35" /></pattern></defs>
-          <rect x={-4000} y={-4000} width={9000} height={9000} fill="url(#mapgrid)" pointerEvents="none" /></> : null}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
           return <g key={e.id} className={dim}>

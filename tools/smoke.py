@@ -704,7 +704,10 @@ def main():
             err = ''
             if 'data-js-error="' in out:
                 err = out.split('data-js-error="', 1)[1].split('"', 1)[0]
-            check(name, 'page-title' in out and 'rl-crash' not in out and not err, err or ('пустая страница' if 'page-title' not in out else ''))
+            shown = 'page-title' in out or 'page-full' in out            # «Карта» и «План» — на весь экран, без заголовка страницы (кнопки в меню wm-fab)
+            check(name, shown and 'rl-crash' not in out and not err, err or ('пустая страница' if not shown else ''))
+            if name.startswith('Карта') or name.startswith('План'):
+                check(name + ': на весь экран, кнопки в выезжающем меню', 'wm-fab' in out)
             if name == 'Размещение':
                 check('подсказка на вкладке', 'hint-box' in out)
                 check('главная из виджетов', out.count('data-wid=') >= 5)

@@ -39,7 +39,7 @@ const mp = mPerPx(55.75, 18), side = 1024 * mp;
 t('снимок 1024 px на зуме 18 у Москвы ≈ 350 м', side > 340 && side < 360, side);
 t('в единицах плана это ≈ 3500 (10 единиц = 1 м)', near(side * PPM, 3500, 120), side * PPM);
 // radius → zoom and size of the snapshot
-const lat0 = 43.41, lon0 = 40.0016;
+const lat0 = 55.7558, lon0 = 37.6173;
 let prevZ = 99, sizesOk = true, mono = true;
 for (const R of [50, 100, 300, 500, 1000, 2000, 5000, 10000, 20000]) { const p = snapPlan(lat0, R);
   if (p.S > MAX_SIDE || p.S < 256) sizesOk = false; if (p.z > prevZ) mono = false; prevZ = p.z; }
@@ -65,6 +65,9 @@ const back = worldToGeo(dc.x, dc.y, refBg);
 t('обратный перевод: точка плана → широта и долгота', Math.abs(back.lat - g.lat) < 1e-5 && Math.abs(back.lon - g.lon) < 1e-5, JSON.stringify(back));
 t('обратный перевод центра обзора', (b => Math.abs(b.lat - lat0) < 1e-6 && Math.abs(b.lon - lon0) < 1e-6)(worldToGeo(ov.x + ov.w / 2, ov.y + ov.h / 2, refBg)));
 t('север — вверх: меньший y на плане = больше широта', worldToGeo(0, -1000, refBg).lat > worldToGeo(0, 1000, refBg).lat);
+t('перевод туда и обратно (план → земля → план) совпадает', (w => Math.abs(w.x - 1234) < 1e-3 && Math.abs(w.y + 567) < 1e-3)((g => geoToWorld(g.lat, g.lon, refBg))(worldToGeo(1234, -567, refBg))));
+t('место без фона (plan.geo): точка плана (0, 0) лежит на этих координатах', (g => Math.abs(g.lat - 55.7558) < 1e-6 && Math.abs(g.lon - 37.6173) < 1e-6)(worldToGeo(0, 0, geoRef([], { lat: 55.7558, lon: 37.6173 }))));
+t('фон с координатами главнее выбранного места', geoRef([{ w: 100, lat: 1, lon: 2 }], { lat: 9, lon: 9 }).lat === 1 && geoRef([], {}) === null);
 t('образец — самый большой фон с координатами, свой файл не считается', geoRef([{ w: 100, lat: 1, lon: 2 }, { w: 900, lat: 3, lon: 4 }, { w: 5000 }]).lat === 3 && geoRef([{ w: 5 }]) === null && geoRef([]) === null);
 t('подписи расстояний', kmText(300) === '300 м' && kmText(1500) === '1.5 км' && kmText(20000) === '20 км' && kmText(999) === '999 м');
 console.log(JSON.stringify(out));

@@ -56,7 +56,7 @@ function usePanZoom(wrapRef, opts, initial) {
     return { pinch: true, dist: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, cx: (p[0].x + p[1].x) / 2 - r.left, cy: (p[0].y + p[1].y) / 2 - r.top, v: { ...vr.current } }; };
   const down = e => {
     // items handle their own drag; buttons/overlays must get their click (pointer capture would steal it)
-    if (e.target.closest('button, .zoom-btns, .plan-hint, .plan-open')) return;
+    if (e.target.closest('button, .zoom-btns, .plan-hint, .plan-open, .plan-ovl, .plan-open-g, .live-bar')) return;
     if (e.target.closest('.plan-item, .plan-room') && !(or.current.panItems && or.current.panItems())) return;
     ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
@@ -114,10 +114,19 @@ function PlanView() {
   const banner = pinTest ? <div className="pin-banner"><Icon name="pin" size={17} />
     <span className="grow">{level === 'building' ? 'Нажмите на план там, где вы делали замер' : 'Выберите дом, затем нажмите место замера на плане'}</span>
     <Btn size="sm" onClick={() => setPinTest(null)}>Отмена</Btn></div> : null;
-  if (!buildings.length) return <Territory plan={plan} enter={() => {}} />;
+  if (!buildings.length) return <>{banner}<Territory plan={plan} enter={() => {}} net={() => {}} /></>;      // тот же вид разметки, что ниже: когда появится первый дом, карта не перезапускается
+  const goNet = id => { setBid(id); setLevel('net'); };
   if (level === 'building') { const b = buildings.find(x => x.id === bid) || buildings[0];
-    return <>{banner}<BuildingPlan building={b} plan={plan} back={() => setLevel('territory')} /></>; }
-  return <>{banner}<Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} /></>;
+    return <>{banner}<BuildingPlan building={b} plan={plan} back={() => setLevel('territory')} net={() => goNet(b.id)} /></>; }
+  if (level === 'net') { const b = buildings.find(x => x.id === bid) || buildings[0];
+    return <MapView scope={houseScope(b, data, () => setLevel('territory'), () => { setBid(b.id); setLevel('building'); })} />; }
+  return <>{banner}<Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} net={goNet} /></>;
+}
+/* «Сеть дома»: что в доме стоит (устройства и шкафы с его этажей) — карта сети сузится до этого (см. scopeData в 40_map.jsx) */
+function houseScope(b, data, back, openHouse) {
+  const devices = new Set(), racks = new Set();
+  (b.floors || []).forEach(f => (f.items || []).forEach(it => { if (it.kind === 'device') devices.add(it.ref); else if (it.kind === 'place') racks.add(it.ref); }));
+  return { seed: { devices, racks }, key: b.id + ':' + [...devices].sort().join(',') + '|' + [...racks].sort().join(','), title: b.name, back, backLabel: 'К плану', openHouse };
 }
 
 /* Wi-Fi coverage: speed tests pinned on a floor, drawn as soft colour spots */
@@ -137,10 +146,10 @@ function CoverageLayer({ tests, sel, onSel }) {
 
 /* ───────── territory: buildings + backbone links ───────── */
 const BW = 240, BH = 150;
-function Territory({ plan, enter }) {
-  const { data, edit, savePlan } = useApp();
+function Territory({ plan, enter, net }) {
+  const { data, edit, savePlan, openDevice, setTab } = useApp();
   const toast = useToast(); const confirm = useConfirm();
-  const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || [];
+  const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || []; const nodes = plan.nodes || [];
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   const wrap = useRef(null);
   const [tool, setTool] = useState('select');               // select | link | pole | outline | bg
@@ -152,17 +161,19 @@ function Territory({ plan, enter }) {
   const [bgOpen, setBgOpen] = useState(false);
   const [bgLive, setBgLive] = useState(null);                // фон, который тащат
   const bgDrag = useRef(null);
-  const [liveOpen, setLiveOpen] = useState(() => new URLSearchParams(location.search).get('live') === '1');       // «Живая карта (3D)»; ?live=1 — открыть сразу
+  const [nodeBind, setNodeBind] = useState(null);              // узел, к которому подбирают шкаф или устройство
+  const [pickLink, setPickLink] = useState(null);               // 3D: первая точка магистрали (дом, столб или узел)
+  const [styleFor, setStyleFor] = useState(null);                // дом, у которого открыто окно «Цвета и высота» (плоский вид)
   const [bgMove, setBgMove] = useState(null);              // какой фон тащит инструмент «Фон»
   const bgs = (plan.bgs || []).map(b => bgLive && bgLive.id === b.id ? { ...b, x: bgLive.x, y: bgLive.y } : b).sort((a, b) => b.w - a.w);     // большие внизу, подробные поверх
   const moving = (plan.bgs || []).find(b => b.id === bgMove) || (plan.bgs || [])[0];
-  const geo = geoRef(plan.bgs);                            // фон с координатами: по нему знаем, где на земле дома
-  const save = (b, l, p) => savePlan({ ...plan, buildings: b || buildings, links: l || links, poles: p || poles });
+  const geo = geoRef(plan.bgs, plan.geo);                          // фон с координатами: по нему знаем, где на земле дома
+  const save = (b, l, p, n) => savePlan({ ...plan, buildings: b || buildings, links: l || links, poles: p || poles, nodes: n || nodes });
   const isOut = b => Array.isArray(b.outline) && b.outline.length >= 3;
   const outlineOf = b => live && live.id === b.id ? live.outline : b.outline;
   const pos = b => ({ x: typeof b.x === 'number' ? b.x : 40 + (buildings.indexOf(b) % 3) * (BW + 80), y: typeof b.y === 'number' ? b.y : 40 + Math.floor(buildings.indexOf(b) / 3) * (BH + 120) });
   const boxOf = b => { if (isOut(b)) { const q = polyBox(outlineOf(b)); return { x: q.x0, y: q.y0, w: q.x1 - q.x0, h: q.y1 - q.y0 }; } const p = pos(b); return { x: p.x, y: p.y, w: BW, h: BH }; };
-  const nodeName = id => (buildings.find(x => x.id === id) || poles.find(x => x.id === id) || {}).name || '';
+  const nodeName = id => (buildings.find(x => x.id === id) || poles.find(x => x.id === id) || nodes.find(x => x.id === id) || {}).name || '';
   const [linkEdit, setLinkEdit] = useState(null);             // {link, isNew}
   const pickNode = id => {                                    // link tool: building or pole, two taps
     if (!linkFrom) { setLinkFrom(id); toast('Теперь выберите второй дом или столб'); return; }
@@ -278,58 +289,129 @@ function Territory({ plan, enter }) {
     if (b.outline.length <= 3) { toast('У дома должно остаться хотя бы три угла', true); return; }
     setOutline(b, b.outline.filter((_, k) => k !== selV)); setSelV(null); };
 
-  if (!buildings.length && !bgs.length) return <div className="plan-empty card pad">
-    <div style={{ fontSize: 42 }}>🏠</div><div style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 4px' }}>Плана пока нет</div>
-    <div className="dim" style={{ marginBottom: 16, maxWidth: 440 }}>Добавьте дом, нарисуйте этажи и двор, начертите комнаты и расставьте шкафы, щитки и устройства. Несколько домов можно соединить магистралью.
-      Можно подложить настоящую карту участка и обвести на ней дома.</div>
-    {edit ? <div className="row wrap" style={{ gap: 8 }}><Btn kind="primary" icon="home" onClick={addBuilding}>Создать дом</Btn><Btn icon="map" onClick={() => setBgOpen(true)}>Фон: карта участка</Btn></div>
-      : <div className="dim">Включите «Редактирование», чтобы начать.</div>}
-    {bgOpen ? <PlanBgModal plan={plan} center={{ x: 400, y: 300 }} onClose={() => setBgOpen(false)} onMove={() => {}} /> : null}
+  if (!buildings.length && !bgs.length && !geo) return <div className="plan-empty card pad">
+    <WorkMenu title="План">
+      <WorkSec title="Карта"><WorkItem icon="map" label="Выбрать место на карте" sub="адрес участка → живая карта 3D" onClick={() => { if (edit) setBgOpen(true); else toast('Сначала включите «Редактирование»', true); }} /></WorkSec>
+      {edit ? <WorkSec title="Дома"><WorkItem icon="home" label="Создать дом без карты" onClick={addBuilding} /></WorkSec> : null}
+    </WorkMenu>
+    <div style={{ fontSize: 42 }}>🗺️</div><div style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 4px' }}>Плана пока нет</div>
+    <div className="dim" style={{ marginBottom: 16, maxWidth: 440 }}>Выберите место на карте — откроется живая 3D-карта района, на ней можно обвести свои дома.
+      Дальше у каждого дома есть этажи, комнаты, оборудование и своя карта сети, связанная с общей.</div>
+    {edit ? <div className="row wrap" style={{ gap: 8 }}><Btn kind="primary" icon="map" onClick={() => setBgOpen(true)}>Выбрать место на карте</Btn><Btn icon="home" onClick={addBuilding}>Создать дом без карты</Btn></div>
+      : <div className="dim">Включите «Редактирование» в меню (кнопка вверху справа), чтобы начать.</div>}
+    {bgOpen ? <PlanBgModal plan={plan} center={{ x: 400, y: 300 }} onClose={() => setBgOpen(false)} onMove={() => {}} onLive={() => {}} /> : null}
   </div>;
 
   const center = id => { const b = buildings.find(x => x.id === id); if (b) { if (isOut(b)) return polyCenter(outlineOf(b)); const p = pos(b); return { x: p.x + BW / 2, y: p.y + BH / 2 }; }
-    const p = poles.find(x => x.id === id); return p ? { x: p.x, y: p.y } : null; };
+    const p = poles.find(x => x.id === id) || nodes.find(x => x.id === id); return p ? { x: p.x, y: p.y } : null; };
   const selB = buildings.find(b => b.id === sel), selP = poles.find(p => p.id === sel);
   const selOut = selB && isOut(selB) ? outlineOf(selB) : null;
   const contentCenter = (() => { const xs = [], ys = []; buildings.forEach(b => { const q = boxOf(b); xs.push(q.x, q.x + q.w); ys.push(q.y, q.y + q.h); });
     return xs.length ? { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 } : { x: 400, y: 300 }; })();
-  const openLive = () => { if (!geo) { toast('Сначала добавьте фон со спутника по адресу («Фон: карта»): по нему карта узнаёт, где на земле ваши дома', true); return; } setLiveOpen(true); };
+  const toWorldRing = ring => {                              // углы из широты/долготы → точки плана (через 1 м, без повторов)
+    const pts = []; ring.forEach(([lon, lat]) => { const w = geoToWorld(lat, lon, geo), p = [snapO(w.x), snapO(w.y)], l = pts[pts.length - 1];
+      if (!l || l[0] !== p[0] || l[1] !== p[1]) pts.push(p); });
+    if (pts.length > 1 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
+    return pts; };
+  const addHouseGeo = (ring, name) => {                      // дом, обведённый на 3D-карте
+    const pts = toWorldRing(ring);
+    if (pts.length < 3) { toast('Дом получился слишком маленьким — обведите его крупнее', true); return false; }
+    const id = uid('b'), b0 = polyBox(pts), n = buildings.length;
+    save([...buildings, { id, name: name || `Дом ${n + 1}`, x: b0.x0, y: b0.y0, outline: pts, floors: [{ id: uid('f'), name: '1 этаж', walls: [], rooms: [], items: [] }] }]);
+    setSel(id);
+    return true;
+  };
+  const editRingGeo = (id, ring) => {                        // углы выбранного дома тянули на 3D-карте
+    const pts = toWorldRing(ring);
+    if (pts.length < 3) { toast('Дом получился слишком маленьким', true); return; }
+    const b0 = polyBox(pts); save(buildings.map(x => x.id === id ? { ...x, outline: pts, x: b0.x0, y: b0.y0 } : x));
+  };
+  const styleHouse = (id, patch) => save(buildings.map(x => x.id === id ? { ...x, ...patch } : x));       // цвет, контур, подсветка, высота
+  const renameB = id => { const b = buildings.find(x => x.id === id); if (!b) return;
+    const name = ((typeof prompt === 'function' ? prompt('Название дома', b.name) : '') || '').trim(); if (name) save(buildings.map(x => x.id === id ? { ...x, name } : x)); };
+  const geoPt = (lon, lat) => { const w = geoToWorld(lat, lon, geo); return { x: snapO(w.x), y: snapO(w.y) }; };
+  const addPoleGeo = (lon, lat) => { const w = geoPt(lon, lat), id = uid('p'); save(null, null, [...poles, { id, name: `Столб ${poles.length + 1}`, x: w.x, y: w.y }]); setSel(id); };
+  const addNodeGeo = (lon, lat) => {                         // узел: ставим, называем и сразу предлагаем подвязать к шкафу или устройству
+    const w = geoPt(lon, lat), id = uid('n'), nm = ((typeof prompt === 'function' ? prompt('Название узла', `Узел ${nodes.length + 1}`) : '') || '').trim() || `Узел ${nodes.length + 1}`;
+    save(null, null, null, [...nodes, { id, name: nm, x: w.x, y: w.y }]); setSel(id); setNodeBind(id); };
+  const movePointGeo = (kind, id, lon, lat) => { const w = geoPt(lon, lat);
+    if (kind === 'pole') save(null, null, poles.map(p => p.id === id ? { ...p, x: w.x, y: w.y } : p)); else save(null, null, null, nodes.map(p => p.id === id ? { ...p, x: w.x, y: w.y } : p)); };
+  const renamePoint = id => { const p = poles.find(x => x.id === id) || nodes.find(x => x.id === id); if (!p) return;
+    const nm = ((typeof prompt === 'function' ? prompt('Название', p.name) : '') || '').trim(); if (!nm) return;
+    if (poles.some(x => x.id === id)) save(null, null, poles.map(x => x.id === id ? { ...x, name: nm } : x)); else save(null, null, null, nodes.map(x => x.id === id ? { ...x, name: nm } : x)); };
+  const deletePoint = async id => { const p = poles.find(x => x.id === id) || nodes.find(x => x.id === id); if (!p) return;
+    if (!(await confirm(`Удалить «${p.name}» и его магистрали?`, { danger: true, ok: 'Удалить' }))) return;
+    const l2 = links.filter(l => l.from !== id && l.to !== id);
+    if (poles.some(x => x.id === id)) save(null, l2, poles.filter(x => x.id !== id)); else save(null, l2, null, nodes.filter(x => x.id !== id)); setSel(null); };
+  const bindNode = (id, ref) => save(null, null, null, nodes.map(x => { if (x.id !== id) return x; const { ref: _old, ...rest } = x; return ref ? { ...rest, ref } : rest; }));
+  const refOf = n => {                                       // к чему подвязан узел: имя и состояние шкафа или устройства
+    const r = n.ref; if (!r) return null;
+    if (r.kind === 'device') { const d = devById[r.id]; return d ? { name: d.name, status: (d.state && d.state.status) || '' } : null; }
+    const rk = data.racks.find(x => x.id === r.id); return rk ? { name: rk.name, status: placeStatus(rk, devById) } : null; };
+  const openRef = id => { const n = nodes.find(x => x.id === id); if (!n || !n.ref) return; if (n.ref.kind === 'device') { const d = devById[n.ref.id]; if (d) openDevice(d); } else setTab('rack'); };
+  const linkPick3 = id => {                                   // 3D, «Магистраль»: два нажатия — дом, столб или узел
+    if (id == null) { setPickLink(null); return; }
+    if (!pickLink) { setPickLink(id); return; }
+    if (pickLink === id) { setPickLink(null); return; }
+    setLinkEdit({ link: { id: uid('l'), from: pickLink, to: id, label: '' }, isNew: true }); setPickLink(null); };
+  const editLink3 = id => { const l = links.find(x => x.id === id); if (l) setLinkEdit({ link: l }); };
+  const noOutline = buildings.filter(b => !isOut(b));
   const liveSpec = () => {                                  // дома, столбы и магистрали в координатах для 3D-карты
     const ll = (x, y) => { const g = worldToGeo(x, y, geo); return [g.lon, g.lat]; };
     const houses = buildings.filter(isOut).map(b => { const o = b.outline, c = polyCenter(o), g = worldToGeo(c.x, c.y, geo); const devs = (b.floors || []).flatMap(f => floorDevices(f, data, devById));
-      return { id: b.id, name: b.name, ring: o.map(([x, y]) => ll(x, y)), center: { lon: g.lon, lat: g.lat }, floors: Math.max(1, (b.floors || []).filter(f => !f.outdoor).length), devs: devs.length, status: worst(devs) }; });
+      return { id: b.id, name: b.name, ring: o.map(([x, y]) => ll(x, y)), center: { lon: g.lon, lat: g.lat }, floors: Math.max(1, (b.floors || []).filter(f => !f.outdoor).length), devs: devs.length, status: worst(devs),
+        color: b.color || '', edge: b.edge || '', hl: !!b.hl, height: +b.height || 0 }; });
     const polesG = poles.map(p => { const g = worldToGeo(p.x, p.y, geo); return { id: p.id, name: p.name, lon: g.lon, lat: g.lat }; });
-    const linksG = links.map(l => { const a = center(l.from), b2 = center(l.to); return a && b2 ? { coords: [ll(a.x, a.y), ll(b2.x, b2.y)] } : null; }).filter(Boolean);
+    const nodesG = nodes.map(p => { const g = worldToGeo(p.x, p.y, geo), r = refOf(p); return { id: p.id, name: p.name, lon: g.lon, lat: g.lat, status: r ? r.status || 'none' : 'none', refName: r ? r.name : '', refKind: p.ref ? p.ref.kind : '' }; });
+    const linksG = links.map(l => { const a = center(l.from), b2 = center(l.to); return a && b2 ? { id: l.id, coords: [ll(a.x, a.y), ll(b2.x, b2.y)] } : null; }).filter(Boolean);
     const mid = houses.length ? { lon: houses.reduce((s, h) => s + h.center.lon, 0) / houses.length, lat: houses.reduce((s, h) => s + h.center.lat, 0) / houses.length } : { lon: geo.lon, lat: geo.lat };
-    return { center: [mid.lon, mid.lat], houses, poles: polesG, links: linksG };
+    const search = [                                          // что можно найти по имени: дома, столбы, узлы, а также устройства и шкафы — переход к дому, где они стоят
+      ...houses.map(h => ({ id: h.id, kind: 'house', name: h.name, sub: 'дом', hay: h.name, lon: h.center.lon, lat: h.center.lat })),
+      ...polesG.map(p => ({ id: p.id, kind: 'pole', name: p.name, sub: 'столб', hay: p.name, lon: p.lon, lat: p.lat })),
+      ...nodesG.map(p => ({ id: p.id, kind: 'node', name: p.name, sub: p.refName ? 'узел · ' + p.refName : 'узел', hay: p.name + ' ' + p.refName, lon: p.lon, lat: p.lat })),
+      ...houses.flatMap(h => { const b = buildings.find(x => x.id === h.id), seen = new Set(), out = [];
+        (b.floors || []).forEach(f => (f.items || []).forEach(it => {
+          if (it.kind === 'device' && devById[it.ref] && !seen.has(it.ref)) { seen.add(it.ref); const d = devById[it.ref]; out.push({ id: h.id, kind: 'device', name: d.name, sub: 'устройство · ' + h.name, hay: d.name + ' ' + (d.host || d.ip || ''), lon: h.center.lon, lat: h.center.lat }); }
+          if (it.kind === 'place' && !seen.has(it.ref)) { seen.add(it.ref); const r = data.racks.find(x => x.id === it.ref); if (r) out.push({ id: h.id, kind: 'rack', name: r.name, sub: 'шкаф · ' + h.name, hay: r.name, lon: h.center.lon, lat: h.center.lat }); } }));
+        return out; })];
+    return { center: [mid.lon, mid.lat], houses, poles: polesG, nodes: nodesG, links: linksG, search };
   };
+  const styleView = b => b ? { color: b.color || '', edge: b.edge || '', hl: !!b.hl, height: +b.height || 0, floors: Math.max(1, (b.floors || []).filter(f => !f.outdoor).length) } : null;
+  const is3d = !!geo;                                        // есть место на земле — всегда живая карта; плоская схема только пока места нет
   const r1 = 7 / view.k;                                         // кружки углов одного размера на экране при любом зуме
+  const barText = !edit ? '' : tool === 'pole' ? 'Нажмите на план, куда поставить столб' : tool === 'link' ? (linkFrom ? `От «${nodeName(linkFrom)}» — выберите второй дом или столб` : 'Выберите первый дом или столб магистрали')
+    : tool === 'outline' ? (draft.length ? `Углов: ${draft.length}. Чтобы замкнуть, нажмите на первый угол или «Готово»` : 'Нажимайте по углам дома на карте — по кругу')
+    : tool === 'bg' && moving ? `Тащите карту «${moving.name || 'Фон'}», чтобы совместить её с домами` : '';
   return <div className="plan">
-    {edit ? <div className="plan-tools">
-      <Seg value={tool} onChange={v => { setTool(v); setLinkFrom(null); setDraft([]); setSelV(null); }} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' },
-        { value: 'outline', label: 'Обвести дом', icon: 'edit' },
-        { value: 'pole', label: 'Столб', icon: 'pole' }, { value: 'link', label: 'Магистраль', icon: 'link' }, ...(bgs.length ? [{ value: 'bg', label: 'Фон', icon: 'resize' }] : [])]} />
-      <Btn size="sm" icon="plus" onClick={addBuilding}>Дом</Btn>
-      <Btn size="sm" icon="map" onClick={() => setBgOpen(true)}>{bgs.length ? 'Фон…' : 'Фон: карта'}</Btn>
-      <Btn size="sm" icon="eye" onClick={openLive}>Живая карта 3D</Btn>
-      {tool === 'outline' ? <>{draft.length >= 3 ? <Btn size="sm" kind="primary" icon="check" onClick={finishOutline}>Готово</Btn> : null}
-        {draft.length ? <Btn size="sm" onClick={() => setDraft(draft.slice(0, -1))}>Убрать угол</Btn> : null}
-        {draft.length ? <Btn size="sm" onClick={() => setDraft([])}>Сбросить</Btn> : null}</> : null}
-      {selB ? <><span className="dim" style={{ fontSize: 13 }}>·</span>
-        <Btn size="sm" onClick={() => { const name = prompt('Название дома', selB.name); if (name && name.trim()) save(buildings.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
-        {selOut && selV !== null ? <Btn size="sm" icon="minus" onClick={delV}>Убрать угол</Btn> : null}
-        <Btn size="sm" kind="danger" icon="trash" onClick={() => delBuilding(sel)}>Удалить дом</Btn></> : null}
-      {selP ? <><span className="dim" style={{ fontSize: 13 }}>·</span>
-        <Btn size="sm" onClick={() => { const name = prompt('Название столба', selP.name); if (name && name.trim()) save(null, null, poles.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }}>Переименовать</Btn>
-        <Btn size="sm" kind="danger" icon="trash" onClick={() => delPole(sel)}>Удалить столб</Btn></> : null}
-    </div> : null}
-    {!edit ? <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}><Btn size="sm" icon="eye" onClick={openLive}>Живая карта 3D</Btn></div> : null}
-    {linkFrom ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="link" size={15} />От «{nodeName(linkFrom)}» — выберите второй дом или столб</div> : null}
-    {tool === 'pole' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="pole" size={15} />Нажмите на план, куда поставить столб</div> : null}
-    {tool === 'outline' && edit ? <div className="toast" style={{ marginBottom: 8 }}><Icon name="edit" size={15} />{draft.length ? `Углов: ${draft.length}. Чтобы замкнуть, нажмите на первый угол или «Готово»` : 'Нажимайте по углам дома на карте — по кругу'}</div> : null}
-    {tool === 'bg' && edit && moving ? <div className="toast" style={{ marginBottom: 8, gap: 8 }}><Icon name="resize" size={15} />Тащите карту «{moving.name || 'Фон'}», чтобы совместить её с домами
-      {bgs.length > 1 ? <select className="select" style={{ width: 'auto', padding: '2px 8px' }} value={moving.id} onChange={e => setBgMove(e.target.value)}>{[...bgs].sort((a, b) => b.w - a.w).map(b => <option key={b.id} value={b.id}>{b.name || 'Фон'}</option>)}</select> : null}</div> : null}
-    <div className="plan-canvas" ref={wrap} {...bind}>
+    <WorkMenu title="План">
+      {edit && !is3d ? <WorkSec title="Инструменты плана">
+        <WorkChoice value={tool} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' }, { value: 'outline', label: 'Обвести дом', icon: 'edit' }, { value: 'pole', label: 'Столб', icon: 'pole' },
+          { value: 'link', label: 'Магистраль', icon: 'link' }, ...(bgs.length ? [{ value: 'bg', label: 'Фон', icon: 'resize' }] : [])]}
+          onChange={v => { setTool(v); setLinkFrom(null); setDraft([]); setSelV(null); }} />
+        <WorkItem icon="plus" label="Добавить дом-плитку" sub="без контура на карте" onClick={addBuilding} />
+      </WorkSec> : null}
+      <WorkSec title="Карта и фон">
+        <WorkItem icon="map" label={geo ? 'Место и фон карты…' : 'Выбрать место на карте'} sub={geo ? 'адрес, спутниковый снимок, свой файл' : 'адрес участка → живая карта 3D'}
+          onClick={() => { if (edit) setBgOpen(true); else toast('Включите «Редактирование», чтобы менять карту', true); }} />
+      </WorkSec>
+      {selB && !is3d ? <WorkSec title={'Дом «' + selB.name + '»'}>
+        <WorkItem icon="home" label="Открыть дом" sub="этажи, комнаты, оборудование" onClick={() => enter(selB.id)} />
+        <WorkItem icon="map" label="Сеть дома" sub="карта сети этого дома" onClick={() => net(selB.id)} />
+        {edit ? <>
+          <WorkItem icon="edit" label="Переименовать" onClick={() => renameB(selB.id)} />
+          <WorkItem icon="tag" label="Цвета и высота" onClick={() => setStyleFor(selB.id)} />
+          {selOut && selV !== null ? <WorkItem icon="minus" label="Убрать выбранный угол" onClick={delV} /> : null}
+          <WorkItem icon="trash" danger label="Удалить дом" onClick={() => delBuilding(selB.id)} /></> : null}
+      </WorkSec> : null}
+      {selP && !is3d && edit ? <WorkSec title={'Столб «' + selP.name + '»'}>
+        <WorkItem icon="edit" label="Переименовать" onClick={() => { const name = prompt('Название столба', selP.name); if (name && name.trim()) save(null, null, poles.map(x => x.id === sel ? { ...x, name: name.trim() } : x)); }} />
+        <WorkItem icon="trash" danger label="Удалить столб" onClick={() => delPole(sel)} />
+      </WorkSec> : null}
+    </WorkMenu>
+    {is3d ? <LiveMap3D spec={liveSpec()} edit={edit} sel={sel} onSel={id => setSel(id)} onAddHouse={addHouseGeo} onEditRing={editRingGeo} onStyle={styleHouse} onRename={renameB}
+      onDelete={delBuilding} onOpen={enter} onNet={net} onAddPole={addPoleGeo} onAddNode={addNodeGeo} onMovePoint={movePointGeo} onLinkPick={linkPick3} linkFrom={pickLink} onEditLink={editLink3}
+      onRenamePoint={renamePoint} onDeletePoint={deletePoint} onBindNode={id => setNodeBind(id)} onOpenRef={openRef} noOutline={noOutline} />
+    : <div className={'plan-canvas' + (tool !== 'select' && tool !== 'bg' && edit ? ' crosshair' : '')} ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridT" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
@@ -350,9 +432,12 @@ function Territory({ plan, enter }) {
           {buildings.map(b => { const p = pos(b); const devs = (b.floors || []).flatMap(f => floorDevices(f, data, devById)); const st = worst(devs);
             const hasYard = (b.floors || []).some(f => f.outdoor);
             if (isOut(b)) { const o = outlineOf(b), c = polyCenter(o); const nm = b.name.length > 22 ? b.name.slice(0, 21) + '…' : b.name; const fs = Math.max(14, Math.min(44, 13 / view.k));     // подпись читается на любом зуме
+              const hx = s => typeof s === 'string' && /^#[0-9a-fA-F]{6}$/.test(s) ? s : '';
+              const oc = { ...(hx(b.color) ? { fill: hx(b.color) + '47' } : {}), ...(hx(b.edge) || hx(b.color) ? { stroke: hx(b.edge) || hx(b.color) } : {}),
+                ...(b.hl ? { filter: `drop-shadow(0 0 ${Math.max(4, 8 / view.k)}px ${hx(b.edge) || hx(b.color) || 'var(--accent)'})` } : {}) };
               return <g key={b.id} className={'plan-item plan-building plan-outlined' + (sel === b.id ? ' sel' : '') + (linkFrom === b.id ? ' sel' : '')}
                 onPointerDown={e => dragB(b, e)} style={{ cursor: edit && tool === 'select' ? 'move' : 'pointer' }}>
-                <polygon points={o.map(q => q.join(',')).join(' ')} className="plan-outline" />
+                <polygon points={o.map(q => q.join(',')).join(' ')} className="plan-outline" style={oc} />
                 <circle cx={c.x} cy={c.y - fs * 1.9} r={fs * .36} fill={statusColor(st)} />
                 <text x={c.x} y={c.y - fs * .25} textAnchor="middle" className="plan-outline-name" style={{ fontSize: fs }}>{nm}</text>
                 <text x={c.x} y={c.y + fs * .95} textAnchor="middle" className="plan-outline-sub" style={{ fontSize: fs * .82 }}>{(b.floors || []).length} эт. · {devs.length} устр.{bgs.length ? ` · ${Math.round(polyArea(o) / (PPM * PPM))} м²` : ''}</text>
@@ -383,13 +468,21 @@ function Territory({ plan, enter }) {
 
         </g>
       </svg>
-      {selB && tool === 'select' ? <button className="plan-open" onClick={() => enter(selB.id)}>
-        <Icon name="home" size={16} />Открыть «{selB.name.length > 18 ? selB.name.slice(0, 17) + '…' : selB.name}»<Icon name="chevron" size={15} /></button> : null}
+      {edit && barText ? <div className="live-bar"><div className="live-bar-t">{barText}</div>
+        <div className="live-bar-b">{tool === 'outline' && draft.length >= 3 ? <Btn size="sm" kind="primary" icon="check" onClick={finishOutline}>Готово</Btn> : null}
+          {tool === 'outline' && draft.length ? <Btn size="sm" onClick={() => setDraft(draft.slice(0, -1))}>Убрать угол</Btn> : null}
+          {tool === 'outline' && draft.length ? <Btn size="sm" onClick={() => setDraft([])}>Сбросить</Btn> : null}
+          {tool !== 'select' ? <Btn size="sm" onClick={() => { setTool('select'); setDraft([]); setLinkFrom(null); }}>Готово</Btn> : null}</div></div> : null}
+      {selB && tool === 'select' ? <div className="plan-open-g">
+        <button className="plan-open" onClick={() => enter(selB.id)}><Icon name="home" size={16} />Открыть «{selB.name.length > 14 ? selB.name.slice(0, 13) + '…' : selB.name}»</button>
+        <button className="plan-open" onClick={() => net(selB.id)}><Icon name="map" size={16} />Сеть дома</button></div> : null}
       {bgs.some(b => b.attr) ? <div className="plan-attrib">{(bgs.find(b => b.attr) || {}).attr}</div> : null}
       <ZoomBtns setView={setView} onFit={fitAll} />
-    </div>
-    {liveOpen && geo ? <LiveMap3D spec={liveSpec()} onClose={() => setLiveOpen(false)} onOpen={id => { setLiveOpen(false); enter(id); }} /> : null}
-    {bgOpen ? <PlanBgModal plan={plan} center={contentCenter} onClose={() => setBgOpen(false)} onMove={id => { setBgMove(id); setBgOpen(false); setTool('bg'); }} /> : null}
+    </div>}
+    {bgOpen ? <PlanBgModal plan={plan} center={contentCenter} onClose={() => setBgOpen(false)} onMove={geo ? null : (id => { setBgMove(id); setBgOpen(false); setTool('bg'); })} onLive={() => setSel(null)} /> : null}
+    {nodeBind && nodes.find(n => n.id === nodeBind) ? <NodeBind node={nodes.find(n => n.id === nodeBind)} data={data} onPick={ref => { bindNode(nodeBind, ref); setNodeBind(null); }} onClose={() => setNodeBind(null)} /> : null}
+    {styleFor && buildings.find(b => b.id === styleFor) ? <Modal title="Цвета и высота дома" onClose={() => setStyleFor(null)} footer={<><div className="grow" /><Btn kind="primary" icon="check" onClick={() => setStyleFor(null)}>Готово</Btn></>}>
+      <HouseStyle h={styleView(buildings.find(b => b.id === styleFor))} onChange={p => styleHouse(styleFor, p)} /></Modal> : null}
     {linkEdit ? <LinkEditor link={linkEdit.link} isNew={linkEdit.isNew} title={`${nodeName(linkEdit.link.from)} → ${nodeName(linkEdit.link.to)}`}
       onSave={saveLink} onDelete={() => save(null, links.filter(x => x.id !== linkEdit.link.id))} onClose={() => setLinkEdit(null)} /> : null}
   </div>;
@@ -403,6 +496,25 @@ function viaText(data, via, short) {
   return short ? `${u.type === 'cross' ? 'волокно' : 'порт'} ${via.port}${m.color ? ' ' + m.color : ''}`
     : `${u.name} · ${u.type === 'cross' ? 'волокно' : 'порт'} ${via.port}${m.color ? ' (' + m.color + ')' : ''}${m.label ? ' · ' + m.label : ''}`;
 }
+/* к чему подвязать узел: шкаф (место) или устройство; узел потом показывает их состояние и открывает их */
+function NodeBind({ node, data, onPick, onClose }) {
+  const [q, setQ] = useState('');
+  const ok = s => !q.trim() || String(s).toLowerCase().includes(q.trim().toLowerCase());
+  const racks = (data.racks || []).filter(r => ok(r.name)), devs = (data.devices || []).filter(d => ok(d.name));
+  const cur = node.ref || {};
+  return <Modal title={`Узел «${node.name}» — к чему подвязать`} onClose={onClose}
+    footer={<>{node.ref ? <Btn kind="danger" onClick={() => onPick(null)}>Отвязать</Btn> : null}<div className="grow" /><Btn onClick={onClose}>{node.ref ? 'Закрыть' : 'Позже'}</Btn></>}>
+    <SearchBox value={q} onChange={setQ} placeholder="Найти шкаф или устройство" />
+    {racks.length ? <><div className="dim" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>Шкафы и места</div>
+      <div className="list">{racks.map(r => <div key={r.id} className="li" style={{ cursor: 'pointer' }} onClick={() => onPick({ kind: 'place', id: r.id })}>
+        <Icon name="rack" size={16} /><span className="grow" style={{ marginLeft: 8 }}>{r.name}</span>{cur.kind === 'place' && cur.id === r.id ? <Icon name="check" size={15} /> : null}</div>)}</div></> : null}
+    {devs.length ? <><div className="dim" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>Устройства и серверы</div>
+      <div className="list">{devs.slice(0, 80).map(d => <div key={d.id} className="li" style={{ cursor: 'pointer' }} onClick={() => onPick({ kind: 'device', id: d.id })}>
+        <Icon name={d.kind} size={16} /><span className="grow" style={{ marginLeft: 8 }}>{d.name}</span>{cur.kind === 'device' && cur.id === d.id ? <Icon name="check" size={15} /> : null}</div>)}</div></> : null}
+    {!racks.length && !devs.length ? <div className="dim" style={{ marginTop: 10 }}>Ничего не нашлось.</div> : null}
+  </Modal>;
+}
+
 function LinkEditor({ link, isNew, title, onSave, onDelete, onClose }) {
   const { data } = useApp(); const confirm = useConfirm();
   const [label, setLabel] = useState(link.label || '');
@@ -427,7 +539,7 @@ function LinkEditor({ link, isNew, title, onSave, onDelete, onClose }) {
 }
 
 /* ───────── one building: floors with walls, rooms, equipment ───────── */
-function BuildingPlan({ building, plan, back }) {
+function BuildingPlan({ building, plan, back, net }) {
   const { data, edit, admin, savePlan, openDevice, setTab, refresh, pinTest, setPinTest } = useApp();
   const toast = useToast(); const confirm = useConfirm();
   const buildings = plan.buildings; const links = plan.links || [];
@@ -523,34 +635,28 @@ function BuildingPlan({ building, plan, back }) {
   const others = ghost ? building.floors.filter(f => f.id !== floor.id) : [];
 
   return <div className="plan">
-    <div className="row wrap" style={{ gap: 8, marginBottom: 10, alignItems: 'center' }}>
-      <Btn size="sm" icon="chevron" onClick={back} style={{ transform: 'none' }}><span style={{ transform: 'scaleX(-1)', display: 'inline-block' }}>›</span> Все дома</Btn>
-      <b style={{ fontSize: 15 }}>{building.name}</b>
-      <div className="grow" />
-      {edit && building.floors.length > 1 ? <label className="row" style={{ gap: 6, fontSize: 13, cursor: 'pointer' }}><Switch on={ghost} onChange={setGhost} /><span className="dim">соседний этаж</span></label> : null}
-    </div>
-    <div className="row wrap" style={{ gap: 6, marginBottom: 10 }}>
-      {building.floors.map(f => <button key={f.id} className={'chip' + (f.id === floor.id ? ' on' : '')} onClick={() => setFid(f.id)}>
-        <Icon name={f.outdoor ? 'tree' : 'home'} size={13} />{f.name}</button>)}
-      {edit ? <><Btn size="sm" icon="plus" onClick={() => addFloor(false)}>Этаж</Btn>
-        {!building.floors.some(f => f.outdoor) ? <Btn size="sm" icon="tree" onClick={() => addFloor(true)}>Двор</Btn> : null}
-        {building.floors.length > 1 ? <Btn size="sm" kind="danger" icon="trash" onClick={delFloor} title="Удалить этаж" /> : null}</> : null}
-      <div className="grow" />
-      {tests.length ? <button className={'chip' + (cov ? ' on' : '')} onClick={() => { setCov(!cov); setSelTest(null); }}><Icon name="wifi" size={13} />Покрытие · {tests.length}</button> : null}
-    </div>
-    {edit ? <div className="plan-tools">
-      <Seg value={tool} onChange={v => { setTool(v); setWallPt(null); setPending(null); }} options={[
-        { value: 'select', label: 'Двигать', icon: 'cursor' }, { value: 'room', label: 'Комната', icon: 'tag' },
-        { value: 'wall', label: 'Стена', icon: 'wall' }, { value: 'place', label: 'Оборудование', icon: 'plus' }, { value: 'erase', label: 'Удалить', icon: 'eraser' }]} />
-      {tool === 'wall' && wallPt ? <Btn size="sm" onClick={() => setWallPt(null)}>Готово</Btn> : null}
-      {sel ? <Btn size="sm" kind="danger" icon="trash" onClick={removeSel}>Убрать</Btn> : null}
-    </div> : null}
-    {tool === 'place' && edit ? <div className="plan-palette card pad">
-      <div className="dim" style={{ fontSize: 13, marginBottom: 8 }}>{pending ? 'Теперь нажмите на план, куда поставить' : 'Выберите, что разместить:'}</div>
-      <div className="row wrap" style={{ gap: 6 }}>{palette.map(p => <button key={p.ref} className={'chip' + (pending && pending.ref === p.ref ? ' on' : '')} onClick={() => setPending(p)}><Icon name={p.icon} size={13} />{p.name}</button>)}
-        {!palette.length ? <span className="dim" style={{ fontSize: 13 }}>Всё уже размещено. Нет нужного? Добавьте устройство на вкладке «Устройства» (можно «Пинг»/«Агент» как заглушку).</span> : null}</div>
-    </div> : null}
-
+    <WorkMenu title={building.name}>
+      <WorkSec title="Этаж">
+        <WorkChoice keep value={floor.id} options={building.floors.map(f => ({ value: f.id, label: f.name, icon: f.outdoor ? 'tree' : 'home' }))} onChange={setFid} />
+        {tests.length ? <WorkItem keep icon="wifi" label="Покрытие Wi-Fi" sub={`замеров на этаже: ${tests.length}`} on={cov} onClick={() => { setCov(!cov); setSelTest(null); }} /> : null}
+      </WorkSec>
+      {edit ? <WorkSec title="Этажи и двор">
+        <WorkItem icon="plus" label="Добавить этаж" onClick={() => addFloor(false)} />
+        {!building.floors.some(f => f.outdoor) ? <WorkItem icon="tree" label="Добавить двор" onClick={() => addFloor(true)} /> : null}
+        {building.floors.length > 1 ? <WorkItem icon="trash" danger label={`Удалить «${floor.name}»`} onClick={delFloor} /> : null}
+        {building.floors.length > 1 ? <WorkSwitch icon="eye" label="Показать соседний этаж" on={ghost} onChange={setGhost} /> : null}
+      </WorkSec> : null}
+      {edit ? <WorkSec title="Инструменты">
+        <WorkChoice value={tool} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' }, { value: 'room', label: 'Комната', icon: 'tag' }, { value: 'wall', label: 'Стена', icon: 'wall' },
+          { value: 'place', label: 'Оборудование', icon: 'plus' }, { value: 'erase', label: 'Удалить', icon: 'eraser' }]} onChange={v => { setTool(v); setWallPt(null); setPending(null); }} />
+        {tool === 'wall' && wallPt ? <WorkItem icon="check" label="Закончить стену" onClick={() => setWallPt(null)} /> : null}
+        {sel ? <WorkItem icon="trash" danger label="Убрать выбранное" onClick={removeSel} /> : null}
+      </WorkSec> : null}
+      <WorkSec title="Дом">
+        <WorkItem icon="map" label="Сеть дома" sub="карта сети этого дома, связанная с общей" onClick={net} />
+        <WorkItem icon="chevronLeft" label="Все дома — к плану" onClick={back} />
+      </WorkSec>
+    </WorkMenu>
     <div className={'plan-canvas' + (tool !== 'select' || pinTest ? ' crosshair' : '')} ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridB" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
@@ -576,19 +682,27 @@ function BuildingPlan({ building, plan, back }) {
           {edit ? <PlanCursor wrap={wrap} view={view} tool={tool} wallPt={wallPt} /> : null}
         </g>
       </svg>
-      {edit ? <div className="plan-hint">{tool === 'wall' ? 'Нажимайте, чтобы ставить углы · «Готово» завершает' : tool === 'room' ? 'Обведите прямоугольник комнаты' :
-        tool === 'place' ? 'Выберите в палитре и нажмите на план' : tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Тащите устройства · два пальца / колесо — зум'}</div> : null}
+      <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={back}>Все дома</Btn><b className="ellipsis">{building.name}</b></div>
+      {building.floors.length > 1 ? <div className="plan-floors plan-ovl">{building.floors.map(f => <button key={f.id} className={'chip' + (f.id === floor.id ? ' on' : '')} onClick={() => setFid(f.id)}>
+        <Icon name={f.outdoor ? 'tree' : 'home'} size={13} />{f.name}</button>)}</div> : null}
+      {tool === 'place' && edit ? <div className="plan-palette plan-ovl card pad">
+        <div className="dim" style={{ fontSize: 13, marginBottom: 8 }}>{pending ? 'Теперь нажмите на план, куда поставить' : 'Выберите, что разместить:'}</div>
+        <div className="row wrap" style={{ gap: 6 }}>{palette.map(p => <button key={p.ref} className={'chip' + (pending && pending.ref === p.ref ? ' on' : '')} onClick={() => setPending(p)}><Icon name={p.icon} size={13} />{p.name}</button>)}
+          {!palette.length ? <span className="dim" style={{ fontSize: 13 }}>Всё уже размещено. Нет нужного? Добавьте устройство на вкладке «Устройства» (можно «Пинг»/«Агент» как заглушку).</span> : null}</div>
+      </div> : null}
+      {cov && selTest && tests.find(t => t.id === selTest) ? (() => { const t = tests.find(x => x.id === selTest);
+        return <div className="plan-testcard plan-ovl"><Card title={t.note || 'Замер скорости'} right={<Btn size="sm" icon="x" onClick={() => setSelTest(null)} />}>
+          <div className="list"><SpeedRow t={t} now={data.now} /></div>
+          {admin ? <div className="row wrap" style={{ marginTop: 8 }}>
+            <Btn size="sm" icon="pin" onClick={() => { setPinTest(t.id); setSelTest(null); }}>Переставить</Btn>
+            <Btn size="sm" kind="danger" icon="trash" onClick={() => { pinAt(t.id, null); setSelTest(null); }}>Убрать с плана</Btn></div> : null}
+        </Card></div>; })() : null}
+      {cov && tests.length && !selTest ? <div className="legend plan-ovl plan-cov"><span className="dim">Скорость Wi-Fi, Мбит/с:</span>
+        {SPEED_LEVELS.map(([v, c, t]) => <span key={v}><i style={{ background: c }} />{t} {v ? 'от ' + v : 'до 15'}</span>)}</div> : null}
+      {edit && !(tool === 'place') ? <div className="plan-hint plan-ovl">{tool === 'wall' ? 'Нажимайте, чтобы ставить углы · меню → «Закончить стену»' : tool === 'room' ? 'Обведите прямоугольник комнаты' :
+        tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Тащите устройства · два пальца / колесо — зум'}</div> : null}
       <ZoomBtns setView={setView} onFit={fitFloor} />
     </div>
-    {cov && tests.length ? <div className="legend" style={{ marginTop: 8 }}><span className="dim">Скорость Wi-Fi, Мбит/с:</span>
-      {SPEED_LEVELS.map(([v, c, t]) => <span key={v}><i style={{ background: c }} />{t} {v ? 'от ' + v : 'до 15'}</span>)}</div> : null}
-    {cov && selTest && tests.find(t => t.id === selTest) ? (() => { const t = tests.find(x => x.id === selTest);
-      return <Card style={{ marginTop: 10 }} title={t.note || 'Замер скорости'} right={<Btn size="sm" icon="x" onClick={() => setSelTest(null)} />}>
-        <div className="list"><SpeedRow t={t} now={data.now} /></div>
-        {admin ? <div className="row wrap" style={{ marginTop: 8 }}>
-          <Btn size="sm" icon="pin" onClick={() => { setPinTest(t.id); setSelTest(null); }}>Переставить</Btn>
-          <Btn size="sm" kind="danger" icon="trash" onClick={() => { pinAt(t.id, null); setSelTest(null); }}>Убрать с плана</Btn></div> : null}
-      </Card>; })() : null}
   </div>;
 }
 

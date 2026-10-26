@@ -17,6 +17,7 @@ MAX_POINTS = 120
 LIMIT = 400_000                 # plan units: nothing is placed further than this from the origin (a 20 km overview is 200 000 units wide)
 EXTS = ('jpg', 'png', 'webp')
 ID_RE = re.compile(r'^[a-z0-9]{3,12}$')
+HEX_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 
 def folder(data_dir):
@@ -127,6 +128,31 @@ def clean_bgs(new, old):
     return out
 
 
+def clean_geo(g):
+    """plan['geo'] = {lat, lon}: where on Earth the plan's zero point lies, so «Живая карта (3D)» works without a satellite picture. → dict or None"""
+    if not isinstance(g, dict):
+        return None
+    lat, lon = _num(g.get('lat'), -85, 85, 6), _num(g.get('lon'), -180, 180, 6)
+    return {'lat': lat, 'lon': lon} if lat is not None and lon is not None else None
+
+
+def clean_nodes(nodes):
+    """plan['nodes'] = [{id, name, x, y, ref: {kind: 'place'|'device', id}}] — узлы на карте (распределительный пункт, ввод…); ref — шкаф/место или устройство, к которому узел подвязан"""
+    out = []
+    for n in (nodes if isinstance(nodes, list) else [])[:300]:
+        if not isinstance(n, dict) or not ID_RE.match(str(n.get('id') or '')):
+            continue
+        x, y = _num(n.get('x'), -LIMIT, LIMIT), _num(n.get('y'), -LIMIT, LIMIT)
+        if x is None or y is None:
+            continue
+        c = {'id': str(n['id']), 'name': _name(n.get('name')) or 'Узел', 'x': x, 'y': y}
+        r = n.get('ref')
+        if isinstance(r, dict) and r.get('kind') in ('place', 'device') and re.match(r'^[A-Za-z0-9_.-]{1,64}$', str(r.get('id') or '')):
+            c['ref'] = {'kind': r['kind'], 'id': str(r['id'])}
+        out.append(c)
+    return out
+
+
 def migrate(cfg, data_dir):
     """the single picture of the first version (plan['bg'], data/plan/bg.<ext>) becomes the first of the list (the file is renamed). → True when the config changed"""
     plan = cfg.get('plan')
@@ -164,12 +190,27 @@ def clean_buildings(buildings):
     """the outlines are checked; the rest of a building is the plan's own business (as before)"""
     out = []
     for b in buildings:
-        if isinstance(b, dict) and 'outline' in b:
+        if isinstance(b, dict):
             b = dict(b)
-            o = clean_outline(b.get('outline'))
-            if o:
-                b['outline'] = o
-            else:
-                b.pop('outline', None)
+            if 'outline' in b:
+                o = clean_outline(b.get('outline'))
+                if o:
+                    b['outline'] = o
+                else:
+                    b.pop('outline', None)
+            for k in ('color', 'edge'):                                  # цвет дома и контура на карте: только #rrggbb
+                if k in b and not (isinstance(b[k], str) and HEX_RE.match(b[k])):
+                    b.pop(k)
+            if 'hl' in b:                                                # подсветка контура
+                if b['hl'] is True:
+                    pass
+                else:
+                    b.pop('hl')
+            if 'height' in b:                                            # своя высота дома, м (иначе по этажам)
+                h = _num(b['height'], 0, 300, 1)
+                if h and h >= 1:
+                    b['height'] = h
+                else:
+                    b.pop('height')
         out.append(b)
     return out

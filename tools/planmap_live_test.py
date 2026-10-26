@@ -102,10 +102,10 @@ try:
         gl = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
         out = subprocess.run([browser, '--headless=new', '--hide-scrollbars', '--window-size=1280,800', *gl, '--dump-dom', f'http://127.0.0.1:{PROXY}/?live=1#plan'],
                              capture_output=True, timeout=240, text=True, encoding='utf-8').stdout
-        if 'live-overlay' not in out:
+        if 'live-root' not in out:
             print('браузер не открыл страницу (запрещено политикой или не запустился) — проверка карты пропущена')
         else:
-            check('карта открывается по ?live=1', 'Живая карта' in out and 'live-map' in out)
+            check('карта открывается по ?live=1: холст на весь экран и кнопка меню', 'live-map' in out and 'wm-fab' in out and 'page-full' in out)
             check('карта загрузилась (WebGL работает)', 'data-ready="1"' in out and 'live-msg err' not in out, re.findall(r'live-msg[^>]*>[^<]*', out)[:2])
             check('слои 3D и магистралей добавлены', 'data-layers="houses-3d,links"' in out, re.findall(r'data-layers="[^"]*"', out))
             labels = re.findall(r'class="live-label[^"]*"[^>]*>([^<]*)<', out)

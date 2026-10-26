@@ -35,7 +35,14 @@ function worldToGeo(wx, wy, ref) {
   const k = Math.cos(ref.lat * Math.PI / 180), m0 = mercM(ref.lat, ref.lon);
   return fromMercM(m0.x + (wx - (ref.x + ref.w / 2)) / (k * PPM), m0.y - (wy - (ref.y + ref.h / 2)) / (k * PPM));
 }
-const geoRef = bgs => (bgs || []).filter(b => b.lat != null && b.lon != null).sort((a, b) => b.w - a.w)[0] || null;      // самый большой фон с координатами
+/* широта/долгота → точка плана (обратное к worldToGeo) */
+function geoToWorld(lat, lon, ref) {
+  const k = Math.cos(ref.lat * Math.PI / 180), m0 = mercM(ref.lat, ref.lon), m = mercM(lat, lon);
+  return { x: ref.x + ref.w / 2 + (m.x - m0.x) * k * PPM, y: ref.y + ref.h / 2 - (m.y - m0.y) * k * PPM };
+}
+/* самый большой фон с координатами; без фонов — место, выбранное на «Живой карте» (plan.geo): точка плана (0, 0) лежит на этих координатах */
+const geoRef = (bgs, geo) => (bgs || []).filter(b => b.lat != null && b.lon != null).sort((a, b) => b.w - a.w)[0]
+  || (geo && geo.lat != null && geo.lon != null ? { x: -10, y: -10, w: 20, h: 20, lat: geo.lat, lon: geo.lon } : null);
 
 /* ----- геометрия контуров ----- */
 function polyBox(pts) { const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
@@ -89,10 +96,10 @@ async function uploadBg(blob, meta) {
 }
 
 /* ----- окно «Фон плана» ----- */
-function PlanBgModal({ plan, center, onClose, onMove }) {
+function PlanBgModal({ plan, center, onClose, onMove, onLive }) {
   const { savePlan, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const bgs = plan.bgs || [];
-  const [tab, setTab] = useState('sat');
+  const [tab, setTab] = useState(onLive ? 'live' : 'sat');
   const [q, setQ] = useState(''); const [found, setFound] = useState(null); const [pick, setPick] = useState(0);
   const [R, setR] = useState(300); const [custom, setCustom] = useState('');
   const [prev, setPrev] = useState(null);                              // { url, blob, kind, ..., size }
@@ -100,7 +107,11 @@ function PlanBgModal({ plan, center, onClose, onMove }) {
   const [ops, setOps] = useState({}); const timers = useRef({});
   const fileRef = useRef(null);
   useEffect(() => () => { if (prev && prev.url) URL.revokeObjectURL(prev.url); }, [prev]);
-  const ref = geoRef(bgs);
+  const ref = geoRef(bgs, plan.geo);
+  const placeLive = async () => {                                  // «Живая карта 3D»: только место на земле, без картинки
+    try { await savePlan({ ...plan, geo: { lat: +lat.toFixed(6), lon: +lon.toFixed(6) } }); toast('Место выбрано — открываю карту'); onClose(); if (onLive) onLive(); }
+    catch (e) { toast(e.message, true); }
+  };
   const find = async () => {
     if (!q.trim()) return;
     setBusy('find'); setFound(null); setPrev(null);
@@ -129,7 +140,7 @@ function PlanBgModal({ plan, center, onClose, onMove }) {
       let meta;
       if (prev.kind === 'sat') meta = { x: prev.x, y: prev.y, w: prev.w, h: prev.h, op: ref ? .9 : .85, attr: ESRI_ATTR, lat: prev.lat.toFixed(6), lon: prev.lon.toFixed(6), z: prev.z, r: prev.r, name };
       else { const w = Math.max(5, +wm || 100) * PPM, h = w * prev.ratio; meta = { x: Math.round(center.x - w / 2), y: Math.round(center.y - h / 2), w: Math.round(w), h: Math.round(h), op: .85, attr: '', name: 'Свой файл' }; }
-      await uploadBg(prev.blob, meta); await refresh(); toast('Фон добавлен'); onClose();
+      await uploadBg(prev.blob, meta); await refresh(); toast('Фон добавлен'); onClose(); if (onLive && prev.kind === 'sat') onLive();       // со спутника: дальше сразу живая карта на этом месте
     } catch (e) { toast(e.message, true); } finally { setBusy(''); }
   };
   const setOpacity = (id, v) => { setOps(o => ({ ...o, [id]: v })); clearTimeout(timers.current[id]);
@@ -152,21 +163,28 @@ function PlanBgModal({ plan, center, onClose, onMove }) {
             <b style={{ fontSize: 13.5 }}>{b.name || 'Фон'}</b>
             <span className="dim" style={{ fontSize: 12.5 }}>≈ {kmText(b.w / PPM)} × {kmText(b.h / PPM)}{b.lat != null ? ` · ${b.lat.toFixed(4)}, ${b.lon.toFixed(4)}` : ' · свой файл'}</span>
             <div className="grow" />
-            <Btn size="sm" icon="resize" onClick={() => onMove(b.id)}>Подвинуть</Btn><Btn size="sm" kind="danger" icon="trash" onClick={() => removeBg(b)}>Убрать</Btn></div>
+            {onMove ? <Btn size="sm" icon="resize" onClick={() => onMove(b.id)}>Подвинуть</Btn> : null}<Btn size="sm" kind="danger" icon="trash" onClick={() => removeBg(b)}>Убрать</Btn></div>
           <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 4 }}><span className="dim" style={{ fontSize: 12.5, width: 118 }}>Яркость {Math.round(op * 100)}%</span>
             <input type="range" min=".2" max="1" step=".05" value={op} onChange={e => setOpacity(b.id, +e.target.value)} style={{ flex: 1 }} /></div></div>; })}
     </div> : null}
     {full ? <div className="err-note">Фонов уже 6 — уберите ненужный, чтобы добавить новый.</div> : <>
     <b style={{ fontSize: 14 }}>{bgs.length ? 'Добавить фон' : 'Поставить фон'}</b>
-    <Seg value={tab} onChange={v => { setTab(v); setPrev(null); }} options={[{ value: 'sat', label: 'Со спутника по адресу' }, { value: 'file', label: 'Свой файл' }]} />
-    {tab === 'sat' ? <>
+    <Seg value={tab} onChange={v => { setTab(v); setPrev(null); }} options={[{ value: 'live', label: 'Живая карта 3D' }, { value: 'sat', label: 'Снимок со спутника' }, { value: 'file', label: 'Свой файл' }]} />
+    {tab !== 'file' ? <>
       <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end', marginTop: 10 }}>
         <div className="grow" style={{ minWidth: 220 }}><Field label="Адрес участка или координаты" hint="Например: «Краснодар, ул. Красная 10» или «55.7558, 37.6173»">
           <input className="input" value={q} placeholder="город, улица, дом" onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') find(); }} /></Field></div>
         <Btn busy={busy === 'find'} disabled={!q.trim() || (!!busy && busy !== 'find')} onClick={find}>Найти</Btn></div>
       {found && found.length ? <div className="list" style={{ marginTop: 8 }}>{found.map((f, i) => <div key={i} className="li" style={{ cursor: 'pointer', fontSize: 13 }} onClick={() => { setPick(i); setPrev(null); }}>
         <input type="radio" checked={pick === i} readOnly /><span className="grow" style={{ marginLeft: 8 }}>{f.name}</span></div>)}</div> : null}
-      {lat != null ? <>
+      {tab === 'live' ? <>
+        {geoRef(bgs) ? <div className="dim" style={{ fontSize: 12.5, marginTop: 8 }}>Место уже задано фоном-снимком, поэтому живая карта открывается там. Чтобы перенести её в другое место, уберите фоны сверху.</div>
+          : <div className="dim" style={{ fontSize: 12.5, marginTop: 8 }}>Живая карта 3D — схема района (дороги, дома, номера домов) без всякого снимка: по ней можно обводить свои дома и ставить их на место.
+            Введите адрес участка и нажмите «Поставить карту сюда».{plan.geo ? ` Сейчас стоит: ${plan.geo.lat.toFixed(4)}, ${plan.geo.lon.toFixed(4)}.` : ''}</div>}
+        {lat != null && !geoRef(bgs) ? <div className="row" style={{ marginTop: 10 }}><div className="grow" /><Btn kind="primary" icon="map" onClick={placeLive}>Поставить карту сюда</Btn></div> : null}
+        {plan.geo && !geoRef(bgs) ? <div className="row" style={{ marginTop: 10 }}><Btn onClick={() => { onClose(); if (onLive) onLive(); }}>Открыть карту</Btn></div> : null}
+      </> : null}
+      {tab === 'sat' && lat != null ? <>
         <Field label="Радиус вокруг этого места" hint="Больше радиус — больше территория, но грубее картинка. Для района — «5–10 км», для участка и дома — «100–500 м».">
           <div className="row wrap" style={{ gap: 6 }}>{RADII.map(([m, t]) => <button key={m} type="button" className={'chip' + (!custom && R === m ? ' on' : '')} onClick={() => { setR(m); setCustom(''); setPrev(null); }}>{t}</button>)}
             <input className="input mono" style={{ width: 130 }} value={custom} placeholder="свой, метров" onChange={e => { setCustom(e.target.value.replace(/[^\d]/g, '')); setPrev(null); }} /></div></Field>
@@ -176,8 +194,8 @@ function PlanBgModal({ plan, center, onClose, onMove }) {
           <Btn kind="primary" busy={busy === 'show'} disabled={!!busy && busy !== 'show'} onClick={show}>Показать снимок</Btn></div>
         {rad > 1500 ? <div className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>Это обзорный снимок: дома на нём будут пятнами. Для подробностей потом добавьте ещё один фон на 100–500 м у нужного дома — он ляжет поверх точно по координатам.</div> : null}
       </> : null}
-      <div className="dim" style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>Снимок берётся с карты Esri один раз и сохраняется у вас как одна картинка (до 1,5 МБ) — Rack Live потом не ходит в интернет за картой, и план открывается быстро.
-        Адрес участка при этом уходит сервисам поиска и карты. Если вместо дома видна серая заглушка «нет данных», выберите радиус побольше.</div>
+      {tab === 'sat' ? <div className="dim" style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>Снимок берётся с карты Esri один раз и сохраняется у вас как одна картинка (до 1,5 МБ) — Rack Live потом не ходит в интернет за картой, и план открывается быстро.
+        Адрес участка при этом уходит сервисам поиска и карты. Если вместо дома видна серая заглушка «нет данных», выберите радиус побольше.</div> : null}
     </> : <>
       <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end', marginTop: 10 }}>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={e => pickFile(e.target.files[0])} />

@@ -61,10 +61,10 @@ check('без фонов на сервере записей нет', planmap.cle
 tmp = tempfile.mkdtemp()
 os.makedirs(os.path.join(tmp, 'plan'))
 open(os.path.join(tmp, 'plan', 'bg.jpg'), 'wb').write(JPG)
-cfg = {'plan': {'buildings': [{'id': 'b1'}], 'links': [], 'poles': [], 'bg': {'v': 1793035524, 'ext': 'jpg', 'x': -2221.0, 'y': -2993.0, 'w': 4442.0, 'h': 4442.0, 'op': 0.5, 'attr': 'Снимок: Esri', 'lat': 43.410973, 'lon': 40.001625, 'z': 18}}}
+cfg = {'plan': {'buildings': [{'id': 'b1'}], 'links': [], 'poles': [], 'bg': {'v': 1793035524, 'ext': 'jpg', 'x': -2221.0, 'y': -2993.0, 'w': 4442.0, 'h': 4442.0, 'op': 0.5, 'attr': 'Снимок: Esri', 'lat': 55.755826, 'lon': 37.617299, 'z': 18}}}
 check('старый фон переносится в список', planmap.migrate(cfg, tmp) is True and 'bg' not in cfg['plan'] and len(cfg['plan']['bgs']) == 1)
 e = cfg['plan']['bgs'][0]
-check('все его данные целы (место, яркость, координаты)', e['x'] == -2221.0 and e['w'] == 4442.0 and e['op'] == .5 and e['lat'] == 43.410973 and e['lon'] == 40.001625 and e['z'] == 18 and e['name'] == 'Фон')
+check('все его данные целы (место, яркость, координаты)', e['x'] == -2221.0 and e['w'] == 4442.0 and e['op'] == .5 and e['lat'] == 55.755826 and e['lon'] == 37.617299 and e['z'] == 18 and e['name'] == 'Фон')
 check('файл переименован под новый номер', planmap.path_of(tmp, e['id']) is not None and not os.path.exists(os.path.join(tmp, 'plan', 'bg.jpg')) and open(planmap.path_of(tmp, e['id']), 'rb').read() == JPG)
 check('второй раз ничего не меняется', planmap.migrate(cfg, tmp) is False and len(cfg['plan']['bgs']) == 1)
 check('дома не тронуты', cfg['plan']['buildings'] == [{'id': 'b1'}])
@@ -119,6 +119,28 @@ try:
             time.sleep(.5)
     st = call('/api/state')[2]
     check('в начале фонов нет', not (st.get('plan') or {}).get('bgs') and 'bg' not in (st.get('plan') or {}))
+    p0 = dict(st.get('plan') or {'buildings': [], 'links': [], 'poles': []})
+    put_plan(dict(p0, geo={'lat': 55.7558, 'lon': 37.6173}))
+    check('выбранное на карте место (plan.geo) сохраняется', (call('/api/state')[2].get('plan') or {}).get('geo') == {'lat': 55.7558, 'lon': 37.6173})
+    put_plan(dict(p0, geo={'lat': 'x', 'lon': 1}))
+    check('неверное место не сохраняется', 'geo' not in (call('/api/state')[2].get('plan') or {}))
+    put_plan(dict(p0, geo={'lat': 999, 'lon': 37.6173}))
+    check('широта вне диапазона обрезается', (call('/api/state')[2].get('plan') or {}).get('geo') == {'lat': 85.0, 'lon': 37.6173})
+    put_plan(p0)
+    fl = [{'id': 'f1', 'name': '1 этаж', 'walls': [], 'rooms': [], 'items': []}]
+    put_plan(dict(p0, buildings=[{'id': 'bc1', 'name': 'Цветной', 'floors': fl, 'color': '#FF8800', 'edge': 'red', 'hl': True, 'height': 999},
+                                 {'id': 'bc2', 'name': 'Обычный', 'floors': fl, 'color': '', 'hl': 'yes', 'height': 0}]))
+    got = {x['id']: x for x in (call('/api/state')[2].get('plan') or {}).get('buildings', [])}
+    check('цвет дома: только #rrggbb (чужое отбрасывается), подсветка — только true', got['bc1'].get('color') == '#FF8800' and 'edge' not in got['bc1'] and got['bc1'].get('hl') is True
+          and 'color' not in got['bc2'] and 'hl' not in got['bc2'])
+    check('высота дома: не больше 300 м, ноль — «по этажам» (поля нет)', got['bc1'].get('height') == 300 and 'height' not in got['bc2'])
+    put_plan(p0)
+    put_plan(dict(p0, nodes=[{'id': 'nd1', 'name': 'Ввод', 'x': 100, 'y': 200, 'ref': {'kind': 'place', 'id': 'rack0'}}, {'id': 'nd2', 'name': 'Плохой', 'x': 'x', 'y': 1}, {'id': 'BAD ID', 'name': 'x', 'x': 1, 'y': 1},
+                                {'id': 'nd3', 'name': 'Без привязки', 'x': 5, 'y': 6, 'ref': {'kind': 'hack', 'id': 'x'}}]))
+    nd = {x['id']: x for x in (call('/api/state')[2].get('plan') or {}).get('nodes', [])}
+    check('узлы плана: сохраняются, привязка к шкафу цела, мусор отбрасывается', set(nd) == {'nd1', 'nd3'} and nd['nd1'].get('ref') == {'kind': 'place', 'id': 'rack0'} and 'ref' not in nd['nd3'])
+    put_plan(p0)
+    check('узлы убираются вместе с планом без них', 'nodes' not in (call('/api/state')[2].get('plan') or {}))
     q = lambda **k: urllib.parse.urlencode(dict({'x': 100, 'y': 50, 'w': 3500, 'h': 3500, 'op': .8, 'attr': 'Imagery © Esri, Maxar', 'lat': 55.75, 'lon': 37.6, 'z': 18, 'r': 300, 'name': 'Двор'}, **k))
     c, h, r = call('/api/plan/bg?' + q(name='Обзор', w=60000, h=60000, x=-30000, y=-30000, z=14, r=3000), 'POST', JPG, {'Content-Type': 'image/jpeg'})
     id1 = r.get('id')
