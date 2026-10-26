@@ -28,6 +28,12 @@ rl_page() {
 	export RL_form RL_error RL_name RL_hours RL_assets RL_rules RL_continue
 	awk 'function rep(s, key, val,   out, p, t) { t = "{{" key "}}"; out = ""; while ((p = index(s, t)) > 0) { out = out substr(s, 1, p - 1) val; s = substr(s, p + length(t)) } return out s }
 	{ n = split("form error name hours assets rules continue", k, " "); for (i = 1; i <= n; i++) $0 = rep($0, k[i], ENVIRON["RL_" k[i]]); print }' "$f"
+	# the «you are online» page moves on to the site by itself: an iPhone re-checks the internet (and puts the tick, closing the sign-in window)
+	# only when the page changes — until then it stays «not confirmed» and the guest has to tap the link by hand. 3 s: the sign-in runs a second after the page.
+	if [ "$1" = "done.html" ]; then
+		go=$(printf '%s' "$RL_continue" | sed 's/&amp;/\&/g; s/&quot;//g' | tr -d "\"'\\\\<> ")
+		case "$go" in http://*|https://*) printf '<script>setTimeout(function(){location.replace("%s")},3000)</script><noscript><meta http-equiv="refresh" content="3;url=%s"></noscript>\n' "$go" "$go" ;; esac
+	fi
 	footer
 }
 

@@ -119,11 +119,19 @@ check('тема: кнопка показывает нажатие и не жмё
 check('тема: после входа не на служебные адреса', '*status.client*|*:2050*|*captive.apple.com*' in T)
 check('быстрый binauth при установке и при смене входа', portal.BINAUTH in S and 'binauth_rl.sh' in S and portal.BINAUTH in portal.login_script(PN))
 
+# iPhone: the «you are online» page moves on to the site by itself (that is what makes the sign-in window put the tick and close)
+check('тема: страница «Вы в сети» сама переходит на сайт', 'location.replace(' in T and '[ "$1" = "done.html" ]' in T and 'http://*|https://*' in T)
+# a template with pictures inside the page (340 KB): openNDS serves a page only up to max_page_size → it follows the template
+check('предел размера страницы подбирается под шаблон', 'max_page_size' in portal.opennds_tune() and '/etc/opennds/htdocs/rl/*.html' in portal.opennds_tune())
+TS = portal.template_script('AAAA', PN)
+check('предел размера: при установке, смене входа и смене шаблона', 'max_page_size=$M' in S and portal.opennds_tune() in portal.login_script(PN) and portal.opennds_tune() in TS)
+check('portal: перезапуск OpenNDS только при изменении', '[ $R = 1 ]' in portal.opennds_tune() and portal.opennds_tune().count('restart') == 1)
+
 # shell syntax of the whole script (if a POSIX shell is around)
 import shutil, subprocess, tempfile
 sh = shutil.which('sh') or next((p for p in (r'C:\Users\Admin\network-tools\bin\git\usr\bin\sh.exe', r'C:\Program Files\Git\usr\bin\sh.exe') if os.path.exists(p)), None)
 if sh:
-    for name, script in (('swconfig', S), ('swconfig без основной Wi-Fi', SN), ('DSA', SD), ('тема входа', T), ('смена входа', portal.login_script(PN))):
+    for name, script in (('swconfig', S), ('swconfig без основной Wi-Fi', SN), ('DSA', SD), ('тема входа', T), ('смена входа', portal.login_script(PN)), ('смена шаблона', TS)):
         with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False, newline='\n', encoding='utf-8') as tf:
             tf.write(script)
         r = subprocess.run([sh, '-n', tf.name], capture_output=True, text=True)

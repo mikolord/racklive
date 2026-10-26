@@ -480,6 +480,20 @@ chmod 755 /usr/lib/opennds/binauth_rl.sh
 '''
 BINAUTH_UCI = 'uci set opennds.@opennds[0].binauth=/usr/lib/opennds/binauth_rl.sh'
 
+# openNDS serves a ThemeSpec page only up to max_page_size (10 240 bytes by default): a template with pictures inside index.html (a 340 KB one
+# made with a chat bot) simply never opened on a phone. The limit follows the biggest page of the installed template (+⅓ for the filled marks).
+MAXPAGE_SH = r'''M=10240; for f in /etc/opennds/htdocs/rl/*.html; do [ -f "$f" ] || continue; s=$(wc -c < "$f"); [ "$s" -gt "$M" ] && M=$s; done
+M=$(( M + M / 3 + 16384 )); [ "$M" -gt 4194304 ] && M=4194304
+'''
+
+
+def opennds_tune():
+    """fast binauth + page-size limit for the installed template; openNDS is restarted once, and only if something changed"""
+    return (MAXPAGE_SH + 'R=0\n'
+            + '[ "$(uci -q get opennds.@opennds[0].binauth)" = /usr/lib/opennds/binauth_rl.sh ] || { ' + BINAUTH_UCI + '; R=1; }\n'
+            + '[ "$(uci -q get opennds.@opennds[0].max_page_size)" = "$M" ] || { uci set opennds.@opennds[0].max_page_size=$M; R=1; }\n'
+            + '[ $R = 1 ] && { uci commit opennds; /etc/init.d/opennds restart >/dev/null 2>&1; }\n')
+
 
 def _hosts(net):
     n = ipaddress.ip_interface(net).network
@@ -631,6 +645,7 @@ if have opennds; then
   uci set opennds.@opennds[0].themespec_path=/usr/lib/opennds/theme_rl.sh; uci set opennds.@opennds[0].sessiontimeout={p['hours'] * 60}
   uci set opennds.@opennds[0].preauthidletimeout=15; uci set opennds.@opennds[0].authidletimeout={p['hours'] * 60}
   [ -x /usr/lib/opennds/binauth_rl.sh ] && {BINAUTH_UCI}
+  {MAXPAGE_SH}uci set opennds.@opennds[0].max_page_size=$M
   uci commit opennds
   if [ "$(uci -q get opennds.@opennds[0].enabled)" = 1 ]; then /etc/init.d/opennds enable; /etc/init.d/opennds restart; else /etc/init.d/opennds stop; /etc/init.d/opennds disable; fi
 else
@@ -769,21 +784,20 @@ def sms_send_script(p, number, text):
 def login_script(p):
     """only the guest login (button / password, hours, speed, name, rules, where to go after) — the network is not touched, nothing restarts"""
     return ("cat > /usr/lib/opennds/theme_rl.sh <<'RLTHEME'\n" + theme_script().rstrip('\n') + "\nRLTHEME\nchmod 755 /usr/lib/opennds/theme_rl.sh\n" + BINAUTH
-            + "[ \"$(uci -q get opennds.@opennds[0].binauth)\" = /usr/lib/opennds/binauth_rl.sh ] || { " + BINAUTH_UCI
-            + "; uci commit opennds; /etc/init.d/opennds restart >/dev/null 2>&1; }\n"
             + "cat > /etc/rl-portal/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n"
             + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n"
             + (SMS_KEY if p.get('login') == 'sms' else '')
             + f"uci set opennds.@opennds[0].sessiontimeout={p['hours'] * 60}; uci set opennds.@opennds[0].authidletimeout={p['hours'] * 60}; uci commit opennds\n"
-            + "echo @@ok\n")
+            + opennds_tune() + "echo @@ok\n")
 
 
 def template_script(b64, p):
     return (push_files_script(b64) + "cat > /etc/rl-portal/conf <<'RLEOF'\n" + portal_conf(p) + "RLEOF\n"
-            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n")
+            + "cat > /etc/rl-portal/profile.json <<'RLEOF'\n" + router_profile(p) + "\nRLEOF\nchmod 600 /etc/rl-portal/profile.json /etc/rl-portal/conf\n"
+            + opennds_tune())
 
 
-REMOVE = r'''B=/etc/rl-portal
+REMOVE =r'''B=/etc/rl-portal
 [ -f $B/bak-orig/.done ] || { echo "@@fail нет сохранённых исходных настроек — вернуть нечего"; exit 0; }
 echo "@@oldlan $(sed -n "/config interface 'lan'/,/^config/s/.*option ipaddr '\([^']*\)'.*/\1/p" $B/bak-orig/network | head -1)"
 cat > /tmp/rl-remove.sh <<'RLEOF'
