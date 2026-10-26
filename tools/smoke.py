@@ -588,6 +588,7 @@ def main():
         # мини-браузер: инструмент и картинки (в демо Chromium может отсутствовать — проверяем, что состояние честное)
         st3 = api('/api/state')['ai']
         check('Frank: мини-браузер виден в состоянии', 'browserReady' in st3 and st3.get('browser') is True, {k: st3.get(k) for k in ('browser', 'browserReady')})
+        check('Frank: состояние знает про вход в панели', 'browserLogin' in st3, {k: st3.get(k) for k in ('browser', 'browserLogin')})
         try:                                            # 404 — так и должно быть: такого снимка нет
             api('/api/ai/shot/1700000000-deadbeef.png')
             check('мини-браузер: чужой снимок не отдаётся', False)

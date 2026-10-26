@@ -5,6 +5,8 @@ RUN apk add --no-cache iputils tzdata openssh-client sshpass iperf3
 RUN apk add --no-cache git curl nodejs npm
 # Frank's mini browser (rackd/frankbrowser.py): Chromium for pages and screenshots, fonts so Cyrillic is not drawn as squares
 RUN apk add --no-cache chromium font-noto
+# chromedriver: Frank can also log into web interfaces (rackd/webdrive.py) — fill the form, press, screenshot
+RUN apk add --no-cache chromium-chromedriver
 # Speedtest CLI by Ookla for the scheduled internet speed test (optional: without it Rack Live measures via Cloudflare)
 RUN case "$(uname -m)" in x86_64) a=x86_64;; aarch64) a=aarch64;; armv7l) a=armhf;; *) a="";; esac; \
     [ -z "$a" ] || wget -qO- "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$a.tgz" | tar xz -C /usr/local/bin speedtest || true

@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import models as models_mod
 from . import icons as icons_mod
 from . import usage as usage_mod
-from . import frankfiles, frank_agent, frankbrowser, frankdev
+from . import frankfiles, frank_agent, frankbrowser, frankdev, webdrive
 from . import portal as portal_mod
 from . import remote as remote_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
@@ -15,7 +15,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.23.1'
+VERSION = '2.24.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -809,7 +809,8 @@ class App:
             sec = None
         admin_extra = {'sysEvents': [e for e in self.store.events if e.get('name') in SYS_EVENTS][-120:][::-1],        # «События → Системные»: the technical journal (page, tour, starts)
                        'ai': dict(self.ai.public(), project=frankdev.status(self.store.dir, frankdev.panel_root(), DEMO),
-                                  browserReady=bool(frankbrowser.binary()), browserBin=frankbrowser.where()),
+                                  browserReady=bool(frankbrowser.binary()), browserBin=frankbrowser.where(),
+                                  browserLogin=webdrive.available(), browserLoginBin=webdrive.where()),
                        'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
