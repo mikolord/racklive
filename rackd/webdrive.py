@@ -342,6 +342,8 @@ def login(key, url, user, password, user_sel=None, pass_sel=None, submit_sel=Non
         if not still:
             break
     ok = not bool(form_fields(key).get('hasPass'))
+    if ok:
+        time.sleep(2.5)            # панель Angular/React догружает данные своих карточек уже после входа
     return {'ok': ok, 'url': current_url(key), 'title': title(key), 'how': how,
             'note': '' if ok else 'форма входа всё ещё на странице — возможно, нужен другой селектор или есть второй шаг (код, капча)',
             'fields': {k: f.get(k) for k in ('login', 'password', 'texts', 'passwords')}}
