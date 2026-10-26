@@ -68,6 +68,10 @@ CATALOG += [
     {'id': 'podkop', 'drivers': ['openwrt'], 'title': 'Podkop', 'icon': 'globe2', 'kind': 'installer',
      'description': 'Оригинальный Podkop: маршрутизация списков сайтов через прокси/VPN на sing-box. Настройка — в LuCI.',
      'author': 'itdoginfo', 'home': 'https://github.com/itdoginfo/podkop'},
+    {'id': 'tachyon', 'drivers': ['openwrt'], 'title': 'Tachyon', 'icon': 'globe2', 'kind': 'installer',
+     'description': 'Маршрутизация сайтов и устройств через прокси/VPN (VLESS, Hysteria2, WireGuard, AmneziaWG), обход блокировок (Zapret, ByeDPI), '
+                    'подписки, FakeIP-DNS и самолечение. Форк Forkop/Podkop. Настройка — в LuCI.',
+     'author': 'Dushnilin', 'home': 'https://github.com/Dushnilin/tachyon'},
     {'id': 'modem', 'drivers': ['openwrt'], 'title': 'USB-модем', 'icon': 'modem', 'kind': 'modem',
      'description': 'Драйверы для 4G/LTE-модемов. Rack Live посмотрит, что воткнуто, и подскажет вариант; не подошёл — удалите и поставьте другой.'},
     {'id': 'portal', 'drivers': ['openwrt'], 'title': 'Гостевой Wi-Fi с порталом', 'icon': 'wifi', 'kind': 'portal',
@@ -116,7 +120,7 @@ MODEM_PROFILES = [
 OWRT_STATUS = OWRT_PKG + r'''. /etc/openwrt_release 2>/dev/null; echo "@@rel $DISTRIB_RELEASE"; echo "@@pm $PM"
 echo "@@free $(df /overlay 2>/dev/null | awk 'NR==2{print $4}')"
 echo "@@sb $(sing-box version 2>/dev/null | head -1)"
-for p in forkop luci-app-forkop podkop luci-app-podkop sing-box sing-box-extended https-dns-proxy %s; do v=$(pv $p); [ -n "$v" ] && echo "@@pkg $p $v"; done
+for p in forkop luci-app-forkop podkop luci-app-podkop tachyon luci-app-tachyon sing-box sing-box-extended https-dns-proxy %s; do v=$(pv $p); [ -n "$v" ] && echo "@@pkg $p $v"; done
 for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && [ "$(cat $d/bDeviceClass)" != "09" ] && echo "@@usb $(cat $d/idVendor):$(cat $d/idProduct) $(cat $d/manufacturer 2>/dev/null) $(cat $d/product 2>/dev/null)"; done
 for d in rndis_host cdc_ether cdc_ncm huawei_cdc_ncm qmi_wwan cdc_mbim option; do ls /sys/bus/usb/drivers/$d 2>/dev/null | grep -q ':' && echo "@@drv $d"; done
 for f in /dev/ttyUSB* /dev/cdc-wdm*; do [ -e "$f" ] && echo "@@dev $f"; done
@@ -161,6 +165,23 @@ T=""; command -v timeout >/dev/null 2>&1 && T="timeout 900"
 rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"
 ''',
                'remove': OWRT_PKG + 'service podkop stop 2>/dev/null; pdel luci-i18n-podkop-ru luci-app-podkop podkop 2>&1 | tail -8'},
+    # Tachyon removes Podkop/Forkop by itself (after its own health check), so they are not a "conflict" to stop on — only a warning.
+    # OpenWrt 23.05+; the installer checks 12 MB on /overlay, the rest is the engine (sing-box).
+    'tachyon': {'packages': ('tachyon', 'luci-app-tachyon'), 'conflict': None, 'replaces': ('podkop', 'forkop'), 'minRel': 23, 'freeMB': 25,
+                'luci': 'admin/services/tachyon',
+                # non-interactive (-y, stdin closed): sing-box stable engine, no zram question except on ≤256 MB RAM; RL_CORE=1 → native Rust core
+                'install': OWRT_PKG + '''pupd >/dev/null 2>&1
+wget -qO "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" https://raw.githubusercontent.com/Dushnilin/tachyon/main/install.sh 2>/dev/null
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || { command -v curl >/dev/null 2>&1 && curl -fsSL https://raw.githubusercontent.com/Dushnilin/tachyon/main/install.sh -o "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" 2>/dev/null; }
+[ -s "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" ] || { echo "@@fail не удалось скачать установщик Tachyon"; exit 0; }
+T=""; command -v timeout >/dev/null 2>&1 && T="timeout 1100"
+A="-y"; [ "$RL_CORE" = 1 ] && A="-y --tachyon-core"
+$T sh "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}" $A </dev/null 2>&1 | tail -40
+rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"
+''',
+                # the project has no uninstaller: give the router its plain internet back first, then drop the packages (config stays)
+                'remove': OWRT_PKG + '[ -x /usr/bin/tachyon ] && /usr/bin/tachyon restore_native_internet </dev/null 2>&1 | tail -3\n'
+                                     'service tachyon stop 2>/dev/null; pdel luci-i18n-tachyon-ru luci-app-tachyon tachyon 2>&1 | tail -8'},
 }
 
 

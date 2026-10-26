@@ -310,16 +310,24 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
             p['pm'], p['fw'] = st['pm'], st['rel']
             if p['id'] in plugins.OWRT_INSTALLERS:
                 inst = plugins.OWRT_INSTALLERS[p['id']]
-                other = inst['conflict']
+                other, min_rel = inst['conflict'], inst.get('minRel', 24)
                 p['installed'] = inst['packages'][0] in st['pkgs']
                 p['version'] = st['pkgs'].get(inst['packages'][0])
                 p['url'], p['login'] = f"http://{host}/cgi-bin/luci/{inst['luci']}", 'логин и пароль от OpenWrt (LuCI)'
                 p['ssh'] = {'ok': True, 'native': True}
-                p['checks'] = [{'label': f"OpenWrt 24.10 или новее (у вас {st['rel'] or '?'})", 'ok': major >= 24},
-                               {'label': f"Свободно на флеше от {inst['freeMB']} МБ (сейчас {free_mb} МБ)", 'ok': p['installed'] or free_mb >= inst['freeMB']},
-                               {'label': f"Не установлен {other.capitalize()} — они конфликтуют", 'ok': other not in st['pkgs']}]
-                if 'https-dns-proxy' in st['pkgs'] and not p['installed']:
+                p['checks'] = [{'label': f"OpenWrt {min_rel}.{'05' if min_rel == 23 else '10'} или новее (у вас {st['rel'] or '?'})", 'ok': major >= min_rel},
+                               {'label': f"Свободно на флеше от {inst['freeMB']} МБ (сейчас {free_mb} МБ)", 'ok': p['installed'] or free_mb >= inst['freeMB']}]
+                if other:
+                    p['checks'].append({'label': f"Не установлен {other.capitalize()} — они конфликтуют", 'ok': other not in st['pkgs']})
+                replaced = [x.capitalize() for x in inst.get('replaces', ()) if x in st['pkgs']]
+                if replaced and not p['installed']:
+                    p['warning'] = f"На роутере стоит {' и '.join(replaced)}: установщик {p['title']} удалит {'его' if len(replaced) == 1 else 'их'} " \
+                                   f"(файлы настроек останутся в /etc/config, но сайты и подписки придётся занести в {p['title']} заново)."
+                elif 'https-dns-proxy' in st['pkgs'] and not p['installed'] and other:
                     p['warning'] = 'Установщик удалит конфликтующий пакет https-dns-proxy (DNS через HTTPS).'
+                if p['id'] == 'tachyon':
+                    p['options'] = [{'id': 'core', 'label': 'Родное ядро tachyon-core (Rust) вместо sing-box', 'on': False,
+                                     'hint': 'Свой движок Tachyon. Если не уверены — оставьте выключенным: тогда ставится обычный sing-box, его можно сменить позже в LuCI.'}]
                 if p['id'] == 'forkop':
                     p['singbox'] = st['sb']
                     p['options'] = [{'id': 'extended', 'label': 'sing-box extended — поддержка XHTTP', 'on': True,
@@ -548,14 +556,15 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
             inst, meta = plugins.OWRT_INSTALLERS[pid], next(p for p in plugins.CATALOG if p['id'] == pid)
             st = self._state(cfg)
             if op == 'install':
-                if inst['conflict'] in st['pkgs']:
+                if inst['conflict'] and inst['conflict'] in st['pkgs']:
                     raise DriverError(f"сначала удалите {inst['conflict'].capitalize()} — два менеджера маршрутизации конфликтуют")
-                if int((re.findall(r'\d+', st['rel']) or ['0'])[0]) < 24:
-                    raise DriverError(f"{meta['title']} нужен OpenWrt 24.10 или новее (у вас {st['rel']})")
+                min_rel = inst.get('minRel', 24)
+                if int((re.findall(r'\d+', st['rel']) or ['0'])[0]) < min_rel:
+                    raise DriverError(f"{meta['title']} нужен OpenWrt {min_rel}.{'05' if min_rel == 23 else '10'} или новее (у вас {st['rel']})")
                 free_mb = (st['free'] or 0) // 1024
                 if pid not in st['pkgs'] and free_mb < inst['freeMB']:
                     raise DriverError(f"мало места на флеше: {free_mb} МБ, нужно от {inst['freeMB']} МБ")
-                env = f"RL_EXT={1 if params.get('extended', True) else 0}\n"
+                env = f"RL_EXT={1 if params.get('extended', True) else 0}\nRL_CORE={1 if params.get('core') else 0}\n"
                 out = self._ssh(cfg, env + inst['install'] + plugins.OWRT_STATUS, timeout=1200)
             elif op == 'remove':
                 out = self._ssh(cfg, inst['remove'] + '\n' + plugins.OWRT_STATUS, timeout=300)

@@ -255,8 +255,13 @@ class DemoOpenWrt(DemoBase):
                 inst = plugins.OWRT_INSTALLERS[p['id']]
                 p.update(installed=p['id'] in self._pkgs, version=self._pkgs.get(p['id']), ssh={'ok': True, 'native': True},
                          url=f"http://10.0.0.3/cgi-bin/luci/{inst['luci']}", login='логин и пароль от OpenWrt (LuCI)',
-                         checks=[{'label': 'OpenWrt 24.10 или новее (у вас 25.12.1)', 'ok': True}, {'label': f"Свободно на флеше от {inst['freeMB']} МБ (сейчас 84 МБ)", 'ok': True},
-                                 {'label': f"Не установлен {inst['conflict'].capitalize()} — они конфликтуют", 'ok': inst['conflict'] not in self._pkgs}])
+                         checks=[{'label': 'OpenWrt 24.10 или новее (у вас 25.12.1)', 'ok': True}, {'label': f"Свободно на флеше от {inst['freeMB']} МБ (сейчас 84 МБ)", 'ok': True}]
+                         + ([{'label': f"Не установлен {inst['conflict'].capitalize()} — они конфликтуют", 'ok': inst['conflict'] not in self._pkgs}] if inst['conflict'] else []))
+                if p['id'] == 'tachyon':
+                    p['options'] = [{'id': 'core', 'label': 'Родное ядро tachyon-core (Rust) вместо sing-box', 'on': False, 'hint': 'Демо.'}]
+                    gone = [x.capitalize() for x in inst['replaces'] if x in self._pkgs]
+                    if gone and not p['installed']:
+                        p['warning'] = f"На роутере стоит {' и '.join(gone)}: установщик Tachyon удалит {'его' if len(gone) == 1 else 'их'}."
                 if p['id'] == 'forkop':
                     p['options'] = [{'id': 'extended', 'label': 'sing-box extended — поддержка XHTTP', 'on': True, 'hint': 'Без него XHTTP-ссылки не заработают.'}]
             elif p['id'] == 'portal':
@@ -338,8 +343,11 @@ class DemoOpenWrt(DemoBase):
         if op == 'remove':
             self._pkgs.pop(pid, None)
             return {'ok': True, 'log': [], 'message': f'{pid} удалён (демо)'}
-        if plugins.OWRT_INSTALLERS[pid]['conflict'] in self._pkgs:
+        conflict = plugins.OWRT_INSTALLERS[pid]['conflict']
+        if conflict and conflict in self._pkgs:
             raise ValueError('сначала удалите второй менеджер маршрутизации')
+        for gone in plugins.OWRT_INSTALLERS[pid].get('replaces', ()):          # как у настоящего установщика Tachyon
+            self._pkgs.pop(gone, None)
         self._pkgs[pid] = '0.7.9-r1'
         return {'ok': True, 'log': [{'cmd': 'apk add …', 'ok': True, 'msg': ''}], 'version': '0.7.9-r1',
                 'url': f"http://10.0.0.3/cgi-bin/luci/{plugins.OWRT_INSTALLERS[pid]['luci']}", 'message': f'{pid} 0.7.9-r1 установлен (демо)'}
