@@ -482,18 +482,9 @@ function PhotoPorts({ url, spots, sel, onPick, zoom }) {
 }
 
 /* cable length from the last saved cable test (port.cable) — nothing is measured here */
-const cableLen = c => c && c.length ? `кабель ≈ ${c.length} м` : null;
-function CableLengths({ ports, sel, onPick }) {
-  const list = (ports || []).filter(p => p.cable && (p.cable.length || p.cable.verdict === 'bad' || p.cable.verdict === 'warn'));
-  if (!list.length) return null;
-  return <Card title="Длина кабелей"><div className="cd-rows">{list.map(p => {
-    const c = p.cable, bad = c.verdict === 'bad' || c.verdict === 'warn';
-    const name = p.label || (p.peers && p.peers[0] && p.peers[0].name) || '';
-    return <div className="cd-r" key={p.n} onClick={() => onPick && onPick(p.n)} style={{ cursor: 'pointer', background: sel === p.n ? 'var(--fill)' : null }}>
-      <span>Порт {p.n}{name ? ' · ' + name : ''}</span>
-      <b style={bad ? { color: c.verdict === 'bad' ? 'var(--red)' : 'var(--orange)' } : null}>{c.length ? '≈ ' + c.length + ' м' : '—'}{bad ? ' · неисправен' : ''}</b></div>; })}</div>
-    <div className="dim3" style={{ fontSize: 11.5, marginTop: 8 }}>По последней проверке кабеля · точность ±5–10 м</div></Card>;
-}
+const cableLen = c => !c ? null : c.length ? `кабель ≈ ${c.length} м` : c.verdict === 'ok' ? 'кабель исправен, длину коммутатор не определил' : null;
+/* PoE of one port by what it does now (TP-Link «Power-Status»): «питает · 7 Вт» / «не питает устройство»; null for ports without PoE */
+const poeText = p => p.poe ? (p.poeOn || p.poeW > 0 ? 'PoE питает устройство' + (p.poeW ? ' · ' + p.poeW + ' Вт' : '') : 'PoE не питает') : p.poeW ? 'PoE ' + p.poeW + ' Вт' : null;
 
 function PortPop({ device, n, ports }) {
   const { data } = useApp();
@@ -503,7 +494,7 @@ function PortPop({ device, n, ports }) {
   const name = p.label || (p.peers && p.peers[0] && p.peers[0].name) || (p.kind === 'sfp' ? 'SFP, свободен' : p.link ? 'Без подписи' : 'Свободен');
   const patch = device ? patchesFor(data, device.id, p.n)[0] : null;
   return <div className="vt-pop" key={n}><span className={'n' + (p.link ? ' on' : '')}>{n}</span><b>{name}</b>
-    <small>{[p.disabled ? 'выключен' : p.link ? (p.speed >= 1000 ? (p.speed / 1000) + ' Гбит/с' : p.speed + ' Мбит/с') : 'нет линка', p.poeW ? 'PoE ' + p.poeW + ' Вт' : '', cableLen(p.cable), patch ? patch.unit.name + ', порт ' + patch.n : ''].filter(Boolean).join(' · ')}</small></div>;
+    <small>{[p.disabled ? 'выключен' : p.link ? (p.speed >= 1000 ? (p.speed / 1000) + ' Гбит/с' : p.speed + ' Мбит/с') : 'нет линка', poeText(p), cableLen(p.cable), patch ? patch.unit.name + ', порт ' + patch.n : ''].filter(Boolean).join(' · ')}</small></div>;
 }
 
 function CardPage({ e }) {
@@ -542,7 +533,6 @@ function CardPage({ e }) {
     {hasPorts ? <div className="vt-facts"><div><b>{up}/{ports.length}</b><span>Линк</span></div><div><b>{poe ? Math.round(poe) + ' Вт' : '—'}</b><span>PoE</span></div>
       <div><b>{s.uptime != null ? fmt.uptime(s.uptime) : '—'}</b><span>Работает</span></div></div> : null}
     {hasPorts || spots.length || (own && ports.length) ? <PortPop device={e.device} n={sel} ports={ports} /> : null}
-    {hasPorts ? <CableLengths ports={ports} sel={sel} onPick={pick} /> : null}
     {hasMap ? <Card title="Порты"><PortMapView unit={e.unit} compact /></Card> : null}
     {isUps ? <CardUps device={e.device} /> : null}
     {shown.length ? <Card title={hasPorts || isUps ? 'Дополнительно' : 'Сведения'}><div className="cd-rows">{shown.map(([k, v], i) => <div className="cd-r" key={i}><span>{k}</span><b>{v}</b></div>)}</div></Card> : null}
@@ -776,9 +766,9 @@ function ScannerMenu() {
       <div style={{ marginBottom: 10 }}><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" /></div>
       <div className="plug-list" style={{ border: 0, margin: 0, padding: 0 }}>{shown.map(x => <div className="plug-row" key={x.src + x.id} style={{ cursor: 'default', flexWrap: 'wrap' }}>
         <KindIcon kind={x.kind} size={32} round={9} />
-        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b className="ellipsis" style={{ display: 'block' }}>{x.name}</b>
+        <span style={{ textAlign: 'left', minWidth: 0, flex: '1 1 150px' }}><b className="ellipsis" style={{ display: 'block' }}>{x.name}</b>
           <small className="ellipsis" style={{ display: 'block' }}>{[x.place || x.group, x.sub].filter(Boolean).join(' · ')}</small></span>
-        <span className="row" style={{ gap: 6, flexShrink: 0 }}>
+        <span className="row" style={{ gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
           <Btn size="sm" icon="box" onClick={() => setPhoto(x)} title="3D-модель или фото">Вид</Btn>
           <Btn size="sm" icon="tag" onClick={() => setQr(x)} title="QR-наклейка">QR</Btn>
           <Btn size="sm" icon="edit" onClick={() => begin(x)}>{x.src === 'manual' ? 'Изменить' : 'Дополнить'}</Btn>

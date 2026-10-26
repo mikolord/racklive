@@ -1,6 +1,70 @@
 /* AI assistant: chat panel (questions about the network, the model reads live data through read-only tools) + settings card */
 const AI_SUGGEST = ['Всё ли в порядке с сетью?', 'Почему может тормозить интернет?', 'Что исправить в безопасности в первую очередь?',
   'Какие устройства чаще всего пропадают?', 'У кого из клиентов слабый Wi-Fi?'];
+/* «/» commands in the input (the server handles them: rackd/assistant.py COMMANDS) */
+const AI_CMDS = [['/compact', 'Сжать разговор, освободить место'], ['/clear', 'Новый чистый разговор'], ['/context', 'Сколько места занято и чем'],
+  ['/memory', 'Память Frank: показать или «/memory текст» — дописать'], ['/help', 'Список команд']];
+const AI_CMD_RE = /^\/(clear|new|compact|context|memory|help)(\s|$)/i;
+const aiFileUrl = id => '/api/ai/files/' + id;
+
+/* files and photos for the next question: uploaded at once (photos made smaller first, like in «Сканер»), sent as ids with the question */
+async function uploadAiFile(f) {
+  let body = f;                                              // a photo (also HEIC from an iPhone) becomes a smaller JPEG / PNG the model can read; if the browser can't open it, it goes as is
+  if (/^image\//.test(f.type) && !/gif|svg/.test(f.type)) { try { body = await shrinkImage(f); } catch (e) { body = f; } }
+  const init = { method: 'POST', credentials: 'same-origin', headers: { 'X-File-Name': encodeURIComponent(f.name || 'фото.jpg') }, body };
+  const tok = ssGet('rl_tok'); if (tok) init.headers['X-RL-Session'] = tok;
+  const j = await (await fetch('/api/ai/files', init)).json();
+  if (!j.ok) throw new Error(j.error || 'не получилось загрузить');
+  return j.file;
+}
+function AttachChips({ files, onRemove }) {
+  if (!files.length) return null;
+  return <div className="ai-att">{files.map((f, i) => <div key={f.id || f.tmp} className={'ai-att-chip' + (f.busy ? ' busy' : '')}>
+    {f.kind === 'image' && (f.local || f.id) ? <img src={f.local || aiFileUrl(f.id)} alt="" /> : <span className="ai-att-ic"><Icon name="file" size={16} /></span>}
+    <span className="ai-att-name">{f.busy ? 'Загружаю…' : f.name}</span>
+    <button type="button" title="Убрать" onClick={() => onRemove(i)}><Icon name="x" size={12} /></button></div>)}</div>;
+}
+/* what was attached to a question in the chat */
+function MsgFiles({ files }) {
+  return <div className="ai-msg-files">{files.map(f => f.kind === 'image'
+    ? <a key={f.id} href={aiFileUrl(f.id)} target="_blank" rel="noreferrer"><img src={aiFileUrl(f.id)} alt={f.name} loading="lazy" /></a>
+    : <a key={f.id} className="ai-file" href={aiFileUrl(f.id)} download={f.name}><Icon name="file" size={14} />{f.name}<small>{fmt.bytes(f.size)}</small></a>)}</div>;
+}
+
+/* FRANK.md — Frank's memory, like CLAUDE.md: the person's rules and notes, read in every chat */
+function MemoryEditor({ onClose }) {
+  const toast = useToast();
+  const [text, setText] = useState(null); const [max, setMax] = useState(20000); const [busy, setBusy] = useState(false);
+  useEffect(() => { api('/api/ai/memory').then(j => { setText(j.text || ''); setMax(j.max || 20000); }).catch(e => { toast(e.message, true); setText(''); }); }, []);
+  const save = async () => { setBusy(true); try { await api('/api/ai/memory', { method: 'PUT', body: { text } }); toast('Память сохранена'); onClose(); } catch (e) { toast(e.message, true); } finally { setBusy(false); } };
+  return <Modal title="Память Frank · FRANK.md" onClose={onClose} wide footer={<><Btn onClick={onClose}>Закрыть</Btn><Btn kind="primary" busy={busy} disabled={text == null || text.length > max} onClick={save}>Сохранить</Btn></>}>
+    <div className="dim" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>Всё, что здесь написано, Frank читает в каждом разговоре — как CLAUDE.md у Claude Code. Пишите правила и факты:
+      «Отвечай кратко», «NAS стоит в кладовке, роутер — в коридоре», «Порт 24 коммутатора не трогать». Frank сам дописывает сюда то, что вы просите запомнить (или команда <code>/memory текст</code>).</div>
+    {text == null ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загружаю…</div>
+      : <textarea className="input mono ai-mem" value={text} onChange={e => setText(e.target.value)} placeholder={'- Отвечай кратко\n- Роутер Keenetic в коридоре, коммутатор в шкафу'} />}
+    {text != null ? <div className="dim3" style={{ fontSize: 12, marginTop: 6, color: text.length > max ? 'var(--red)' : null }}>{text.length} из {max} символов</div> : null}
+  </Modal>;
+}
+const tokK = n => n >= 1e6 ? (n / 1e6).toFixed(1).replace('.', ',') + ' млн' : n >= 1000 ? (n / 1000).toFixed(n >= 1e4 ? 0 : 1).replace('.', ',') + ' тыс.' : String(n);
+
+/* how full the model's window is: a thin bar, the figures, and «Сжать» when it is getting tight */
+function CtxMeter({ ctx, busy, onCompact }) {
+  if (!ctx) return null;
+  const pct = Math.min(100, ctx.pct), tone = pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--orange)' : 'var(--accent)';
+  return <div className="ai-ctx" title={`Системная часть ≈${tokK(ctx.parts.system + ctx.parts.tools)}, сводка ≈${tokK(ctx.parts.summary)}, разговор ≈${tokK(ctx.parts.chat)}${ctx.exact ? '' : ' (оценка)'}`}>
+    <div className="ai-ctx-bar"><i style={{ width: pct + '%', background: tone }} /></div>
+    <div className="ai-ctx-row"><span>Контекст · {ctx.exact ? '' : '≈'}{tokK(ctx.used)} из {tokK(ctx.window)} ({Math.round(ctx.pct)}%){ctx.squeezed ? ' · сжат' : ''}</span>
+      {pct >= 60 && !busy ? <button type="button" className="ai-ctx-btn" onClick={onCompact}>Сжать</button> : null}</div>
+  </div>;
+}
+
+/* the list of commands under the input when it starts with «/» */
+function CmdHint({ q, onPick }) {
+  if (!q.startsWith('/') || q.includes(' ')) return null;
+  const list = AI_CMDS.filter(([c]) => c.startsWith(q.toLowerCase()));
+  if (!list.length || (list.length === 1 && list[0][0] === q.toLowerCase())) return null;
+  return <div className="ai-cmds">{list.map(([c, d]) => <button key={c} type="button" onClick={() => onPick(c)}><b>{c}</b><span>{d}</span></button>)}</div>;
+}
 
 /* Frank's avatar: an eye that blinks and glances around. While he works the mood shows how hard the question is:
    1 — calm (blue, looks around), 2 — straining (yellow, squints), 3 — heavy (red, frowns, glows and trembles). */
@@ -93,9 +157,9 @@ function ProposalCard({ p, onAct }) {
       <div className="ai-prop-ic"><Icon name={st === 'done' ? 'check' : st === 'error' ? 'alert' : st === 'cancelled' ? 'x' : 'bolt'} size={16} /></div>
       <div className="grow" style={{ minWidth: 0 }}>
         <b>{p.command ? 'Команда' : p.label}</b><div className="dim3" style={{ fontSize: 12 }}>{p.deviceName}{p.auto ? ' · Frank выполнил сам по вашей просьбе' : ''}</div>
-        {p.command ? <pre className="ai-cmd">{p.command}</pre> : p.text && st === 'pending' ? <div className="ai-prop-text">{p.text}</div> : null}
+        {p.command ? <pre className="ai-cmd">{p.command}</pre> : p.pre ? <pre className="ai-cmd">{p.pre}</pre> : p.text && st === 'pending' ? <div className="ai-prop-text">{p.text}</div> : null}
         {p.reason && st === 'pending' ? <div className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>Зачем: {p.reason}</div> : null}
-        {st === 'done' || st === 'error' ? (p.command ? <pre className="ai-cmd out">{p.result}</pre>
+        {st === 'done' || st === 'error' ? (p.command || p.pre ? <pre className="ai-cmd out">{p.result}</pre>
           : <div className="ai-prop-text">{st === 'done' ? '✓ ' : ''}{p.result}</div>) : null}
         {st === 'cancelled' ? <div className="dim3" style={{ fontSize: 12.5, marginTop: 4 }}>Не выполнялось</div> : null}
       </div>
@@ -110,9 +174,13 @@ function ProposalCard({ p, onAct }) {
 /* menu behind the eye in the Frank app: balance, model, how deep to think */
 const EFFORTS = [['', 'Обычно'], ['low', 'Быстро'], ['high', 'Вдумчиво'], ['max', 'Максимум']];
 const money = b => b ? (b.currency === 'USD' ? '$' + b.amount.toFixed(2) : b.amount.toFixed(2) + ' ' + b.currency) : null;
+/* the agent's rights (rackd/frank_agent.py MODES) — like the permission modes of Claude Code */
+const AGENT_MODES = [['ask', 'Спрашивать', 'Смотрит сам; запись файлов и команды — по кнопке «Выполнить».'],
+  ['edits', 'Правки сам', 'Файлы читает и меняет сам; команды, которые что-то меняют, — по кнопке.'],
+  ['full', 'Полный доступ', 'Всё выполняет сразу. Никогда: удалять систему, форматировать диски, выключать машину, трогать пароли и данные Rack Live.']];
 function FrankMenu({ onClose }) {
-  const { refresh } = useApp(); const toast = useToast();
-  const [m, setM] = useState(null); const [err, setErr] = useState(null); const [saving, setSaving] = useState(null);
+  const { refresh, data } = useApp(); const toast = useToast();
+  const [m, setM] = useState(null); const [err, setErr] = useState(null); const [saving, setSaving] = useState(null); const [mem, setMem] = useState(false);
   const load = () => api('/api/ai/models', { method: 'POST', body: {} }).then(setM).catch(e => setErr(e.message));
   useEffect(() => { load(); const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
   const save = async (part, what) => {
@@ -141,8 +209,16 @@ function FrankMenu({ onClose }) {
           <Seg value={m.effort || ''} onChange={v => save({ effort: v }, 'effort')} options={EFFORTS.filter(([v]) => !v || cur.efforts.includes(v)).map(([value, label]) => ({ value, label }))} />
           <div className="dim3" style={{ fontSize: 12, lineHeight: 1.4 }}>Глубже — точнее на сложных вопросах, но дольше и дороже. «Обычно» — как задумал сервис.</div>
         </> : null}
+        {data.ai && data.ai.agent ? <>
+          <div className="fr-menu-title">Агент: права</div>
+          <Seg value={data.ai.agentMode || 'ask'} onChange={v => save({ agentMode: v }, 'agentMode')} options={AGENT_MODES.map(([value, label]) => ({ value, label }))} />
+          <div className="dim3" style={{ fontSize: 12, lineHeight: 1.4 }}>{(AGENT_MODES.find(x => x[0] === (data.ai.agentMode || 'ask')) || [])[2]}</div>
+        </> : null}
+        <button type="button" className="fr-model-opt" onClick={() => setMem(true)}><span className="fr-radio"><Icon name="brain" size={15} /></span>
+          <span className="grow" style={{ minWidth: 0 }}><b>Память Frank</b><small>FRANK.md — правила и заметки, которые Frank читает в каждом разговоре</small></span></button>
       </>}
     </div>
+    {mem ? <MemoryEditor onClose={() => setMem(false)} /> : null}
   </div>;
 }
 
@@ -158,12 +234,26 @@ function AiPanel({ initial, onClose, standalone }) {
   const { data, setTab } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const ai = data.ai || {};
   const [view, setView] = useState('chat');                 // 'chat' | 'list'
-  const [cid, setCid] = useState(() => initial ? null : lsGet(CUR_KEY, '') || null);
+  const [cid, setCid] = useState(() => initial ? null : new URLSearchParams(location.search).get('chat') || lsGet(CUR_KEY, '') || null);      // ?chat=<id> opens a given conversation (links, tests)
   const [msgs, setMsgs] = useState([]);
   const [chats, setChats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);                   // {stage, tools} while Frank works on this chat
+  const [ctx, setCtx] = useState(null);                     // how full the model's window is for the open chat (the server counts it)
+  const [att, setAtt] = useState([]);                       // files and photos for the next question
+  const fileRef = useRef(null);
+  const addFiles = list => {
+    for (const f of Array.from(list || []).slice(0, 10)) {
+      const tmp = Math.random().toString(36).slice(2), img = /^image\//.test(f.type);
+      setAtt(a => [...a, { tmp, name: f.name || 'фото', kind: img ? 'image' : 'file', local: img ? URL.createObjectURL(f) : null, busy: true }]);
+      uploadAiFile(f).then(m => setAtt(a => a.map(x => x.tmp === tmp ? { ...m, tmp, local: x.local } : x)))
+        .catch(e => { toast(e.message, true); setAtt(a => a.filter(x => x.tmp !== tmp)); });
+    }
+    if (fileRef.current) fileRef.current.value = '';
+  };
+  const dropAtt = i => setAtt(a => a.filter((x, k) => { if (k === i && x.local) URL.revokeObjectURL(x.local); return k !== i; }));
+  const onPaste = e => { const fs = e.clipboardData && e.clipboardData.files; if (fs && fs.length) { e.preventDefault(); addFiles(fs); } };      // a screenshot pasted with Ctrl+V
   const alive = useRef(true), listRef = useRef(null), asked = useRef(false), cur = useRef(cid), polling = useRef(null);
   cur.current = cid;
   useEffect(() => () => { alive.current = false; }, []);
@@ -187,22 +277,29 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   const open = async (id, quiet) => {
     setView('chat'); setCid(id); if (!quiet) { setBusy(null); setLoading(true); }
-    if (!id) { setMsgs([]); setLoading(false); return; }
+    if (!id) { setMsgs([]); setCtx(null); setLoading(false); return; }
     try {
       const c = await api('/api/ai/chats/' + id);
       if (!alive.current || cur.current !== id) return;
-      setMsgs(c.messages);
+      setMsgs(c.messages); setCtx(c.ctx || null);
       if (c.job) { setBusy(b => b || { stage: 'Думаю…', tools: [], t0: Date.now() }); follow(c.job, id); }
     } catch (e) { if (e.status === 404) { setCid(null); setMsgs([]); } else toast(e.message, true); }
     finally { if (alive.current) setLoading(false); }
   };
   const loadList = async () => { try { const r = await api('/api/ai/chats'); alive.current && setChats(r.chats); } catch (e) { toast(e.message, true); } };
   const send = async text => {
-    text = (text || '').trim(); if (!text || busy || !ai.ready) return;
+    text = (text || '').trim();
+    const cmd = (text.match(AI_CMD_RE) || [])[1];            // a command is not a question: no bubble, the result comes back as a note in the chat
+    const files = cmd ? [] : att.filter(f => f.id);
+    if ((!text && !files.length) || busy || !ai.ready) return;
+    if (att.some(f => f.busy)) { toast('Подождите, файл ещё загружается', true); return; }
     const id = cur.current;
-    setMsgs(m => [...m, { role: 'user', text, t: Date.now() / 1000 }]); setQ(''); setBusy({ stage: 'Думаю…', tools: [], t0: Date.now() });
+    if (cmd && /^(clear|new)$/i.test(cmd)) { setMsgs([]); setCtx(null); }
+    else if (!cmd) setMsgs(m => [...m, { role: 'user', text: text || (files.every(f => f.kind === 'image') ? 'Посмотри фото.' : 'Посмотри файл.'), t: Date.now() / 1000, files: files.map(f => ({ id: f.id, name: f.name, kind: f.kind, size: f.size })) }]);
+    if (!cmd) { att.forEach(f => f.local && URL.revokeObjectURL(f.local)); setAtt([]); }
+    setQ(''); setBusy({ stage: cmd ? (/compact/i.test(cmd) ? 'Сжимаю разговор…' : '…') : 'Думаю…', tools: [], t0: Date.now() });
     try {
-      const r = await api('/api/ai/ask', { method: 'POST', body: { chat: id, text } });
+      const r = await api('/api/ai/ask', { method: 'POST', body: { chat: id, text, files: files.map(f => f.id) } });
       if (!alive.current) return;
       if (cur.current === id) { cur.current = r.chat; setCid(r.chat); }
       follow(r.job, r.chat);
@@ -217,14 +314,21 @@ function AiPanel({ initial, onClose, standalone }) {
     try { await api('/api/ai/chats/' + c.id, { method: 'DELETE' }); setChats(x => x.filter(y => y.id !== c.id)); if (c.id === cid) { setCid(null); setMsgs([]); setBusy(null); } }
     catch (e) { toast(e.message, true); }
   };
-  const key = e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(q); } };
+  const key = e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      const t = q.trim().toLowerCase();                       // «/comp» + Enter = «/compact»
+      const hit = t.startsWith('/') && !t.includes(' ') ? AI_CMDS.filter(([c]) => c.startsWith(t)) : [];
+      send(hit.length === 1 ? hit[0][0] : q);
+    }
+  };
   const today = ai.today || {};
   const title = view === 'list' ? 'Разговоры' : T('frank.name', 'Frank');
   // voice input: the browser's own speech recognition (Safari/Chrome; needs https — on a plain http address the button is hidden)
   const [quick, setQuick] = useState(false);
   const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1');
   const act = async (p, run) => {
-    try { const r = await api('/api/ai/act', { method: 'POST', body: { chat: cid, proposal: p.id, run } }); if (r.chat) setMsgs(r.chat.messages);
+    try { const r = await api('/api/ai/act', { method: 'POST', body: { chat: cid, proposal: p.id, run } }); if (r.chat) { setMsgs(r.chat.messages); setCtx(r.chat.ctx || null); }
       if (run) toast(r.proposal.status === 'done' ? '✓ ' + r.proposal.result : r.proposal.result, r.proposal.status !== 'done'); }
     catch (e) { toast(e.message, true); open(cid, true); }
   };
@@ -243,7 +347,7 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   useEffect(() => () => { try { recRef.current && recRef.current.abort(); } catch (e) { } }, []);
   const toggleList = () => { if (view === 'list') setView('chat'); else { setView('list'); setChats(null); loadList(); } };
-  const sub = ai.ready ? `${ai.title} · ${ai.effModel}` : 'не настроен';
+  const sub = ai.ready ? `${ai.title} · ${ai.effModel}${ai.agent ? ' · агент: ' + ((AGENT_MODES.find(x => x[0] === ai.agentMode) || AGENT_MODES[0])[1]).toLowerCase() : ''}` : 'не настроен';
   return <div className={standalone ? 'frank-app' : 'overlay ai-overlay'} onMouseDown={e => onClose && e.target === e.currentTarget && onClose()}>
     <div className={'ai-panel' + (standalone ? ' standalone' : '')}>
       {standalone ? <div className="fr-blur" /> : null}
@@ -289,11 +393,11 @@ function AiPanel({ initial, onClose, standalone }) {
         : !msgs.length ? <div className="ai-empty">
           <FrankEye size={68} />
           <b style={{ fontSize: 17 }}>Привет, я Frank</b>
-          <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Я слежу за вашей сетью. Спросите что угодно — сам посмотрю данные Rack Live и отвечу простыми словами. В сети я ничего не меняю, только подсказываю.</div>
+          <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Я слежу за вашей сетью. Спросите что угодно — сам посмотрю данные Rack Live и отвечу простыми словами. Можно прислать фото или файл (скрепка внизу), попросить «запомни…», а «/» покажет команды.</div>
           <div className="ai-suggest">{AI_SUGGEST.map(s => <button key={s} type="button" className="chip" onClick={() => send(s)}>{s}</button>)}</div>
           {standalone ? <div className="dim3" style={{ fontSize: 11.5, lineHeight: 1.4, maxWidth: 340 }}>Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div> : null}
-        </div> : msgs.map((m, i) => m.role === 'event' ? null : <div key={i} className={'ai-msg ' + m.role + (m.err ? ' err' : '')}>
-          {m.role === 'user' ? <div className="ai-bubble">{m.text}</div> : <div className="ai-bubble">
+        </div> : msgs.map((m, i) => m.role === 'event' ? null : m.role === 'note' ? <div key={i} className="ai-note-line">{m.text}</div> : <div key={i} className={'ai-msg ' + m.role + (m.err ? ' err' : '')}>
+          {m.role === 'user' ? <div className="ai-bubble">{m.files && m.files.length ? <MsgFiles files={m.files} /> : null}{m.text}</div> : <div className="ai-bubble">
             {m.err ? <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="alert" size={16} color="var(--red)" /><span>{m.text}</span></div> : <AiText text={m.text} />}
             {m.tools && m.tools.length ? <div className="ai-tools">{[...new Set(m.tools)].map(t => <span key={t}><Icon name="eye" size={11} />{t}</span>)}</div> : null}
             {m.ops && m.ops.length ? <OpsList ops={m.ops} /> : null}
@@ -306,20 +410,30 @@ function AiPanel({ initial, onClose, standalone }) {
       {menu ? <FrankMenu onClose={() => setMenu(false)} /> : null}
       {ai.ready && view === 'chat' && standalone ? <div className="fr-dock">
         {quick ? <div className="fr-quick">{AI_SUGGEST.map(s => <button key={s} type="button" onClick={() => { setQuick(false); send(s); }}>{s}</button>)}</div> : null}
-        <textarea rows={1} value={q} placeholder={busy ? busy.stage : listening ? 'Говорите…' : 'Спросите Frank о сети'} onChange={e => setQ(e.target.value)} onKeyDown={key}
-          disabled={!!busy} onFocus={() => setQuick(false)} />
+        <CmdHint q={q} onPick={c => setQ(c + ' ')} />
+        <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} />
+        <AttachChips files={att} onRemove={dropAtt} />
+        <textarea rows={1} value={q} placeholder={busy ? busy.stage : listening ? 'Говорите…' : 'Спросите Frank о сети или введите /'} onChange={e => setQ(e.target.value)} onKeyDown={key}
+          disabled={!!busy} onFocus={() => setQuick(false)} onPaste={onPaste} />
+        <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
         <div className="fr-dock-row">
           <button type="button" className={'fr-dbtn' + (quick ? ' on' : '')} title="Быстрые вопросы" onClick={() => setQuick(!quick)} disabled={!!busy}><Icon name="plus" size={22} stroke={2} /></button>
+          <button type="button" className="fr-dbtn" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()} disabled={!!busy}><Icon name="clip" size={20} stroke={2} /></button>
           <div className="fr-model"><b>{ai.title.split(' ')[0]}</b><span>{ai.effModel}</span></div>
           <div className="grow" />
           {SPEECH ? <button type="button" className={'fr-dbtn' + (listening ? ' rec' : '')} title="Сказать голосом" onClick={toggleMic} disabled={!!busy}><Icon name="mic" size={21} stroke={2} /></button> : null}
-          <button type="button" className={'fr-send' + (q.trim() && !busy ? ' on' : '')} disabled={!q.trim() || !!busy} onClick={() => send(q)} title="Отправить">
+          <button type="button" className={'fr-send' + ((q.trim() || att.length) && !busy ? ' on' : '')} disabled={(!q.trim() && !att.length) || !!busy} onClick={() => send(q)} title="Отправить">
             {busy ? <span className="spin-dot" /> : <Icon name="arrowUp" size={21} stroke={2.4} />}</button>
         </div>
       </div> : null}
+      {ai.ready && view === 'chat' && !standalone ? <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} /> : null}
+      {ai.ready && view === 'chat' && !standalone ? <CmdHint q={q} onPick={c => setQ(c + ' ')} /> : null}
+      {ai.ready && view === 'chat' && !standalone ? <AttachChips files={att} onRemove={dropAtt} /> : null}
       {ai.ready && view === 'chat' && !standalone ? <div className="ai-foot">
-        <textarea className="input" rows={1} value={q} placeholder="Спросить Frank…" onChange={e => setQ(e.target.value)} onKeyDown={key} disabled={!!busy} />
-        <Btn kind="primary" icon="send" busy={!!busy} disabled={!q.trim()} onClick={() => send(q)} />
+        <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
+        <Btn icon="clip" title="Прикрепить фото или файл" disabled={!!busy} onClick={() => fileRef.current && fileRef.current.click()} />
+        <textarea className="input" rows={1} value={q} placeholder="Спросить Frank… (или /)" onChange={e => setQ(e.target.value)} onKeyDown={key} onPaste={onPaste} disabled={!!busy} />
+        <Btn kind="primary" icon="send" busy={!!busy} disabled={!q.trim() && !att.length} onClick={() => send(q)} />
       </div> : null}
       {ai.ready && view === 'chat' && !standalone ? <div className="ai-note">Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div> : null}
     </div>
@@ -379,8 +493,9 @@ function AdviceSettings({ ai }) {
 function AiCard() {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
-  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false, admin: !!ai.admin }));
-  const [res, setRes] = useState(null);
+  const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false, admin: !!ai.admin,
+    window: ai.window || 0, autoCompact: ai.autoCompact !== false, agent: !!ai.agent, agentMode: ai.agentMode || 'ask' }));
+  const [res, setRes] = useState(null); const [mem, setMem] = useState(() => new URLSearchParams(location.search).get('memory') === '1');
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
   const pick = id => { setS(x => ({ ...x, preset: id, base: '', model: '', key: '' })); setRes(null); };
@@ -404,6 +519,17 @@ function AiCard() {
             Для Synology включите SSH (Панель управления → Терминал); вход — тем же пользователем DSM.</div> : null}</div></div> : null}
         <div className="row"><Switch on={!!s.telegram} onChange={v => set('telegram', v)} /><div className="grow"><div>Отвечать в Telegram</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Напишите вопрос боту Rack Live в личку — ответит Frank. Только привязанным аккаунтам (Настройки → Уведомления → «Привязать Telegram»); /new — новый разговор. Разговоры видны и в приложении Frank.</div></div></div>
+        <div className={'row' + (s.agent ? ' ai-admin-on' : '')}><Switch on={!!s.agent} onChange={v => set('agent', v)} /><div className="grow"><div>Агент: файлы и команды <span className="ai-badge">как Claude Code</span></div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Frank становится универсальным помощником: читает и пишет файлы, ищет по ним, выполняет команды на машине, где работает Rack Live
+            ({ai.agentWhere}). Своя рабочая папка для проектов и скриптов; ваши вложения он тоже может открыть. Не только про сеть — любые задачи.</div>
+          {s.agent ? <div style={{ marginTop: 8 }}><Seg value={s.agentMode || 'ask'} onChange={v => set('agentMode', v)} options={AGENT_MODES.map(([value, label]) => ({ value, label }))} />
+            <div className="dim3" style={{ fontSize: 12.5, marginTop: 6 }}>{(AGENT_MODES.find(x => x[0] === (s.agentMode || 'ask')) || [])[2]} Каждое изменение и команда — в журнале событий.</div>
+            {s.agentMode === 'full' ? <div className="ai-admin-warn">Модель может ошибиться — например, удалить не тот файл в рабочей папке или установить лишнее. Данные и программа Rack Live
+              защищены, разрушительные команды запрещены всегда, но остальное Frank делает без вопросов.</div> : null}</div> : null}</div></div>
+        <div className="row"><span className="ico-circle"><Icon name="brain" size={16} /></span><div className="grow"><div>Память Frank (FRANK.md)</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Ваши правила и заметки, которые Frank читает в каждом разговоре — как CLAUDE.md у Claude Code. Попросите «запомни…» в разговоре или впишите сами.</div></div>
+          <Btn size="sm" onClick={() => setMem(true)}>Открыть</Btn></div>
+        {mem ? <MemoryEditor onClose={() => setMem(false)} /> : null}
         <AdviceSettings ai={ai} />
         <Field label="Сервис">
           <div className="row wrap" style={{ gap: 6 }}>{ai.presets.map(x => <button key={x.id} type="button" className={'chip' + (s.preset === x.id ? ' on' : '')} onClick={() => pick(x.id)}>{x.title}</button>)}</div></Field>
@@ -416,6 +542,10 @@ function AiCard() {
             <Field label="Адрес API" hint="Пусто — адрес сервиса по умолчанию. Для Ollama: http://IP-компьютера:11434/v1"><input className="input mono" value={s.base} placeholder={p.base || 'https://…/v1'} onChange={e => set('base', e.target.value)} /></Field>
             <Field label="Прокси (необязательно)" hint="Если сервис недоступен из вашей страны: http://адрес:порт. Или пустите его домен через VPN на роутере"><input className="input mono" value={s.proxy} placeholder="http://192.168.1.1:3128" onChange={e => set('proxy', e.target.value)} /></Field>
             <Field label="Вопросов в день, не больше" hint="Защита от случайных трат. 0 — без лимита"><input className="input" style={{ width: 100 }} value={s.limit} onChange={e => set('limit', +e.target.value || 0)} /></Field>
+            <Field label="Окно контекста, токенов" hint={`Сколько модель «держит в голове». 0 — по названию модели (сейчас ≈${tokK(ai.effWindow || 0)}). Если у вашей модели другое окно — впишите его, полоса «Контекст» в разговоре станет точнее`}>
+              <input className="input mono" style={{ width: 140 }} inputMode="numeric" value={s.window || ''} placeholder="авто" onChange={e => set('window', +e.target.value.replace(/\D/g, '') || 0)} /></Field>
+            <div className="row"><Switch on={!!s.autoCompact} onChange={v => set('autoCompact', v)} /><div className="grow"><div>Сжимать разговор само</div>
+              <div className="dim3" style={{ fontSize: 12.5 }}>Когда разговор заполнил окно почти целиком, Frank перед ответом превращает старую часть в короткую сводку и пишет об этом в разговоре. Вручную — команда /compact.</div></div></div>
           </div></details>
         <div className="row wrap">
           <Btn onClick={test} icon="check">Проверить</Btn>

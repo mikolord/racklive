@@ -183,7 +183,7 @@ function IosSettingsList({ secs, data, onPick }) {
 }
 
 function SettingsView() {
-  const { data, refresh, logout, startTour } = useApp(); const toast = useToast();
+  const { data, refresh, logout, startTour, admin } = useApp(); const toast = useToast();
   const [s, setS] = useState({ ...data.settings });
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
   const fileRef = useRef(null);
@@ -329,6 +329,7 @@ function SettingsView() {
       <KV rows={[['Версия', 'Rack Live ' + data.version], ['Драйверы', data.drivers.length], ['Устройств', data.devices.length]]} />
       <div className="dim3" style={{ fontSize: 12.5, marginTop: 12 }}>Исходный код и инструкции: <a href="https://github.com/mikolord/racklive" target="_blank" rel="noreferrer">github.com/mikolord/racklive</a></div></Card> : null}
     {cur.id === 'about' && data.authed !== false ? <UpdateCard /> : null}
+    {cur.id === 'about' && data.authed !== false && admin ? <UsageCard /> : null}
     </div>
   </div>;
 }

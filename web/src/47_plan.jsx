@@ -43,6 +43,7 @@ function PlanCursor({ wrap, view, tool, wallPt }) {
 
 /* pan + wheel + pinch, with tap / drag-draw callbacks (opts read fresh each render) */
 function usePanZoom(wrapRef, opts, initial) {
+  useFillScreen(wrapRef);
   const [view, setView] = useState(initial || { x: 60, y: 60, k: 1 });
   const vr = useRef(view); vr.current = view;
   const or = useRef(opts); or.current = opts;

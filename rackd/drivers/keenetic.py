@@ -61,16 +61,41 @@ class Keenetic(Driver):
         # after a wrong password wait 30 min (or until the password is changed): polling every minute would get our IP locked out
         bad_key = hashlib.sha256(f"{base}\0{user}\0{cfg.get('password', '')}".encode()).hexdigest()
         if time.time() - BAD_LOGIN.get(bad_key, 0) < 1800:
+            if cfg.get('entwarePassword'):                 # the router refuses our API login, but we can still ask it from the inside (see _local_rci)
+                return self._local_rci(cfg)
             raise DriverError('неверный логин или пароль — следующая попытка через ' +
                               f"{int((1800 - (time.time() - BAD_LOGIN[bad_key])) / 60) + 1} мин (или сразу после смены пароля), чтобы роутер не заблокировал адрес")
         md5 = hashlib.md5(f"{user}:{realm}:{cfg.get('password', '')}".encode()).hexdigest()
         a = req('/auth', {'login': user, 'password': hashlib.sha256((ch + md5).encode()).hexdigest()})
         if getattr(a, 'status', getattr(a, 'code', 0)) != 200:
             BAD_LOGIN[bad_key] = time.time()
+            if cfg.get('entwarePassword'):
+                return self._local_rci(cfg)
             raise DriverError('неверный логин или пароль')
         BAD_LOGIN.pop(bad_key, None)
         SESSIONS[skey] = op
         return get, cli
+
+    def _local_rci(self, cfg):
+        """KeeneticOS 5.2 changed the web sign-in (x-ndw4): the old challenge login (x-ndw2) that this driver uses is refused even with the right
+        password. The router's own RCI on 127.0.0.1:79 needs no sign-in for programs running on it, and Entware (SSH, port 222) runs on it — so the same
+        requests are sent from there with curl. Same (get, cli) as the HTTP session, so nothing else in the driver changes."""
+        def run(path, data=None):
+            if not re.match(r'^/[A-Za-z0-9_./?=&%:+-]*$', path):
+                raise DriverError('неверный адрес запроса')
+            if data is None:
+                script = f"curl -s -m 40 'http://127.0.0.1:79{path}'\n"
+            else:
+                tag = 'RLEOF' + secrets.token_hex(6)
+                script = f"curl -s -m 60 -H 'Content-Type: application/json' --data-binary @- 'http://127.0.0.1:79{path}' <<'{tag}'\n{json.dumps(data, ensure_ascii=False)}\n{tag}\n"
+            try:
+                out = self._ssh(cfg, script, timeout=90)
+            except DriverError as e:
+                raise DriverError('роутер не принимает вход по API (прошивка 5.2), а запасной путь через SSH Entware не сработал: ' + str(e))
+            if not out.strip():
+                raise DriverError('роутер не ответил через SSH (Entware)')
+            return json.loads(out)
+        return (lambda p: run(p)), (lambda cmds: run('/rci/', [{'parse': c} for c in cmds]))
 
     _VPN_KIND = {'Wireguard': 'wireguard', 'OpenVPN': 'openvpn', 'L2TP': 'l2tp', 'PPTP': 'pptp',
                  'SSTP': 'sstp', 'IPsecVpn': 'ipsec', 'IPsec': 'ipsec', 'IKE': 'ipsec'}

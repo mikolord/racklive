@@ -240,6 +240,7 @@ function edgePath(e, L) {
 }
 
 function MapNode({ n, p, sel, dim, mark, onDown, onClick, onDoubleClick }) {
+  const { data } = useApp(); const spec = (data.icons || {})[n.id];            // the icon chosen by hand («Иконка» in the node card), if any
   const small = n.kind === 'group' || n.client;
   const iconKind = n.kind === 'group' ? 'wifi' : n.kind;
   const c = kindColor(iconKind);
@@ -253,7 +254,8 @@ function MapNode({ n, p, sel, dim, mark, onDown, onClick, onDoubleClick }) {
     {n.room ? <g transform="translate(10,-9)"><rect width={Math.min(p.w - 20, 14 + n.room.length * 6.4)} height={15} rx={7.5} className="room-tag" />
       <text x={7} y={11} className="room-tag-t">{trunc(n.room, Math.floor((p.w - 34) / 6.4))}</text></g> : null}
     <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
-    <g transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2})`}><Icon name={iconKind} size={is * .6} color={c} /></g>
+    {isUpIcon(spec) ? <g transform={`translate(${9 + is * .12},${(p.h - is) / 2 + is * .12})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .76} color={c} /></g>
+      : <g transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .6} color={c} /></g>}
     <text className="lbl" x={is + 18} y={n.sub || n.kind === 'group' ? p.h / 2 - 3 : p.h / 2 + 4}>{trunc(n.label, capL)}</text>
     {n.kind === 'group' ? <text className="sub" x={is + 18} y={p.h / 2 + 12}>нажмите, чтобы раскрыть</text>
       : n.sub ? <text className="sub" x={is + 18} y={p.h / 2 + 13}>{trunc(n.sub, capS)}</text> : null}
@@ -277,7 +279,7 @@ function MapView() {
   useEffect(() => { lsSet('rl_health', healthOpen ? '1' : ''); }, [healthOpen]);
   const spofSet = healthOpen && data.health ? new Set(data.health.spof.filter(s => s.affected >= 3).map(s => s.id)) : null;
   const openCheck = useCheckOpener();
-  const wrap = useRef(null);
+  const wrap = useRef(null); useFillScreen(wrap);
   const [style, setStyle] = useState(() => { const v = new URLSearchParams(location.search).get('mapstyle') || lsGet('rl_map_style', 'columns'); return MAP_STYLES.some(x => x[0] === v) ? v : 'columns'; });
   const L = useMemo(() => {
     if (style !== 'columns') return layoutAlt(data, style, collapsed);
@@ -520,6 +522,7 @@ function RackBox({ L, data, devById, dimSet, markSet, onOpen, onSel }) {
 }
 
 function RackFrame({ rk, devById, dimSet, markSet, onOpen, nodes = {}, onSel }) {
+  const { data } = useApp(); const chosen = data.icons || {};
   const W = rk.w || M.RW, h = rk.h || rk.rows * M.RU;
   const stCol = st => st === 'online' ? 'var(--green)' : st === 'warning' ? 'var(--orange)' : st === 'unknown' ? 'var(--text3)' : 'var(--red)';
   // one cell: a whole unit, a shelf's slot or a box tile
@@ -533,7 +536,7 @@ function RackFrame({ rk, devById, dimSet, markSet, onOpen, nodes = {}, onSel }) 
       <rect x={x} y={y} width={w} height={hh} rx={compact ? 10 : 6} />
       {d && markSet && markSet.has('d:' + d.id) ? <rect className="spof-mark" x={x - 3} y={y - 3} width={w + 6} height={hh + 6} rx={compact ? 12 : 8} /> : null}
       <rect x={x} y={y} width={4} height={hh} rx={2} fill={u.color || '#0a84ff'} stroke="none" />
-      <g className="u-ic" transform={`translate(${x + 12},${y + hh / 2 - 9})`}><Icon name={kind} size={18} color="currentColor" /></g>
+      <g className="u-ic" transform={`translate(${x + 12},${y + hh / 2 - 9})`}><NodeGlyph svg spec={d ? chosen['d:' + d.id] : un ? chosen[un.id] : undefined} kind={kind} size={18} color="currentColor" /></g>
       <text x={x + 38} y={y + (hh > 30 ? hh / 2 - 2 : hh / 2 + 4)} fontSize="12.5" fontWeight="600">{trunc(name, Math.max(8, Math.floor((w - 50) / 7.2)))}</text>
       {hh > 30 && w > 120 ? <text x={x + 38} y={y + hh / 2 + 12} className="usub">{trunc(d ? deviceLine(d) : KIND_TEXT[u.type], Math.floor((w - 50) / 5.6))}</text> : null}
       {st ? <circle cx={x + w - 11} cy={y + 11} r={4} fill={stCol(st.status)} /> : null}
@@ -606,7 +609,8 @@ function WanSetup({ n, L, data }) {
 }
 
 function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
-  const [edit, setEdit] = useState(null);                       // mac → ClientEditor (a client of a router: name, fixed IP, speed, policy)
+  const { admin } = useApp(); const [pick, setPick] = useState(() => new URLSearchParams(location.search).get('iconpick') === '1');          // the icon picker («Иконка»)
+  const [edit, setEdit] = useState(null);                     // mac → ClientEditor (a client of a router: name, fixed IP, speed, policy)
   const pe = L.edges.find(e => e.target === n.id && !e.extra);
   const parent = pe && L.nodes[pe.source];
   const dev = n.deviceId && devById[n.deviceId];
@@ -614,7 +618,7 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
   const conn = pe ? (pe.kind === 'wifi' ? `Wi-Fi · ${parent ? parent.label : ''}${pe.band ? ' · ' + pe.band : ''}${pe.rssi ? ' · ' + pe.rssi + ' дБм' : ''}`
     : pe.kind === 'mesh' ? 'Mesh (беспроводной)' : pe.kind === 'remote' ? 'Через интернет' : `${parent ? parent.label : ''}${pe.sourcePort ? ', порт ' + pe.sourcePort : ''}${pe.speed ? ' · ' + fmt.speed(pe.speed) : ''}`) : '';
   return <div className="card pad fade-in node-info">
-    <div className="row"><KindIcon kind={n.kind} size={40} /><div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700 }} className="ellipsis">{n.label}</div>
+    <div className="row"><KindIcon kind={n.kind} icon={(data.icons || {})[n.id]} size={40} /><div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700 }} className="ellipsis">{n.label}</div>
       <div className="dim" style={{ fontSize: 12.5 }}>{KIND_TEXT[n.kind] || ''}{n.model ? ' · ' + n.model : ''}</div></div><Btn size="sm" icon="x" onClick={onClose} /></div>
     <div style={{ marginTop: 10 }}><KV rows={[['IP', n.sub ? <span className="mono">{n.sub}</span> : null], ...(n.mac ? [['MAC', <span className="mono">{n.mac}</span>]] : []),
       ...(client && client.segment ? [['Сеть', client.segment]] : []), ['Подключение', conn], ...(pe && pe.poeW ? [['PoE', pe.poeW + ' Вт']] : []),
@@ -624,6 +628,8 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
     {!dev && pe && pe.sourcePort && parent && parent.deviceId ? <Btn style={{ width: '100%', marginTop: 12 }} onClick={() => onOpen(devById[parent.deviceId], 'ports', pe.sourcePort)}>Порт {pe.sourcePort} на {parent.label}</Btn> : null}
     {!dev && n.mac && findClient(data, n.mac) ? <Btn style={{ width: '100%', marginTop: 8 }} onClick={() => setEdit(n.mac)}>Настройки на роутере</Btn> : null}
     {!dev && /^\d+\.\d+\.\d+\.\d+$/.test(n.sub || '') ? <ClientActions c={{ ip: n.sub, mac: n.mac, kind: n.kind, name: n.label }} onClose={onClose} /> : null}
+    {admin && n.kind !== 'group' && !String(n.id).startsWith('x:') ? <Btn size="sm" icon="edit" style={{ width: '100%', marginTop: 8 }} onClick={() => setPick(true)}>Иконка</Btn> : null}
+    {pick ? <IconPicker nodeKey={n.id} kind={n.kind} title={n.label} onClose={() => setPick(false)} /> : null}
     {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
   </div>;
 }

@@ -4,6 +4,9 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import models as models_mod
+from . import icons as icons_mod
+from . import usage as usage_mod
+from . import frankfiles, frank_agent
 from . import portal as portal_mod
 from . import remote as remote_mod
 from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
@@ -12,7 +15,7 @@ from . import store as store_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.20.0'
+VERSION = '2.21.0'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -105,6 +108,7 @@ class App:
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.started = time.time()
+        self.usage = usage_mod.Usage(DATA, [os.path.join(ROOT, 'rackd'), os.path.join(ROOT, 'web')])       # what Rack Live itself costs (rackd/usage.py)
         self.ensure_local_device()
 
     def ensure_local_device(self):
@@ -350,6 +354,7 @@ class App:
         while True:
             if time.time() - last_alert >= 10:
                 last_alert = time.time()
+                self.usage.sample()
                 try:
                     self.alerter.evaluate(list(self.store.cfg['devices']), self.states)
                 except Exception:
@@ -790,6 +795,7 @@ class App:
                 'settings': cfg['settings'] if authed else {k: cfg['settings'].get(k) for k in GUEST_SETTINGS}, 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'cards': (cfg.get('cards') or []) if authed else [], 'models': self.models.public() if authed else [],            # hand-made device cards (the «Карточки» app) for things that are not in the rack
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
+                'icons': cfg.get('icons') or {}, 'iconLib': cfg.get('iconLib') or [],            # the icon chosen for a map node, and the library of uploaded ones (rackd/icons.py)
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
                 'events': self.store.events[-60:][::-1] if authed else [], 'now': time.time()}       # the journal holds admin addresses, logins and host names: not for guests
 
@@ -1377,6 +1383,17 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/speedtest/who':
                     ip = self.client_ip()
                     return self.send(speedtest.who(APP.store.cfg['devices'], APP.states, ip))
+            m = re.match(r'^/api/icons/file/([0-9a-f]{8})$', path)
+            if m:                                           # an uploaded icon; shown only through <img> / <image>, and sandboxed anyway
+                if not self.can_view():
+                    return self.err('нужен вход', 401)
+                f, ext = icons_mod.path_of(APP.store.cfg, DATA, m.group(1))
+                if not f:
+                    return self.err('нет иконки', 404)
+                with open(f, 'rb') as fh:
+                    b = fh.read()
+                return self.send_raw(b, {'png': 'image/png', 'webp': 'image/webp', 'svg': 'image/svg+xml'}[ext],
+                                     {'Cache-Control': 'private, max-age=604800', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:", 'X-Content-Type-Options': 'nosniff'})
             m = re.match(r'^/api/cards/photo/([A-Za-z0-9_-]{3,40})$', path)
             if m:
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
@@ -1478,6 +1495,15 @@ class Handler(BaseHTTPRequestHandler):
                 ag = [{'id': d['id'], 'name': d.get('name'), 'status': (APP.states.get(d['id']) or {}).get('status'), 'updated': (APP.states.get(d['id']) or {}).get('updated'),
                        'ip': ((APP.states.get(d['id']) or {}).get('summary') or {}).get('ip')} for d in APP.store.cfg['devices'] if d.get('driver') == 'agent']
                 return self.send({'sites': APP.sites.public(), 'agents': ag, 'collector': APP.collector.public(), 'demo': DEMO})
+            if path == '/api/usage':                        # Settings → «О программе» → «Потребление»: processor, memory, disk of Rack Live itself (admin only)
+                if not self.need_admin():
+                    return
+                try:
+                    m = APP.ai.month()
+                    frank = {'today': APP.ai.today(), 'month': m}
+                except Exception:
+                    frank = None
+                return self.send(APP.usage.public(frank))
             if path == '/api/update':                       # Settings → «О программе»: current / newest version, how it can be updated (admin only)
                 if not self.need_admin():
                     return
@@ -1553,6 +1579,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(b)))
                 self.end_headers()
                 return self.wfile.write(b)
+            m = re.match(r'^/api/ai/files/([0-9a-f]{16})$', path)
+            if m:                                           # a file or photo attached to a question to Frank (admin only)
+                if not self.need_admin():
+                    return
+                fm = frankfiles.meta(DATA, m.group(1))
+                if not fm:
+                    return self.err('нет файла', 404)
+                with open(frankfiles.path(DATA, fm), 'rb') as fh:
+                    b = fh.read()
+                hdr = {'Cache-Control': 'private, max-age=604800', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'"}
+                if fm['kind'] != 'image':                   # never shown as a page: a download
+                    hdr['Content-Disposition'] = "attachment; filename*=UTF-8''" + urllib.parse.quote(fm['name'])
+                return self.send_raw(b, fm['mime'] if fm['kind'] == 'image' else 'text/plain; charset=utf-8' if fm['kind'] == 'text' else 'application/octet-stream', hdr)
+            if path == '/api/ai/memory':                    # FRANK.md — Frank's memory (admin only)
+                if not self.need_admin():
+                    return
+                return self.send({'text': frankfiles.memory_get(DATA), 'max': frankfiles.MEMORY_MAX})
             if path.startswith('/api/'):
                 return self.err('не найдено', 404)
             return self.static(path)
@@ -1577,8 +1620,37 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.can_view():
                     return self.err('нужен вход', 401)
                 return self.speed_up()
+            if path == '/api/ai/files' and method == 'POST':          # a file or photo for Frank: raw bytes, the name in X-File-Name (URL-encoded)
+                if not self.need_admin():
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if not 0 < n <= frankfiles.MAX_OTHER:
+                    return self.send({'ok': False, 'error': f'файл пустой или больше {frankfiles.MAX_OTHER // 1_000_000} МБ'})
+                fm, err = frankfiles.save(DATA, urllib.parse.unquote(self.headers.get('X-File-Name') or ''), self.rfile.read(n))
+                return self.send({'ok': True, 'file': {k: fm[k] for k in ('id', 'name', 'kind', 'mime', 'size')}} if fm else {'ok': False, 'error': err})
+            if path == '/api/icons' and method == 'POST':             # the library: one SVG / PNG / WebP up to 100 KB, raw bytes, the name in X-Icon-Name (URL-encoded)
+                if not self.need_admin():
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if not 0 < n <= icons_mod.MAX_BYTES:
+                    return self.send({'ok': False, 'error': 'файл пустой или больше 100 КБ'})
+                data = self.rfile.read(n)
+                with st.lock:
+                    entry, err = icons_mod.add(st.cfg, DATA, urllib.parse.unquote(self.headers.get('X-Icon-Name') or ''), data)
+                    if entry:
+                        st.save()
+                return self.send({'ok': True, 'icon': entry, 'iconLib': st.cfg.get('iconLib') or []} if entry else {'ok': False, 'error': err})
+            m = re.match(r'^/api/icons/([0-9a-f]{8})$', path)
+            if m and method == 'DELETE':
+                if not self.need_admin():
+                    return
+                with st.lock:
+                    if not icons_mod.remove(st.cfg, DATA, m.group(1)):
+                        return self.err('нет такой иконки', 404)
+                    st.save()
+                return self.send({'ok': True, 'iconLib': st.cfg.get('iconLib') or [], 'icons': st.cfg.get('icons') or {}})
             m = re.match(r'^/api/cards/photo/([A-Za-z0-9_-]{3,40})$', path)
-            if m and method in ('POST', 'DELETE'):                  # «Сканер»: a picture of the device (PNG / JPEG / WebP), the ports are marked on it by hand
+            if m and method in ('POST', 'DELETE'):                # «Сканер»: a picture of the device (PNG / JPEG / WebP), the ports are marked on it by hand
                 if not self.need_admin():
                     return
                 return self.send(card_photo(st, m.group(1), self.rfile.read(int(self.headers.get('Content-Length') or 0)) if method == 'POST' and 0 < int(self.headers.get('Content-Length') or 0) <= 8_000_000 else None, method))
@@ -2165,6 +2237,13 @@ class Handler(BaseHTTPRequestHandler):
                 st.save()
                 prune_photos(clean)
                 return self.send({'ok': True, 'cards': clean})
+            if path == '/api/icons/set' and method == 'PUT':          # the icon of one map node: 'std:<name>' | 'up:<id>' | '' (back to the icon of its kind)
+                with st.lock:
+                    err = icons_mod.choose(st.cfg, body.get('key'), body.get('icon'))
+                    if err:
+                        return self.err(err)
+                    st.save()
+                return self.send({'ok': True, 'icons': st.cfg.get('icons') or {}})
             if path == '/api/plan' and method == 'PUT':
                 b = body.get('buildings')
                 if not isinstance(b, list):
@@ -2421,6 +2500,10 @@ class Handler(BaseHTTPRequestHandler):
                 # empty key = keep the saved one, but only for the same provider (a DeepSeek key must not go to another service)
                 new['key'] = str(body.get('key') or '').strip() or (cur['key'] if new['preset'] == cur['preset'] else '')
                 new['limit'] = max(0, int(new.get('limit') or 0))
+                new['window'] = max(0, min(10_000_000, int(new.get('window') or 0)))
+                new['agent'] = bool(new.get('agent'))
+                if new.get('agentMode') not in frank_agent.MODES:
+                    new['agentMode'] = 'ask'
                 if path == '/api/ai/test':
                     try:
                         return self.send({'ok': True, 'answer': assistant.ping(new)[:200]})
@@ -2431,7 +2514,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'ok': True})
             if path == '/api/ai/ask' and method == 'POST':
                 try:
-                    job = APP.ai.start(body.get('chat') or None, body.get('text'))
+                    job = APP.ai.start(body.get('chat') or None, body.get('text'), files=body.get('files') if isinstance(body.get('files'), list) else None)
                 except assistant.AiError as e:
                     return self.err(str(e))
                 return self.send({'ok': True, 'job': job['id'], 'chat': job['chat']})
@@ -2441,6 +2524,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'ok': True})
             if m and method == 'PUT':
                 return self.send({'ok': bool(APP.ai.rename_chat(m.group(1), body.get('title')))})
+            if path == '/api/ai/memory' and method == 'PUT':     # FRANK.md edited by hand in Settings / the Frank app
+                try:
+                    return self.send({'ok': True, 'text': frankfiles.memory_set(DATA, body.get('text'))})
+                except ValueError as e:
+                    return self.err(str(e))
             if path == '/api/ai/models' and method == 'POST':
                 try:
                     return self.send(dict(APP.ai.models(), ok=True))

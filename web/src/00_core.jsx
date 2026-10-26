@@ -160,8 +160,48 @@ function AppIcon({ app = 'rack', size = 30, radius, style }) {
     <img src={APP_ICONS_N[app]} width={size} height={size} alt="" draggable="false" className="app-ic-n" style={st} />
     <img src={APP_ICONS_T[app]} width={size} height={size} alt="" draggable="false" className="app-ic-t" style={st} /></>;
 }
+/* the icon pack for devices (Карта сети → узел → «Иконка»): home appliances, sensors, media, gear. Same 24x24 outline style as above */
+const PACK_PATHS = {
+  fridge: 'M6 2h12v20H6zM6 10h12M9 5v2M9 13v3',
+  washer: 'M4 2h16v20H4zM4 7h16M8 4.5h.01M12 4.5h.01M12 10a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9',
+  ac: 'M3 5h18v7H3zM7 8.5h10M6 15l-1 3M12 15v4M18 15l1 3',
+  lamp: 'M8 3h8l3 9H5zM12 12v7M8 21h8',
+  sensor: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2',
+  thermostat: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v5l3 2',
+  vacuum: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16M7 10h10M9 15h.01M15 15h.01',
+  watch: 'M8 6V3h8v3M8 18v3h8v-3M7 6h10v12H7zM12 9v3l2 1',
+  car: 'M4 12l2-5h12l2 5M3 12h18v6H3zM7 18v2M17 18v2M7 15h.01M17 15h.01',
+  solar: 'M3 6h18v10H3zM3 11h18M9 6v10M15 6v10M8 20h8M12 16v4',
+  battery: 'M3 7h16v10H3zM21 10v4M6 10v4M10 10v4',
+  projector: 'M3 8h18v8H3zM15 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4M6 11h3M6 14h3M7 16v2M17 16v2',
+  console: 'M7 8h10a5 5 0 0 1 5 5v1a3 3 0 0 1-5.4 1.8L15.5 14h-7l-1.1 1.8A3 3 0 0 1 2 14v-1a5 5 0 0 1 5-5M7 11v3M5.5 12.5h3M16 12h.01M18 13.5h.01',
+  media: 'M3 8h18v12H3zM8 8l8-5M7 12a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M14 12h4M14 16h4',
+  firewall: 'M3 5h18v14H3zM3 10h18M3 15h18M9 5v5M15 10v5M9 15v4',
+  hub: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M19 5l-3 3M5 19l3-3M19 19l-3-3',
+  board: 'M3 5h18v14H3zM7 9h4v4H7zM14 8h4M14 12h4M14 16h4M7 16h.01',
+  drone: 'M12 10v4M6 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4M18 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4M6 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4M18 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4M7.5 7.5l3 3M16.5 7.5l-3 3M7.5 16.5l3-3M16.5 16.5l-3-3',
+  printer3d: 'M4 3h16v18H4zM4 7h16M9 11h6l-1 5h-4zM7 21v-2M17 21v-2',
+  doorbell: 'M8 2h8v20H8zM12 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4M12 16h.01',
+  socket: 'M5 5h14v14H5zM9 10v2M15 10v2M10 15h4',
+  fan: 'M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2M12 11c-1-4 0-8 3-8s2 5-3 8M13 12c4-1 8 0 8 3s-5 2-8-3M12 13c1 4 0 8-3 8s-2-5 3-8M11 12c-4 1-8 0-8-3s5-2 8 3',
+  garage: 'M3 21V9l9-6 9 6v12M7 21v-8h10v8M7 15h10M7 18h10',
+  boiler: 'M7 3h10v18H7zM12 9a2 2 0 0 1 2 2c0 1.5-2 3-2 3s-2-1.5-2-3a2 2 0 0 1 2-2',
+  soundbar: 'M2 9h20v6H2zM6 12h.01M10 12h4M18 12h.01',
+  disk: 'M3 6h18v12H3zM7 12h6M17 12h.01',
+  clip: 'M20.5 11.5l-8.4 8.4a5.4 5.4 0 0 1-7.6-7.6l8.4-8.4a3.6 3.6 0 0 1 5.1 5.1l-8.4 8.4a1.8 1.8 0 0 1-2.5-2.5l7.7-7.7',
+  file: 'M14 3H6v18h12V7zM14 3v4h4M9 12h6M9 16h6',
+  brain: 'M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 3 3 3 3 0 0 0 3-2V6a3 3 0 0 0-3-2M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-3 3 3 3 0 0 1-3-2',
+};
+/* what the picker offers: the icons of the kinds, then the pack (name, caption) */
+const ICON_PACK = [['router', 'Роутер'], ['switch', 'Коммутатор'], ['server', 'Сервер'], ['nas', 'NAS'], ['ap', 'Точка доступа'], ['camera', 'Камера'], ['nvr', 'Регистратор'],
+  ['phone', 'Телефон'], ['tablet', 'Планшет'], ['tv', 'Телевизор'], ['laptop', 'Ноутбук'], ['pc', 'Компьютер'], ['printer', 'Принтер'], ['speaker', 'Колонка'], ['iot', 'Умное устройство'],
+  ['internet', 'Интернет'], ['web', 'Сайт'], ['ups', 'ИБП'], ['modem', 'Модем'], ['pdu', 'Розетки'], ['other', 'Другое'],
+  ['fridge', 'Холодильник'], ['washer', 'Стиралка'], ['ac', 'Кондиционер'], ['lamp', 'Лампа'], ['sensor', 'Датчик'], ['thermostat', 'Термостат'], ['vacuum', 'Пылесос'], ['watch', 'Часы'],
+  ['car', 'Авто'], ['solar', 'Солнечная панель'], ['battery', 'Аккумулятор'], ['projector', 'Проектор'], ['console', 'Консоль'], ['media', 'Медиаплеер'], ['firewall', 'Фаервол'], ['hub', 'Хаб'],
+  ['board', 'Плата'], ['drone', 'Дрон'], ['printer3d', '3D-принтер'], ['doorbell', 'Звонок'], ['socket', 'Умная розетка'], ['fan', 'Вентилятор'], ['garage', 'Гараж'], ['boiler', 'Водонагреватель'],
+  ['soundbar', 'Саундбар'], ['disk', 'Диск'], ['bulb', 'Лампочка'], ['bell', 'Уведомление'], ['lock', 'Замок'], ['wifi', 'Wi-Fi'], ['shield', 'Защита'], ['bolt', 'Питание'], ['home', 'Дом']];
 function Icon({ name, size = 18, color = 'currentColor', stroke = 1.8, style }) {
-  const d = THEME.icons[name] || ICON_PATHS[name] || ICON_PATHS.other;
+  const d = THEME.icons[name] || ICON_PATHS[name] || PACK_PATHS[name] || ICON_PATHS.other;
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={style}>
     {d.split('M').filter(Boolean).map((p, i) => <path key={i} d={'M' + p} />)}
   </svg>;
@@ -180,10 +220,10 @@ function kindColor(kind) {
   if (document.documentElement.getAttribute('data-skin') === 'net' && KIND_COLOR_NET[k]) return KIND_COLOR_NET[k];
   return KIND_COLOR[k] || KIND_COLOR.other;
 }
-function KindIcon({ kind, size = 36, round = 10 }) {
+function KindIcon({ kind, size = 36, round = 10, icon }) {
   const c = kindColor(kind);
   return <div className="kind-ic" style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
-    background: `color-mix(in srgb, ${c} 16%, transparent)` }}><Icon name={kind} size={size * .54} color={c} /></div>;
+    background: `color-mix(in srgb, ${c} 16%, transparent)` }}><NodeGlyph spec={icon} kind={kind} size={size * (isUpIcon(icon) ? .72 : .54)} color={c} /></div>;
 }
 
 const ToastCtx = createContext(() => {});

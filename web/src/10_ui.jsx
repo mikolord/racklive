@@ -13,6 +13,27 @@ function Btn({ children, kind = '', size = '', icon, busy, onClick, disabled, ti
 
 /* while a modal / sheet is open the page behind must not scroll (on the phone a swipe used to fall through to it) */
 let openOverlays = 0;
+/* phone, only in the «Витрина» look (id test — it has no bottom dock): the map / plan field runs from where it starts down to the bottom of the screen.
+   A fixed «100dvh − N» guessed the height of everything above it (title, hint, tabs) and left the field short on some phones.
+   The other looks have a floating dock at the bottom, the field would slide under it — they keep the fixed height from the css */
+function useFillScreen(ref) {
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const mq = window.matchMedia('(max-width: 760px)');
+    const fit = () => {
+      if (!mq.matches || document.documentElement.getAttribute('data-look') !== 'test') { if (el.style.height) el.style.height = ''; return; }
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      const h = Math.max(380, Math.round(window.innerHeight - top - 24)) + 'px';
+      if (el.style.height !== h) el.style.height = h;
+    };
+    fit();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(document.body);
+    window.addEventListener('resize', fit); window.addEventListener('orientationchange', fit);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', fit); window.removeEventListener('orientationchange', fit); };
+  }, []);
+}
+
 function useLockPage() {
   useEffect(() => {
     openOverlays++; document.documentElement.classList.add('modal-open');

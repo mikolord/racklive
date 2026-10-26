@@ -269,7 +269,34 @@ class TgBot:
                 p.pop('parse_mode'); p['text'] = part
                 self.call('sendMessage', p)
 
-    def frank(self, chat, user, text):
+    def frank_file(self, chat, user, msg):
+        """a photo or a file sent to the bot → saved for Frank (rackd/frankfiles.py) and asked with its caption"""
+        from . import frankfiles
+        if msg.get('photo'):
+            f = msg['photo'][-1]                                # the biggest size
+            name = 'фото.jpg'
+        else:
+            f = msg.get('document') or {}
+            name = f.get('file_name') or 'файл'
+        if (f.get('file_size') or 0) > 20_000_000:
+            self.say(chat, '⚠️ Файл больше 20 МБ — Telegram не отдаёт ботам такие. Пришлите поменьше или загрузите в приложении Frank.')
+            return
+        try:
+            fp = (self.call('getFile', {'file_id': f.get('file_id')}).get('result') or {}).get('file_path')
+            t = self.tg()
+            api = (t.get('api') or 'https://api.telegram.org').rstrip('/')
+            with urllib.request.urlopen(f"{api}/file/bot{t['token']}/{fp}", timeout=60) as r:
+                data = r.read(frankfiles.MAX_OTHER + 1)
+        except Exception as e:
+            self.say(chat, f'⚠️ Не получилось скачать файл из Telegram: {e}')
+            return
+        meta, err = frankfiles.save(self.store.dir, name, data)
+        if not meta:
+            self.say(chat, '⚠️ ' + err)
+            return
+        self.frank(chat, user, (msg.get('caption') or '').strip(), [meta['id']])
+
+    def frank(self, chat, user, text, files=None):
         ai, uid = self.app.ai, str(user['id'])
         cur = self.fchats.get(uid) or {}
         cid = cur.get('chat') if time.time() - cur.get('t', 0) < FRANK_IDLE and ai.chat(cur.get('chat')) else None
@@ -278,7 +305,7 @@ class TgBot:
         except ValueError:
             pass
         try:
-            job = ai.start(cid, text, src='telegram')
+            job = ai.start(cid, text, src='telegram', files=files)
         except assistant.AiError as e:
             self.say(chat, '⚠️ ' + str(e))
             return
@@ -319,7 +346,7 @@ class TgBot:
             self.say(chat, '⚙️ Frank выполнил:\n' + '\n'.join(
                 f"{'✅' if o.get('ok') else '❌'} {o.get('device')}: {(o.get('command') or o.get('label') or '').splitlines()[0][:80]}" for o in changed[:15]))
         for p in [p for p in last.get('proposals') or [] if p['status'] == 'pending']:
-            body = f"🛠 Предлагаю: {p['label']}\n{p['deviceName']}" + (f"\n\n{p['text']}" if p.get('text') else '') + \
+            body = f"🛠 Предлагаю: {p['label']}\n{p['deviceName']}" + (f"\n\n{p['text']}" if p.get('text') else '') + (f"\n\n{p['pre'][:1500]}" if p.get('pre') else '') + \
                    (f"\n\nЗачем: {p['reason']}" if p.get('reason') else '')
             self.say(chat, body, [[{'text': '▶️ Выполнить', 'callback_data': f"fa:{job['chat']}:{p['id']}"},
                                    {'text': 'Не надо', 'callback_data': f"fn:{job['chat']}:{p['id']}"}]])
@@ -383,8 +410,12 @@ class TgBot:
         msg = u.get('message') or {}
         text, user, chat = (msg.get('text') or '').strip(), msg.get('from') or {}, (msg.get('chat') or {}).get('id')
         private = (msg.get('chat') or {}).get('type') == 'private'
-        if chat and private and (text == '/new' or (text and not text.startswith('/'))) and self.frank_ok(user):
-            if text == '/new':
+        if chat and private and (msg.get('photo') or msg.get('document')) and self.frank_ok(user):      # a photo / file for Frank (the caption is the question)
+            threading.Thread(target=self.frank_file, args=(chat, user, msg), daemon=True).start()
+            return
+        frank_cmd = re.match(r'^/(compact|context|memory)(?:@\w+)?(?:\s|$)', text or '', re.I)        # squeeze the chat / show how full it is: handled by Frank (assistant.COMMANDS)
+        if chat and private and (text in ('/new', '/clear') or frank_cmd or (text and not text.startswith('/'))) and self.frank_ok(user):
+            if text in ('/new', '/clear'):
                 self.fchats.pop(str(user['id']), None)
                 self.store._dump('tg_frank.json', self.fchats)
                 self.say(chat, '👁 Новый разговор. Спрашивайте — например: «Всё ли в порядке с сетью?»')
@@ -432,7 +463,7 @@ class TgBot:
         if str(user.get('id')) in alerts.tg_allowed(self.tg()):
             self.say(chat, f'👋 Это бот Rack Live «{title}». Ваш аккаунт привязан: сюда приходят уведомления.\n\n' +
                      ('👁 Напишите вопрос о сети — ответит Frank. Например: «Всё ли в порядке?» или «Почему тормозит Wi-Fi на кухне?»\n'
-                      '/new — начать новый разговор.' if self.frank_ok(user) else (self.frank_why(user) or '')))
+                      '/new или /clear — начать новый разговор.\n/compact — сжать длинный разговор.\n/context — сколько места в памяти модели занято.' if self.frank_ok(user) else (self.frank_why(user) or '')))
             return
         self.say(chat, f'👋 Это бот Rack Live «{title}».\nВаш Telegram ID: {user.get("id")}\n\n'
                        'Чтобы получать уведомления и входить без пароля: войдите в Rack Live → Настройки → Уведомления → «Привязать Telegram».')

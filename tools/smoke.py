@@ -714,8 +714,9 @@ def main():
                 check('окно «Сканировать сеть»: сети, кнопка, результаты', 'Сканировать сеть' in out and 'Сканировать' in out and 'стучится' in out)
                 check('сканирование: что можно добавить — сверху, остальное свёрнуто', 'Можно добавить в Rack Live' in out and 'остальные устройства в сети' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
             if name == 'Настройки — оформление':
-                check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Контроллер' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
-                check('оформление: «Test» — основное, со своим превью', 'class="tp"' in out and 'tp-rack' in out and 'tp-scale' in out and 'основное' in out)
+                check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Лазурь' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
+                check('оформление: «Витрина» — основное, у каждого из четырёх своя обложка, слова Test в названиях нет',
+                      'Витрина' in out and 'Стекло' in out and out.count('class="look-cover"') == 4 and 'основное' in out and '>Test<' not in out)
             if name == 'Главная — стиль «Графит»':
                 check('стиль «Графит» включается атрибутами на <html>', 'data-skin="graphite"' in out and 'data-accent="green"' in out)
             if name == 'Главная — стиль «Контроллер»':
@@ -817,7 +818,7 @@ def main():
                 if cab:
                     cp = next(p for p in cab['state']['ports'] if p.get('cable'))
                     co = dom(f"/cards?card={cab['id']}&port={cp['n']}")
-                    check('карточки: длина кабелей по прошлой проверке', 'Длина кабелей' in co and (not cp['cable'].get('length') or f"≈ {cp['cable']['length']} м" in co))
+                    check('карточки: длина кабеля — в плашке выбранного порта, общего списка нет', 'Длина кабелей' not in co and (not cp['cable'].get('length') or f"≈ {cp['cable']['length']} м" in co))
                 co = dom('/cards?card=ucross')
                 check('карточки: патч-панель / кросс — порты', 'vt-head' in co and 'class="pm' in co and 'data-js-error="' not in co)
                 nas = next(d for d in devs if not d['state'].get('ports') and not d['state'].get('ups') and d['state'].get('summary'))
