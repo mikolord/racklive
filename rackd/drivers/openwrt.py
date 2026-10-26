@@ -377,13 +377,19 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
         major = int((re.findall(r'\d+', hw['rel'] or '') or ['0'])[0])
         free_mb = (hw['free'] or 0) // 1024
         prof = hw['profile']
-        card = {'installed': bool(prof), 'hw': {k: hw[k] for k in ('model', 'lan', 'wan', 'links', 'radios', 'mgmt', 'via', 'wanip', 'lanip', 'clients', 'nds', 'ndsEnabled', 'ndsRunning', 'rollback', 'nopass')},
+        card = {'installed': bool(prof), 'hw': {k: hw[k] for k in ('model', 'lan', 'wan', 'links', 'radios', 'mgmt', 'via', 'wanip', 'lanip', 'clients', 'nds', 'ndsEnabled', 'ndsRunning', 'rollback', 'nopass', 'foreign')},
                 'routerProfile': portal.public(prof), 'portText': portal.PORT_TEXT, 'defaults': portal.public(portal.DEFAULTS)}
         card['checks'] = [{'label': f"OpenWrt 23.05 или новее (у вас {hw['rel'] or '?'})", 'ok': major >= 23},
                           {'label': f"Есть Wi-Fi (радио: {', '.join(r['band'].replace('g', ' ГГц').replace('2 ', '2,4 ') for r in hw['radios']) or 'нет'})", 'ok': bool(hw['radios'])},
                           {'label': 'OpenNDS ' + (f"установлен ({hw['nds']})" if hw['nds'] else f"поставится сам (нужно ~2 МБ, свободно {free_mb} МБ)"), 'ok': bool(hw['nds']) or free_mb >= 2},
                           {'label': 'Кабель провайдера в WAN-порту' + (f" ({hw['wanip']})" if hw['wanip'] else ''), 'ok': bool((hw['links'].get(hw['wan']) or {}).get('up')), 'optional': True,
                            'hint': 'без него гости не получат интернет' if not (hw['links'].get(hw['wan']) or {}).get('up') else ''}]
+        fg = None if prof else hw.get('foreign')
+        if fg:                                  # портал уже стоит, но не нашим плагином: показываем его и не даём плагину его перенастроить
+            card['foreign'] = fg
+            card['status'] = f"найден портал «{fg['name']}», настроенный вручную · " + ('работает' if hw['ndsRunning'] else 'выключен') \
+                             + (f" · гостей: {hw['clients']}" if hw['clients'] is not None and hw['ndsRunning'] else '')
+            card['checks'].append({'label': 'На роутере уже работает портал, настроенный вручную — плагин его не заменяет и сеть не трогает', 'ok': False})
         if prof:
             card['status'] = ('портал работает' if hw['ndsRunning'] else 'портал выключен') + (f" · гостей: {hw['clients']}" if hw['clients'] is not None and hw['ndsRunning'] else '')
         return card
@@ -398,6 +404,9 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
         if op == 'install':
             prog('Проверяю роутер…')
             hw = status(cfg)
+            if hw['foreign'] and not hw['profile']:
+                raise DriverError(f"на роутере уже работает портал «{hw['foreign']['name']}», настроенный вручную. Установка плагина перенастроила бы сеть, Wi-Fi, DHCP и "
+                                  'межсетевой экран и заменила бы его, поэтому она отключена — ничего не изменено.')
             prof = portal.validate(portal.merge_secrets(params.get('profile'), params.get('_old') or hw['profile']), hw)      # «не менять» = keep what Rack Live or the router itself has
             root_pass = str(params.get('rootPass') or '')
             if hw['nopass'] and not root_pass:

@@ -293,7 +293,7 @@ class DemoOpenWrt(DemoBase):
                           'lan3': {'up': True, 'speed': 1000}, 'lan4': {'up': False, 'speed': None}},
                 'radios': [{'name': 'radio0', 'band': '2g'}, {'name': 'radio1', 'band': '5g'}], 'nds': '10.3.1' if prof else None,
                 'ndsEnabled': bool(prof and prof['portal']), 'ndsRunning': bool(prof and prof['portal']), 'profile': prof, 'clients': 3 if prof else None,
-                'wanip': '192.168.1.70/24', 'lanip': prof['lan'] if prof else '10.0.40.1/24', 'via': 'br-lan', 'mgmt': 'lan2', 'rollback': False, 'nopass': not prof, 'wanmac': ''}
+                'wanip': '192.168.1.70/24', 'lanip': prof['lan'] if prof else '10.0.40.1/24', 'via': 'br-lan', 'mgmt': 'lan2', 'rollback': False, 'nopass': not prof, 'wanmac': '', 'foreign': None}
 
     def plugin(self, cfg, pid, op, params):
         time.sleep(.8)

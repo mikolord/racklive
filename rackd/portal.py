@@ -202,6 +202,7 @@ for p in $(jsonfilter -i /etc/board.json -e '@.network.lan.ports[*]' 2>/dev/null
 for r in $(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)=wifi-device$/\1/p"); do echo "@@radio $r $(uci -q get wireless.$r.band)"; done
 V=$( (apk list --installed 2>/dev/null | grep -o '^opennds-[0-9][^ ]*' | sed 's/^opennds-//') || true); [ -z "$V" ] && V=$(opkg list-installed 2>/dev/null | awk '$1=="opennds"{print $3}'); echo "@@nds ${V:--} $(uci -q get opennds.@opennds[0].enabled || echo 0) $(pidof opennds >/dev/null && echo 1 || echo 0)"
 [ -f /etc/rl-portal/profile.json ] && echo "@@profile $(cat /etc/rl-portal/profile.json)"
+[ ! -f /etc/rl-portal/profile.json ] && [ "$(uci -q get opennds.@opennds[0].enabled)" = 1 ] && echo "@@foreign $(uci -q get opennds.@opennds[0].gatewayname | tr -d '|')|$(basename "$(uci -q get opennds.@opennds[0].themespec_path)" 2>/dev/null)|$(uci -q get opennds.@opennds[0].sessiontimeout)"
 command -v ndsctl >/dev/null 2>&1 && echo "@@clients $(ndsctl json 2>/dev/null | grep -c '"mac"')"
 echo "@@wanip $(ip -4 -o addr show dev $(uci -q get network.wan.device || echo $W) 2>/dev/null | awk '{print $4}' | head -1)"
 echo "@@lanip $(uci -q get network.lan.ipaddr)"
@@ -221,7 +222,7 @@ echo "@@end"
 
 def parse_status(out):
     hw = {'model': '', 'rel': '', 'pm': 'opkg', 'free': 0, 'lan': [], 'wan': '', 'links': {}, 'radios': [], 'nds': None, 'ndsEnabled': False,
-          'ndsRunning': False, 'profile': None, 'clients': None, 'wanip': '', 'lanip': '', 'via': '', 'mgmt': '', 'rollback': False, 'wanmac': '', 'nopass': False}
+          'ndsRunning': False, 'profile': None, 'foreign': None, 'clients': None, 'wanip': '', 'lanip': '', 'via': '', 'mgmt': '', 'rollback': False, 'wanmac': '', 'nopass': False}
     for line in out.splitlines():
         if not line.startswith('@@'):
             continue
@@ -251,6 +252,9 @@ def parse_status(out):
                 hw['profile'] = json.loads(v)
             except ValueError:
                 pass
+        elif k == 'foreign':                    # OpenNDS включён, а нашего профиля нет: портал настроен вручную (имя | файл темы | минут сессии)
+            name, theme, mins = (v.split('|') + ['', '', ''])[:3]
+            hw['foreign'] = {'name': name.strip() or 'без имени', 'theme': theme.strip(), 'hours': round(int(mins) / 60, 1) if mins.strip().isdigit() else None}
         elif k == 'clients':
             hw['clients'] = int(v) if v.isdigit() else None
         elif k == 'rollback':
