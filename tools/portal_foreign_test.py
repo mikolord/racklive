@@ -113,14 +113,15 @@ except ValueError:
 # login on a slow router (MikroTik, 26.10.2026): the page goes first, the sign-in a moment later; repeats are not signed in again;
 # a fast binauth instead of the stock binauth_log.sh; never «continue» to the portal itself or to a phone's internet check
 T = portal.theme_script()
-check('тема: сначала страница, вход в фоне', '( sleep 1; auth_log;' in T and T.index('( sleep 1; auth_log;') < T.index('rl_page done.html\n}'))
+check('тема: сначала страница, вход в фоне', '( sleep 0.3 2>/dev/null || sleep 1; auth_log;' in T and T.index('( sleep 0.3 2>/dev/null || sleep 1; auth_log;') < T.index('rl_page done.html\n}'))
+check('тема: переход на https-сайт, как только открылся интернет (проба, не слепой таймер)', 'fetch(o+"/favicon.ico' in T and "Date.now()-t>7000" in T and 'AbortController' in T)
 check('тема: повторный запрос не входит заново', '/tmp/rl-auth' in T and '-lt 120' in T)
 check('тема: кнопка показывает нажатие и не жмётся дважды', 'data-sent' in T and 'Подключаем…' in T)
 check('тема: после входа не на служебные адреса', '*status.client*|*:2050*|*captive.apple.com*' in T)
 check('быстрый binauth при установке и при смене входа', portal.BINAUTH in S and 'binauth_rl.sh' in S and portal.BINAUTH in portal.login_script(PN))
 
 # iPhone: the «you are online» page moves on to the site by itself (that is what makes the sign-in window put the tick and close)
-check('тема: страница «Вы в сети» сама переходит на сайт', 'location.replace(' in T and '[ "$1" = "done.html" ]' in T and 'http://*|https://*' in T)
+check('тема: страница «Вы в сети» сама переходит на сайт', 'location.replace(' in T and '[ "$1" = "done.html" ]' in T and 'https://*) printf' in T and 'http://*) printf' in T)
 # a template with pictures inside the page (340 KB): openNDS serves a page only up to max_page_size → it follows the template
 check('предел размера страницы подбирается под шаблон', 'max_page_size' in portal.opennds_tune() and '/etc/opennds/htdocs/rl/*.html' in portal.opennds_tune())
 TS = portal.template_script('AAAA', PN)

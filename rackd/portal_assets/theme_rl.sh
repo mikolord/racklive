@@ -32,7 +32,12 @@ rl_page() {
 	# only when the page changes — until then it stays «not confirmed» and the guest has to tap the link by hand. 3 s: the sign-in runs a second after the page.
 	if [ "$1" = "done.html" ]; then
 		go=$(printf '%s' "$RL_continue" | sed 's/&amp;/\&/g; s/&quot;//g' | tr -d "\"'\\\\<> ")
-		case "$go" in http://*|https://*) printf '<script>setTimeout(function(){location.replace("%s")},3000)</script><noscript><meta http-equiv="refresh" content="3;url=%s"></noscript>\n' "$go" "$go" ;; esac
+		org=$(printf '%s' "$go" | sed 's#^\(https\{0,1\}://[^/]*\).*#\1#')
+		case "$go" in
+			# https site: move on the moment the internet is really open (before the sign-in the router drops https, so the probe fails and is repeated); at the latest after 7 s
+			https://*) printf '<script>(function(){var u="%s",o="%s",t=Date.now();function go(){location.replace(u)}try{(function tick(){if(Date.now()-t>7000)return go();var c=new AbortController(),m=setTimeout(function(){c.abort()},900);fetch(o+"/favicon.ico?"+t,{mode:"no-cors",cache:"no-store",signal:c.signal}).then(function(){clearTimeout(m);go()},function(){clearTimeout(m);setTimeout(tick,250)})})()}catch(e){setTimeout(go,3000)}})()</script><noscript><meta http-equiv="refresh" content="3;url=%s"></noscript>\n' "$go" "$org" "$go" ;;
+			http://*) printf '<script>setTimeout(function(){location.replace("%s")},2500)</script><noscript><meta http-equiv="refresh" content="3;url=%s"></noscript>\n' "$go" "$go" ;;
+		esac
 	fi
 	footer
 }
@@ -154,7 +159,7 @@ rl_grant() {
 	# answer first, let the guest in a moment later: on a slow router signing in + writing the log takes seconds, the phone sees the internet open
 	# before the page arrives and closes the login window with «the connection was interrupted». The sign-in runs on its own (output off,
 	# so openNDS is not kept waiting); if it fails, the mark is removed and the next press shows the form again.
-	( sleep 1; auth_log; [ "$ndsstatus" = "authenticated" ] || rm -f "$K" ) </dev/null >/dev/null 2>&1 &
+	( sleep 0.3 2>/dev/null || sleep 1; auth_log; [ "$ndsstatus" = "authenticated" ] || rm -f "$K" ) </dev/null >/dev/null 2>&1 &
 	RL_form=""
 	rl_page done.html
 }
