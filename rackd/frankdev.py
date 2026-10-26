@@ -150,7 +150,10 @@ def _status(data_dir, root=None, demo=False):
         out['git'] = {'branch': text.strip(), 'head': short.strip()[:120], 'changes': len([l for l in dirty.splitlines() if l.strip()])}
     src = _newest(os.path.join(p, 'web', 'src'), ('.jsx',)) if os.path.isdir(os.path.join(p, 'web', 'src')) else 0
     built = os.path.getmtime(os.path.join(p, 'web', 'app.js')) if os.path.isfile(os.path.join(p, 'web', 'app.js')) else 0
-    out['build'] = {'built': bool(built), 'stale': bool(src and built and built < src), 'at': int(built) if built else None}
+    # a fresh git clone has all files stamped with the same checkout time (src can be a second «newer» than app.js) — that is not «не собрано».
+    # A real edit is always minutes apart, so a minute of tolerance keeps the hint honest both ways
+    stale = bool(src and built and src > built + 60) or bool(src and (st.get('lastBuild') or {}).get('t') and src > st['lastBuild']['t'] + 60)
+    out['build'] = {'built': bool(built), 'stale': stale, 'at': int(built) if built else None}
     root = root or updater.ROOT
     why = []
     if demo:
@@ -246,24 +249,16 @@ def _import_check(project):
 
 
 # ───────── the link back into the running panel ─────────
-def deploy(data_dir, root, demo=False, progress=lambda s: None):
-    """replace the panel's code with the project's, keep the old one in .prev, restart; boot_guard rolls back if it cannot start"""
-    if demo:
-        raise DevError('в демо-режиме выкладка отключена')
-    if os.name != 'posix':
-        raise DevError('выкладка изнутри работает на Linux (NAS, Docker, роутер)')
-    if os.path.exists(os.path.join(root, '.git')):
-        raise DevError('это рабочая копия из git: её собирают и обновляют вручную, изнутри не перезаписываю')
+def _swap(data_dir, root, progress=lambda s: None):
+    """the risky half of deploy(): check that the project's code runs, keep the panel's code in .prev, copy the project in.
+    → (old version, new version). Nothing is restarted here, so this can be checked without touching a working panel."""
     p = path(data_dir)
-    if not exists(data_dir):
-        raise DevError('проекта нет — сначала создайте его')
-    if not all(os.access(os.path.join(root, x), os.W_OK) for x in PARTS):
-        raise DevError('у панели нет права записи в свою папку')
     progress('Проверяю, что новый код запускается…')
     code, text = _import_check(p)
     if code != 0:
         raise DevError('новый код не запускается, ничего не меняю:\n' + _cut(text.strip()[-1500:], 1500))
     new_version = text.strip().splitlines()[-1] if text.strip() else version(p)
+    old_version = version(root)                         # for the update state: what the panel was before this deployment
     progress('Сохраняю текущий код в .prev…')
     prev = os.path.join(root, '.prev')
     shutil.rmtree(prev, ignore_errors=True)
@@ -284,7 +279,23 @@ def deploy(data_dir, root, demo=False, progress=lambda s: None):
             if not os.path.isdir(cur):
                 shutil.move(os.path.join(prev, part), cur)
         raise DevError(f'не удалось заменить файлы ({type(e).__name__}: {e}) — всё оставлено как было')
-    updater.save_state({'status': 'pending', 'from': state(data_dir).get('lastDeploy', {}).get('version') or '', 'to': new_version,
+    return old_version, new_version
+
+
+def deploy(data_dir, root, demo=False, progress=lambda s: None):
+    """replace the panel's code with the project's, keep the old one in .prev, restart; boot_guard rolls back if it cannot start"""
+    if demo:
+        raise DevError('в демо-режиме выкладка отключена')
+    if os.name != 'posix':
+        raise DevError('выкладка изнутри работает на Linux (NAS, Docker, роутер)')
+    if os.path.exists(os.path.join(root, '.git')):
+        raise DevError('это рабочая копия из git: её собирают и обновляют вручную, изнутри не перезаписываю')
+    if not exists(data_dir):
+        raise DevError('проекта нет — сначала создайте его')
+    if not all(os.access(os.path.join(root, x), os.W_OK) for x in PARTS):
+        raise DevError('у панели нет права записи в свою папку')
+    old_version, new_version = _swap(data_dir, root, progress)
+    updater.save_state({'status': 'pending', 'from': old_version, 'to': new_version,
                         'attempts': 0, 't': int(time.time()), 'auto': False, 'frank': True})
     set_state(data_dir, lastDeploy={'t': int(time.time()), 'version': new_version, 'ok': True})
     progress('Перезапускаю панель…')

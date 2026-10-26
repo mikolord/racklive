@@ -75,6 +75,50 @@ code2, out2 = D._import_check(p)
 check('целый код проекта проходит проверку и называет версию', code2 == 0 and D.version(p) in out2, out2)
 shutil.rmtree(broken, ignore_errors=True)
 
+# ── замена кода панели (_swap: половина deploy, без перезапуска) ──
+data3 = tempfile.mkdtemp(prefix='frankdev-swap-')
+D.seed(data3, ROOT, progress=lambda s: None)          # проект = копия кода (git в тесте недоступен)
+root2 = tempfile.mkdtemp(prefix='frankdev-panel-')
+for part in ('rackd', 'web'):
+    os.makedirs(os.path.join(root2, part))
+    open(os.path.join(root2, part, 'old.txt'), 'w').write('старый код')
+with open(os.path.join(root2, 'rackd', 'server.py'), 'w', encoding='utf-8') as f:
+    f.write("VERSION = '1.9.9'\n")
+old_v, new_v = D._swap(data3, root2)
+check('_swap: версии до и после известны, старый код в .prev',
+      old_v == '1.9.9' and new_v == D.version(ROOT) and os.path.exists(os.path.join(root2, '.prev', 'rackd', 'old.txt'))
+      and os.path.exists(os.path.join(root2, 'rackd', 'server.py')) and not os.path.exists(os.path.join(root2, 'rackd', 'old.txt')), (old_v, new_v))
+check('_swap: в панель попал именно код проекта',
+      open(os.path.join(root2, 'rackd', 'server.py'), encoding='utf-8').read() == open(os.path.join(D.path(data3), 'rackd', 'server.py'), encoding='utf-8').read())
+broken_proj = tempfile.mkdtemp(prefix='frankdev-broken-')
+os.makedirs(os.path.join(broken_proj, 'frank', 'project', 'rackd'))
+os.makedirs(os.path.join(broken_proj, 'frank', 'project', 'web'))
+open(os.path.join(broken_proj, 'frank', 'project', 'rackd', '__init__.py'), 'w').write('')
+with open(os.path.join(broken_proj, 'frank', 'project', 'rackd', 'server.py'), 'w', encoding='utf-8') as f:
+    f.write("raise SystemExit('так не работает')\n")
+before = open(os.path.join(root2, 'rackd', 'server.py'), encoding='utf-8').read()
+check('_swap: сломанный код не трогает панель', raises(lambda: D._swap(broken_proj, root2), 'не запускается')
+      and open(os.path.join(root2, 'rackd', 'server.py'), encoding='utf-8').read() == before)
+for x in (data3, root2, broken_proj):
+    shutil.rmtree(x, ignore_errors=True)
+
+# ── «фронт не собран» — только когда исходники правда новее (свежий клон — не повод) ──
+data4 = tempfile.mkdtemp(prefix='frankdev-stale-')
+proj4 = os.path.join(data4, 'frank', 'project')
+os.makedirs(os.path.join(proj4, 'rackd'))
+os.makedirs(os.path.join(proj4, 'web', 'src'))
+with open(os.path.join(proj4, 'rackd', 'server.py'), 'w', encoding='utf-8') as f:
+    f.write("VERSION = '3.3.3'\n")
+now = time.time()
+open(os.path.join(proj4, 'web', 'app.js'), 'w').write('// built')
+open(os.path.join(proj4, 'web', 'src', 'x.jsx'), 'w').write('// src')
+os.utime(os.path.join(proj4, 'web', 'app.js'), (now, now))
+os.utime(os.path.join(proj4, 'web', 'src', 'x.jsx'), (now + 30, now + 30))       # свежий клон: разница в секунды
+check('свежий клон не считается «не собран»', D.status(data4, ROOT, fresh=True)['build']['stale'] is False)
+os.utime(os.path.join(proj4, 'web', 'src', 'x.jsx'), (now + 300, now + 300))     # правка через пять минут
+check('правка после сборки — «фронт не собран»', D.status(data4, ROOT, fresh=True)['build']['stale'] is True)
+shutil.rmtree(data4, ignore_errors=True)
+
 # ── откат панели: прежний код возвращается ──
 panel = tempfile.mkdtemp()
 for part in ('rackd', 'web'):
