@@ -55,6 +55,7 @@ function App() {
   const setTab = t => { if (PLAN_APP && t!=='plan') { location.assign('/#'+encodeURIComponent(t==='devices'?'tools':t)); return; } setTabRaw(t === 'devices' ? 'tools' : t); };
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
+  const [place, setPlace] = useState(null);           // a rack / panel opened from the plan: a window of its own, not a jump to the main screen
   const [arrange, setArrange] = useState(() => new URLSearchParams(location.search).get('arrange') === '1');     // «Расстановка виджетов» on the home page (switch beside «Редактирование»)
   const [editor, setEditor] = useState(() => new URLSearchParams(location.search).get('add') === '1' ? null : undefined);    // ?add=1 → «Новое устройство»
   const [login, setLogin] = useState(false);
@@ -162,7 +163,7 @@ function App() {
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
   const ctx = { data, admin, edit, arrange, setArrange, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
-    openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
+    openPlace: id => setPlace(id), openDevice: (d, t, port, popup) => d && setSheet({ id: d.id, tab: t, port, popup: !!popup }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
     startTour: () => { lsSet('rl_tour_step', ''); setMode('view'); setTour(true); },       // «Показать обучение» always starts from the beginning
     askAi: q => setAi({ q, n: Date.now() }), openFrank: () => setAi({ n: Date.now() }), mode, setMode };
@@ -172,7 +173,8 @@ function App() {
   if (CARDS_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><CardsApp /></AppCtx.Provider>;
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
   if (PLAN_APP) return <AppCtx.Provider value={ctx}><div className="app-bg"/><PlanStandalone/>
-    {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={()=>setSheet(null)}/> : null}
+    {place ? <PlaceModal rackId={place} onClose={() => setPlace(null)} /> : null}
+    {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} popup={sheet.popup} onClose={()=>setSheet(null)}/> : null}
     {editor!==undefined ? <DeviceEditor device={editor&&editor.__preset?null:editor} preset={editor&&editor.__preset} onClose={()=>setEditor(undefined)}/> : null}
     {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={()=>setAi(null)}/> : null}
     {speed ? <SpeedTestModal autoRun={speed==='run'} onClose={()=>setSpeed(null)}/> : null}
@@ -235,7 +237,8 @@ function App() {
     </main>
     <nav className="bottombar">{tabs.map(t => <button key={t.id} data-tour={'tab-' + t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
       <Icon name={t.icon} size={24} />{t.label}{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
-    {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={() => setSheet(null)} /> : null}
+    {place ? <PlaceModal rackId={place} onClose={() => setPlace(null)} /> : null}
+    {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} popup={sheet.popup} onClose={() => setSheet(null)} /> : null}
     {editor !== undefined ? <DeviceEditor device={editor && editor.__preset ? null : editor} preset={editor && editor.__preset} onClose={() => setEditor(undefined)} /> : null}
     {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={() => setAi(null)} /> : null}
     {speed ? <SpeedTestModal autoRun={speed === 'run'} onClose={() => setSpeed(null)} /> : null}

@@ -94,6 +94,29 @@ function PlanCursor({ wrap, view, tool, wallPt, planeRef }) {
     <line className="plan-cursor-x" x1={c.x} y1={c.y - 13} x2={c.x} y2={c.y + 13} /></g>;
 }
 
+/* a smooth change of a set of numbers: when `target` changes, the returned values glide to it (ease in-out) instead of jumping — floors sliding apart, fading in and out, walls growing */
+const planEase = p => p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const planReduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+function useTween(target, ms = 520) {
+  const [val, setVal] = useState(target);
+  const cur = useRef(target), raf = useRef(0), key = JSON.stringify(target);
+  useEffect(() => {
+    const to = target, from = { ...cur.current };
+    cancelAnimationFrame(raf.current);
+    if (planReduceMotion() || !ms) { cur.current = to; setVal(to); return; }
+    const t0 = performance.now();
+    const step = now => {
+      const p = Math.min(1, (now - t0) / ms), e = planEase(p), next = {};
+      for (const k in to) next[k] = p >= 1 || !(k in from) ? to[k] : from[k] + (to[k] - from[k]) * e;
+      cur.current = next; setVal(next);
+      if (p < 1) raf.current = requestAnimationFrame(step);
+    };
+    raf.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf.current);
+  }, [key]);
+  return val;
+}
+
 /* pan + wheel + pinch, with tap / drag-draw callbacks (opts read fresh each render) */
 function usePanZoom(wrapRef, opts, initial) {
   useFillScreen(wrapRef);
@@ -225,7 +248,7 @@ function CoverageLayer({ tests, mesh, metric, sel, onSel, placing, view, project
 /* ───────── territory: buildings + backbone links ───────── */
 const BW = 240, BH = 150;
 function Territory({ plan, enter, net }) {
-  const { data, edit, savePlan, openDevice, setTab } = useApp();
+  const { data, edit, savePlan, openDevice, openPlace, setTab } = useApp();
   const toast = useToast(); const confirm = useConfirm();
   const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || []; const nodes = plan.nodes || [];
   const devById = Object.fromEntries(planNetworkDevices(data).map(d => [d.id, d]));
@@ -426,7 +449,7 @@ function Territory({ plan, enter, net }) {
     const r = n.ref; if (!r) return null;
     if (r.kind === 'device') { const d = devById[r.id]; return d ? { name: d.name, status: (d.state && d.state.status) || '' } : null; }
     const rk = data.racks.find(x => x.id === r.id); return rk ? { name: rk.name, status: placeStatus(rk, devById) } : null; };
-  const openRef = id => { const n = nodes.find(x => x.id === id); if (!n || !n.ref) return; if (n.ref.kind === 'device') { const d = devById[n.ref.id]; if (d) openDevice(d); } else setTab('rack'); };
+  const openRef = id => { const n = nodes.find(x => x.id === id); if (!n || !n.ref) return; if (n.ref.kind === 'device') { const d = devById[n.ref.id]; if (d) openDevice(d, undefined, undefined, true); } else openPlace(n.ref.id); };
   const linkPick3 = id => {                                   // 3D, «Магистраль»: два нажатия — дом, столб или узел
     if (id == null) { setPickLink(null); return; }
     if (!pickLink) { setPickLink(id); return; }
@@ -622,7 +645,7 @@ function loadPlanSurvey(id) {
   } catch (_) { return null; }
 }
 function BuildingPlan({ building, plan, back }) {
-  const { data, edit, admin, savePlan, openDevice, setTab, setMode, refresh, pinTest, setPinTest } = useApp();
+  const { data, edit, admin, savePlan, openDevice, openPlace, setTab, setMode, refresh, pinTest, setPinTest } = useApp();
   const toast = useToast(); const confirm = useConfirm();
   const defaults = planPreferences(data.settings);
   const buildings = plan.buildings; const links = plan.links || [];
@@ -658,6 +681,10 @@ function BuildingPlan({ building, plan, back }) {
   const coverageMarkerScale = Math.max(.2, Math.min(1, Number(building.coverageMarkerScale) || Number(defaults.markerSize) || .3));
   const sceneIndex = overview ? indoorFloors.length-1 : floorIndex;
   const floorStep = overview ? ISO_WALL + ISO_SLAB + 24 : ISO_FLOOR;
+  // «Весь дом» ↔ этаж ↔ другой этаж: этажи плавно раздвигаются / сдвигаются, лишние растворяются, стены вырастают; камера едет следом (fitFloor)
+  const animTarget = { idx: sceneIndex, step: floorStep, wall: overview ? 72 : ISO_WALL, shell: overview ? 1 : 0, ground: overview || ghost || sceneIndex === 0 ? 1 : 0 };
+  sceneFloors.forEach((f, i) => { animTarget['o' + f.id] = overview ? (i === indoorFloors.length - 1 ? 1 : .9) : i === floorIndex ? 1 : ghost && i < floorIndex ? .46 : 0; });
+  const anim = useTween(animTarget, 520);
   const [editOpen, setEditOpen] = useState(false);
   const [roomEditor, setRoomEditor] = useState(null);
   const [survey, setSurvey] = useState(()=>loadPlanSurvey(building.id));
@@ -863,7 +890,21 @@ function BuildingPlan({ building, plan, back }) {
   };
 
   // centre the view on the floor's content whenever the floor changes
-  const fitFloor = () => { const xs = [], ys = [];
+  const viewAnim = useRef(0);
+  const animateView = (to, animate) => {                      // the camera glides to the new framing; a touch or the wheel stops it at once
+    cancelAnimationFrame(viewAnim.current);
+    const from = view;
+    if (!animate || planReduceMotion() || (Math.abs(from.k - to.k) < 1e-6 && Math.abs(from.x - to.x) < .5 && Math.abs(from.y - to.y) < .5)) { setView(to); return; }
+    const t0 = performance.now(), ms = 520;
+    const tick = now => { const p = Math.min(1, (now - t0) / ms), e = planEase(p);
+      setView(p >= 1 ? to : { k: from.k + (to.k - from.k) * e, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e });
+      if (p < 1) viewAnim.current = requestAnimationFrame(tick); };
+    viewAnim.current = requestAnimationFrame(tick);
+  };
+  useEffect(() => { const el = wrap.current, stop = () => cancelAnimationFrame(viewAnim.current); if (!el) return stop;
+    el.addEventListener('pointerdown', stop, true); el.addEventListener('wheel', stop, { passive: true });
+    return () => { stop(); el.removeEventListener('pointerdown', stop, true); el.removeEventListener('wheel', stop); }; }, []);
+  const fitFloor = (animate = false) => { const xs = [], ys = [];
     const shown = overview ? sceneFloors : ghost ? sceneFloors.slice(0,floorIndex+1) : [floor];
     const b = planBounds(shown);
     const corners = [[b.x1, b.y1], [b.x2, b.y1], [b.x2, b.y2], [b.x1, b.y2]];
@@ -885,14 +926,18 @@ function BuildingPlan({ building, plan, back }) {
     const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
     const width = Math.max(100,W-inset.left-inset.right), height = Math.max(120,H-inset.top-inset.bottom);
     const k = Math.max(.001,Math.min(1, width/Math.max(1,x2-x1), height/Math.max(1,y2-y1)) * (mobile ? .86 : .92));
-    setView({ k, x: inset.left+(width-(x2-x1)*k)/2-x1*k, y: inset.top+(height-(y2-y1)*k)/2-y1*k });
+    animateView({ k, x: inset.left+(width-(x2-x1)*k)/2-x1*k, y: inset.top+(height-(y2-y1)*k)/2-y1*k }, animate);
   };
   const fitFloorRef = useRef(fitFloor); fitFloorRef.current = fitFloor;
+  const firstFit = useRef(true);
   useEffect(() => {
-    let timer; const schedule = () => { clearTimeout(timer); timer = setTimeout(() => fitFloorRef.current(),60); };
-    const observer = new ResizeObserver(schedule); if (wrap.current) observer.observe(wrap.current);
-    window.addEventListener('orientationchange',schedule); schedule();
-    return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener('orientationchange',schedule); };
+    const animate = !firstFit.current; firstFit.current = false;          // the very first framing is instant; later changes (floor, «Весь дом», обход) glide
+    let timer, skip = true; const schedule = glide => { clearTimeout(timer); timer = setTimeout(() => fitFloorRef.current(glide), glide ? 0 : 60); };
+    const resized = () => schedule(false);
+    const observer = new ResizeObserver(() => { if (skip) { skip = false; return; } resized(); });       // observe() reports once at the start: that is not a resize
+    if (wrap.current) observer.observe(wrap.current);
+    window.addEventListener('orientationchange',resized); schedule(animate);
+    return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener('orientationchange',resized); };
   }, [fid, building.id, ghost, overview, surveyVisible, survey?.roomId, surveyValid, surveyOnFloor]);
 
   const openPlanItem = async it => {
@@ -903,9 +948,9 @@ function BuildingPlan({ building, plan, back }) {
     deviceConfirmOpen.current = true;
     try {
       if (!(await confirm(`Открыть «${name}»?`, { title: 'Открыть оборудование', ok: 'Открыть' }))) return;
-      if (it.kind === 'place') setTab('rack');
-      else if (!d._topology) openDevice(d);
-      else if (d._node?.childOf) { const parent = data.devices.find(x => x.id === d._node.childOf); if (parent) openDevice(parent); }
+      if (it.kind === 'place') openPlace(it.ref);
+      else if (!d._topology) openDevice(d, undefined, undefined, true);
+      else if (d._node?.childOf) { const parent = data.devices.find(x => x.id === d._node.childOf); if (parent) openDevice(parent, undefined, undefined, true); }
       else toast(`${d.name}${d.host ? ' · ' + d.host : ''}`);
     } finally { deviceConfirmOpen.current = false; }
   };
@@ -1030,7 +1075,7 @@ function BuildingPlan({ building, plan, back }) {
             draft={draft} tool={tool} edit={edit && !overview} cov={cov && !overview} tests={coverageTests} coverageData={coverageData} coverageMetric={coverageMetric} selTest={selTest} setSelTest={setSelTest} placingPoint={placingPoint}
             survey={surveyVisible && surveyOnFloor && surveyValid && !pinTest ? survey : null}
             devById={devById} racks={data.racks} sel={sel} dragRoom={dragRoom} dragItem={dragItem} wrap={wrap} view={view} wallPt={wallPt}
-            admin={admin} frameDraft={frameDraft} resizeFloor={resizeFloor} projection={projection} overview={overview} equipmentScale={equipmentScale} coverageMarkerScale={coverageMarkerScale} floorStep={floorStep} resizeRoom={resizeRoom} icons={data.icons || {}} />
+            admin={admin} frameDraft={frameDraft} resizeFloor={resizeFloor} projection={projection} overview={overview} equipmentScale={equipmentScale} coverageMarkerScale={coverageMarkerScale} floorStep={floorStep} anim={anim} resizeRoom={resizeRoom} icons={data.icons || {}} />
         </g>
       </svg>
       <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={back}>Все дома</Btn><b className="ellipsis">{building.name}</b>
@@ -1132,22 +1177,26 @@ function BuildingPlan({ building, plan, back }) {
 }
 
 function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghost, planeRef, draft, tool, edit, cov, tests, coverageData, coverageMetric, selTest, setSelTest, placingPoint, survey,
-  devById, racks, sel, dragRoom, dragItem, wrap, view, wallPt, admin, frameDraft, resizeFloor, projection, overview, equipmentScale, coverageMarkerScale, floorStep, resizeRoom, icons }) {
+  devById, racks, sel, dragRoom, dragItem, wrap, view, wallPt, admin, frameDraft, resizeFloor, projection, overview, equipmentScale, coverageMarkerScale, floorStep, anim, resizeRoom, icons }) {
   const { a, b, c, d } = projection;
   const isoPoint = (x,y) => ({ x: a*x + c*y, y: b*x + d*y });
   const isoPoly = pts => pts.map(([x,y]) => { const p = isoPoint(x,y); return `${p.x},${p.y}`; }).join(' ');
   const corners = [[bounds.x1, bounds.y1], [bounds.x2, bounds.y1], [bounds.x2, bounds.y2], [bounds.x1, bounds.y2]];
   const ground = corners.map(([x, y]) => isoPoint(x, y));
-  const shellBounds = overview ? floors.reduce((b,f) => { const q = planFloorFrame(f,houseBounds); return { x1: Math.min(b.x1,q.x1), y1: Math.min(b.y1,q.y1), x2: Math.max(b.x2,q.x2), y2: Math.max(b.y2,q.y2) }; },houseBounds) : houseBounds;
+  const shellBounds = floors.reduce((b,f) => { const q = planFloorFrame(f,houseBounds); return { x1: Math.min(b.x1,q.x1), y1: Math.min(b.y1,q.y1), x2: Math.max(b.x2,q.x2), y2: Math.max(b.y2,q.y2) }; },houseBounds);
+  // while a change of view is gliding, every number comes from `anim` (floor spacing, how many floors up, wall height, who is faded in); at rest they equal the targets
+  const aIdx = anim ? anim.idx : activeIndex, aStep = anim ? anim.step : floorStep, aWall = anim ? anim.wall : (overview ? 72 : ISO_WALL);
+  const alphaOf = f => anim ? (anim['o' + f.id] ?? 0) : overview ? (f.id === activeId ? 1 : .9) : f.id === activeId ? 1 : .46;
+  const shellA = anim ? anim.shell : overview ? 1 : 0, groundA = anim ? anim.ground : (overview || ghost || activeIndex === 0 ? 1 : 0);
   const houseCorners = [[shellBounds.x1, shellBounds.y1], [shellBounds.x2, shellBounds.y1], [shellBounds.x2, shellBounds.y2], [shellBounds.x1, shellBounds.y2]];
   const top = houseCorners.map(([x, y]) => isoPoint(x, y));
-  const cutWallHeight = overview ? 72 : ISO_WALL;
+  const cutWallHeight = aWall;
   const wallFace = w => { const a = isoPoint(w.x1, w.y1), b = isoPoint(w.x2, w.y2);
     return `${a.x},${a.y} ${b.x},${b.y} ${b.x},${b.y - cutWallHeight} ${a.x},${a.y - cutWallHeight}`; };
   const roomPoints = r => isoPoly([[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]);
   const draftPoints = draft && isoPoly([[draft.x, draft.y], [draft.x + draft.w, draft.y], [draft.x + draft.w, draft.y + draft.h], [draft.x, draft.y + draft.h]]);
-  const visibleFloors = (overview ? floors : ghost ? floors.slice(0,activeIndex+1) : floors.filter(f => f.id === activeId)).slice().sort((a,b) => floors.indexOf(a)-floors.indexOf(b));
-  const groundDy = activeIndex * floorStep + ISO_SLAB;
+  const visibleFloors = (anim ? floors.filter(f => alphaOf(f) > .01) : overview ? floors : ghost ? floors.slice(0,activeIndex+1) : floors.filter(f => f.id === activeId)).slice().sort((a,b) => floors.indexOf(a)-floors.indexOf(b));
+  const groundDy = aIdx * aStep + ISO_SLAB;
   return <g className={'plan-iso-scene' + (overview ? ' overview' : '')}>
     <defs>
       <linearGradient id="plan-wall-matte" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
@@ -1157,14 +1206,14 @@ function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghos
         <stop offset="0" stopColor="var(--plan-wall-shade)" /><stop offset="1" stopColor="var(--plan-wall-edge)" />
       </linearGradient>
     </defs>
-    {overview || ghost || activeIndex === 0 ? <polygon points={ground.map(p => `${p.x},${p.y + groundDy}`).join(' ')} className="plan-iso-ground" /> : null}
-    {overview ? <g className="plan-building-shell" pointerEvents="none">
+    {groundA > .01 ? <polygon points={ground.map(p => `${p.x},${p.y + groundDy}`).join(' ')} className="plan-iso-ground" opacity={groundA} /> : null}
+    {shellA > .01 ? <g className="plan-building-shell" pointerEvents="none" opacity={shellA}>
       {[[top[0],top[1]],[top[3],top[0]]].map(([p,q],k) => <g key={k}>
         <polygon points={`${p.x},${p.y-ISO_WALL} ${q.x},${q.y-ISO_WALL} ${q.x},${q.y+groundDy} ${p.x},${p.y+groundDy}`} className={'plan-building-facade side-'+k} />
-        {floors.map((f,i) => { const y = (activeIndex-i)*floorStep+ISO_SLAB; return <line key={f.id} x1={p.x} y1={p.y+y} x2={q.x} y2={q.y+y} className="plan-building-seam" />; })}
+        {floors.map((f,i) => { const y = (aIdx-i)*aStep+ISO_SLAB; return <line key={f.id} x1={p.x} y1={p.y+y} x2={q.x} y2={q.y+y} className="plan-building-seam" />; })}
       </g>)}
     </g> : null}
-    {visibleFloors.map(f => { const i = floors.findIndex(x => x.id === f.id), active = f.id === activeId, dy = (activeIndex - i) * floorStep;
+    {visibleFloors.map(f => { const i = floors.findIndex(x => x.id === f.id), active = f.id === activeId, dy = (aIdx - i) * aStep;
       const frame = active && frameDraft ? frameDraft : planFloorFrame(f, houseBounds);
       const ft = [[frame.x1,frame.y1],[frame.x2,frame.y1],[frame.x2,frame.y2],[frame.x1,frame.y2]].map(([x,y]) => isoPoint(x,y));
       const fBottom = ft.map((p,k) => [p,ft[(k+1)%4]]);
@@ -1173,7 +1222,7 @@ function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghos
         { x1: r.x, y1: r.y, x2: r.x + r.w, y2: r.y }, { x1: r.x + r.w, y1: r.y, x2: r.x + r.w, y2: r.y + r.h },
         { x1: r.x + r.w, y1: r.y + r.h, x2: r.x, y2: r.y + r.h }, { x1: r.x, y1: r.y + r.h, x2: r.x, y2: r.y }
       ]);
-      return <g key={f.id} data-floor-id={f.id} transform={`translate(0,${dy})`} opacity={overview ? (active ? 1 : .9) : active ? 1 : .46} pointerEvents={!overview && active ? 'auto' : 'none'} className={active ? 'plan-iso-level active' : 'plan-iso-level'}>
+      return <g key={f.id} data-floor-id={f.id} transform={`translate(0,${dy})`} opacity={alphaOf(f)} pointerEvents={!overview && active ? 'auto' : 'none'} className={active ? 'plan-iso-level active' : 'plan-iso-level'}>
         {fBottom.map((edge, k) => <polygon key={k} points={`${edge[0].x},${edge[0].y + ISO_SLAB} ${edge[1].x},${edge[1].y + ISO_SLAB} ${edge[1].x},${edge[1].y} ${edge[0].x},${edge[0].y}`}
           className="plan-iso-slab-side" />)}
         <polygon points={ft.map(p => `${p.x},${p.y}`).join(' ')} className="plan-iso-slab" />

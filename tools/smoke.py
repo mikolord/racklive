@@ -752,7 +752,7 @@ def main():
                 check('главная из виджетов', out.count('data-wid=') >= 5)
                 check('виджет ИБП: широкий и квадрат', out.count('t-ups') >= 2 and 'хватит при отключении света' in out)   # wide + square; the drawing itself belongs to the look (classic battery art or the «Test» instrument)
             if name == 'Блок розеток — нагрузка':
-                check('розетки блока и ИБП кружками на шкафу', 'leds round' in out and '<i class="r">' in out)
+                check('розетки блока и ИБП кружками на шкафу', 'leds round' in out and re.search(r'<i[^>]*class="r"', out))
             if name == 'План — дом':
                 check('покрытие Wi-Fi на плане', 'cov-pin' in out)
             if name == 'Тест скорости':
@@ -1043,7 +1043,8 @@ def main():
                 ok_ic = True
                 for mf in ('manifest.json', 'frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'cards-manifest.json', 'plan-manifest.json'):
                     mj = json.loads(urllib.request.urlopen(base + '/' + mf + '?skin=test', timeout=10).read())
-                    ok_ic = ok_ic and all('/look-test/' in i['src'] and urllib.request.urlopen(base + i['src'], timeout=10).status == 200 for i in mj['icons'])
+                    own = mf not in ('manifest.json', 'cards-manifest.json')           # since 2.42.34 Rack Live and the Scanner keep their original icons in every look; the other apps follow the look
+                    ok_ic = ok_ic and all((('/look-test/' in i['src']) == own) and urllib.request.urlopen(base + i['src'], timeout=10).status == 200 for i in mj['icons'])
                 co = dom('/frank?skin=test', 600, 900)
                 check('оформление Test: свои значки приложений (манифесты, «Домой», вкладка)', ok_ic and '/look-test/frank-180.png' in co and 'frank-manifest.json?skin=test' in co)
                 co = dom('/?skin=test&section=apps#settings', 1300, 900)

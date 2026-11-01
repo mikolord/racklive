@@ -52,6 +52,15 @@ def main():
         st = api('/api/state')
         check('switched back on: counted again', not next(x for x in st['devices'] if x['id'] == local['id']).get('healthSkip') and local['id'] in {u['dev'] for u in st['uptime']})
 
+        # one device of a remote site: its id has a dash («s<site>-<key>») — «Не следить за этим устройством» used to answer «не найдено»
+        r0 = next((x for x in remote if '-' in x['id']), remote[0])
+        check('a remote-site device id has a dash', '-' in r0['id'], r0['id'])
+        api(f"/api/devices/{r0['id']}", {'noHealth': True}, 'PUT')
+        st = api('/api/state')
+        check('a remote-site device can be switched off by itself', next(x for x in st['devices'] if x['id'] == r0['id']).get('noHealth') is True)
+        check('and it is gone from the availability list', r0['id'] not in {u['dev'] for u in st['uptime']})
+        api(f"/api/devices/{r0['id']}", {'noHealth': False}, 'PUT')
+
         # every remote device at once
         api('/api/settings', {'skipRemoteHealth': True}, 'PUT')
         st = api('/api/state')

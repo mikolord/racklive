@@ -32,7 +32,7 @@ function DeviceHead({ device, drv }) {
   </div>;
 }
 
-function DeviceSheet({ device, onClose, initialTab, initialPort }) {
+function DeviceSheet({ device, onClose, initialTab, initialPort, popup }) {
   const { data, admin, openEditor } = useApp();
   const drv = data.drivers.find(d => d.id === device.driver);
   const st = device.state || {};
@@ -49,7 +49,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort }) {
 if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигурация' });
   if (admin && drv && drv.plugins) tabs.push({ id: 'plugins', label: 'Плагины' });
   const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : 'overview');
-  return <Sheet onClose={onClose} tab={tab} setTab={setTab} tabs={tabs}
+  return <Sheet onClose={onClose} tab={tab} setTab={setTab} tabs={tabs} popup={popup}
     head={<div className="col" style={{ gap: 10 }}>
       <DeviceHead device={device} drv={drv} />
       {admin ? <div className="row"><Btn size="sm" icon="edit" onClick={() => { onClose(); openEditor(device); }}>Настроить</Btn>

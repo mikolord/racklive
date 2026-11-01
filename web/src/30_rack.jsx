@@ -116,9 +116,10 @@ function RackModeTransition({ show3d, rack, devById, side, onUnit, flat, cords, 
   </div>;
 }
 
-function RackView() {
-  const { data, edit, saveRack, saveRacks, openDevice } = useApp();
-  const [rackId, setRackId] = useState(() => { const p = new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
+function RackView({ placeId, embedded } = {}) {          // embedded: one place (rack, panel, room) inside a window opened from the plan — see PlaceModal
+  const { data, edit, saveRack, saveRacks, openDevice: openDeviceCtx } = useApp();
+  const openDevice = embedded ? (d, t, p) => openDeviceCtx(d, t, p, true) : openDeviceCtx;           // a device opened from inside that window is a window on top of it
+  const [rackId, setRackId] = useState(() => { const p = placeId || new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
   const [side, setSide] = useState(() => new URLSearchParams(location.search).get('side') === 'back' ? 'back' : 'front');
   const [r3, setR3] = useState(() => { try { return localStorage.getItem('rl_rack3d') !== '0'; } catch (e) { return true; } });
   const show3d = isTestLook() && r3 && !edit;
@@ -224,7 +225,7 @@ function RackView() {
   </div>;
 
   const left = <div>
-      {data.racks.length > 1 || edit ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
+      {!embedded && (data.racks.length > 1 || edit) ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
         {data.racks.map(r => <button key={r.id} className={'chip' + (r.id === rackId ? ' on' : '')} onClick={() => setRackId(r.id)}>
           <Icon name={placeKind(r).icon} size={13} />{r.name}</button>)}
         {edit ? <Btn size="sm" icon="plus" onClick={() => setNewPlace(true)}>Место</Btn> : null}
@@ -278,6 +279,13 @@ function RackView() {
   </>;
   // «Главная»: the rack is one widget; the cards around it are widgets of their own
   return <>{left}{modals}</>;
+}
+
+/* a rack / panel / room opened from the plan: its own window in the middle, the plan stays behind it */
+function PlaceModal({ rackId, onClose }) {
+  const { data } = useApp(); const rack = data.racks.find(r => r.id === rackId);
+  if (!rack) return null;
+  return <Modal title={placeKind(rack).label} icon={<Icon name={placeKind(rack).icon} size={18} />} onClose={onClose} wide><RackView placeId={rackId} embedded /></Modal>;
 }
 
 /* Box / room: devices as free tiles you can drag around (edit mode), snapped to a grid */

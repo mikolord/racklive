@@ -10,14 +10,14 @@ from . import usage as usage_mod
 from . import frankfiles, frank_agent, frankbrowser, frankdev, webdrive
 from . import portal as portal_mod
 from . import remote as remote_mod
-from . import localplug, capps, cameras, hostnet, hostops, terminal, modelstore, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import learn, localplug, capps, cameras, hostnet, hostops, terminal, modelstore, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
 from . import rackcords
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.42.44'
+VERSION = '2.43.5'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -110,6 +110,7 @@ class App:
         self.themes = themes.Themes(DATA, WEB, VERSION)
         self.models = models_mod.Library(DATA)            # «Сканер»: the user's own 3D models of devices
         self.modelstore = modelstore.Store(DATA)          # «Магазин моделей»: ready cards from the public catalog + the owner's moderation
+        self.learn = learn.Learn(DATA)                    # «Обучение»: built-in lessons/games + modules downloaded from the owner's public catalog (data only, shown in a sandbox)
         self.portal_tpl = portal_mod.Templates(DATA)      # «Гостевой Wi-Fi с порталом»: designs of the guest page
         self.community = community.Community(DATA)
         self.local = localplug.Local(DATA, lambda: self.store.cfg['devices'], lambda name, level, text: self.store.add_event(None, name, level, text), VERSION)     # the owner's own code that runs inside Rack Live (off until confirmed)
@@ -1433,6 +1434,71 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    LEARN_CSP = ("sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                 "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'")
+
+    def learn_routes(self, method, path):
+        """«Обучение» (rackd/learn.py). The module files are public (lessons, nothing private) and are served inside a CSP sandbox with no network; progress and
+        the list need a viewer; downloading / removing needs the administrator. → True if the request was answered here."""
+        L = APP.learn
+        m = re.match(r'^/learn/([a-z][a-z0-9-]{2,40})/?$', path)
+        if m and method == 'GET':                          # a module as its own page / installable app (the page itself holds nothing private; progress needs the login)
+            pg = L.page(m.group(1))
+            if not pg:
+                return self.err('нет такого модуля', 404) or True
+            return self.send_raw(pg.encode('utf-8'), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff',
+                                                                                    'Content-Security-Policy': "frame-ancestors 'self'"}) or True
+        m = re.match(r'^/api/learn/manifest/([a-z][a-z0-9-]{2,40})\.json$', path)
+        if m and method == 'GET':
+            man = L.manifest(m.group(1))
+            if not man:
+                return self.err('нет такого модуля', 404) or True
+            return self.send_raw(json.dumps(man, ensure_ascii=False).encode('utf-8'), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'}) or True
+        if not path.startswith('/api/learn'):
+            return False
+        if method == 'GET' and path == '/api/learn/bridge.js':
+            return self.send_raw(L.bridge(), 'application/javascript; charset=utf-8', {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff'}) or True
+        m = re.match(r'^/api/learn/f/([a-z][a-z0-9-]{2,40})/(.*)$', path)
+        if m and method == 'GET':
+            got = L.file(m.group(1), urllib.parse.unquote(m.group(2)))
+            if not got:
+                return self.err('файл не найден', 404) or True
+            return self.send_raw(got[0], got[1], {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': self.LEARN_CSP}) or True
+        if method == 'GET':
+            if not self.can_view():
+                return self.err('нужен вход', 401) or True
+            q = self.query()
+            if path == '/api/learn':
+                return self.send({'modules': L.list(), 'repo': learn.REPO, 'canManage': self.authed()}) or True
+            if path == '/api/learn/progress':
+                try:
+                    return self.send({'ok': True, 'progress': L.progress(urllib.parse.unquote(q.get('id', '')))}) or True
+                except learn.LearnError as e:
+                    return self.err(str(e), 404) or True
+            if path == '/api/learn/catalog':
+                if not self.need_admin():
+                    return True
+                return self.send(L.catalog_view(force=q.get('force') == '1')) or True
+            return False
+        if method == 'POST' and path in ('/api/learn/progress', '/api/learn/install', '/api/learn/remove'):
+            if not self.need_admin():
+                return True
+            body = self.body()
+            mid = str(body.get('id') or '')
+            try:
+                if path == '/api/learn/progress':
+                    return self.send({'ok': True, 'progress': L.save_progress(mid, body.get('data'))}) or True
+                if path == '/api/learn/install':
+                    meta = L.install(mid)
+                    APP.store.add_event(None, 'Обучение', 'info', f"скачан учебный модуль «{meta['title']}» {meta['version']}")
+                    return self.send({'ok': True, 'module': meta}) or True
+                L.remove(mid, bool(body.get('wipe')))
+                APP.store.add_event(None, 'Обучение', 'info', f'учебный модуль «{mid}» удалён')
+                return self.send({'ok': True}) or True
+            except learn.LearnError as e:
+                return self.err(str(e), 400) or True
+        return False
+
     def local_plugins(self, method, path):
         """«Локальные плагины» (rackd/localplug.py): management and the routes of the plugins themselves. → True if the request was answered here. Administrator only."""
         if not (path.startswith('/api/x/') or path.startswith('/api/localplug')):
@@ -1516,6 +1582,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         try:
             if self.local_plugins('GET', path):
+                return
+            if self.learn_routes('GET', path):
                 return
             if path == '/api/term/ws':
                 return self.terminal()
@@ -1623,7 +1691,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.err(str(e), 404)
                 return self.send_raw(b, mimetypes.guess_type(m.group(3))[0] or 'application/octet-stream', csp)
-            m = re.match(r'/api/history/(\w+)$', path)
+            m = re.match(r'/api/history/([\w.\-]+)$', path)
             if m:
                 if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
                     return self.err('нужен вход', 401)
@@ -1806,7 +1874,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(APP.netscan.public())
-            m = re.match(r'/api/backups/(\w+)(?:/(\d+))?$', path)
+            m = re.match(r'/api/backups/([\w.\-]+)(?:/(\d+))?$', path)
             if m:                                           # versions list · diff · raw file (admin only: configs hold secrets)
                 if not self.need_admin():
                     return
@@ -1880,6 +1948,8 @@ class Handler(BaseHTTPRequestHandler):
         st = APP.store
         try:
             if self.local_plugins(method, path):
+                return
+            if self.learn_routes(method, path):
                 return
             if path == '/api/speedtest/up' and method == 'POST':     # raw bytes, read before any JSON parsing
                 if not self.can_view():
@@ -2735,7 +2805,7 @@ class Handler(BaseHTTPRequestHandler):
                 APP.last_start.pop(d['id'], None)
                 st.add_event(d['id'], d.get('name'), 'info', 'устройство добавлено')
                 return self.send({'ok': True, 'device': st.public_device(d), 'agentToken': d.get('agentToken')})
-            m = re.match(r'/api/devices/(\w+)(?:/(\w+))?$', path)
+            m = re.match(r'/api/devices/([\w.\-]+)(?:/(\w+))?$', path)          # a device of a remote site has an id like «s<site>-<key>»: dashes and dots are fine
             if m:
                 did, sub = m.group(1), m.group(2)
                 d = st.device(did)
@@ -3130,7 +3200,7 @@ class Handler(BaseHTTPRequestHandler):
                 APP.newdev.trust(str(body.get('mac') or ''), bool(body.get('on', True)))
                 st.bump()
                 return self.send({'ok': True})
-            m = re.match(r'/api/backups/(\w+)/run$', path)
+            m = re.match(r'/api/backups/([\w.\-]+)/run$', path)
             if m and method == 'POST':
                 d = st.device(m.group(1))
                 if not d or not hasattr(REGISTRY.get(d.get('driver')), 'backup'):

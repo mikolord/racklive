@@ -60,14 +60,14 @@ function Modal({ title, onClose, onBack, children, footer, wide, icon }) {
   </div>, document.body);
 }
 
-function Sheet({ onClose, head, tabs, tab, setTab, children }) {
+function Sheet({ onClose, head, tabs, tab, setTab, children, popup }) {          // popup: a window in the middle (like the speed test) instead of a side panel — the page behind stays in sight
   useLockPage();
   useEffect(() => {
     const h = e => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [onClose]);
   return <div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-    <div className="sheet">
+    <div className={'sheet' + (popup ? ' popup' : '')}>
       <div className="sheet-head">
         <div className="row" style={{ alignItems: 'flex-start' }}><div className="grow">{head}</div><Btn icon="x" size="sm" onClick={onClose} /></div>
         {tabs && tabs.length > 1 ? <div className="sheet-tabs">{tabs.map(t => <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}</div> : <div style={{ height: 12, borderBottom: '.5px solid var(--line)' }} />}

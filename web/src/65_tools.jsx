@@ -14,6 +14,8 @@ const TOOLS = [
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
   { id: 'apps', title: 'Приложения', icon: 'server', color: '#30b0c7',
     text: 'Готовые программы в контейнерах на вашем сервере или NAS: контроллер UniFi, мониторинг и другие. Ставятся после проверки, с показом всех прав.' },
+  { id: 'learn', title: 'Обучение', icon: 'bulb', color: '#34c759',
+    text: 'Интерактивные уроки и игры о сетях. «Академия сетей» уже встроена, новые материалы можно скачать из каталога.' },
   { id: 'localplug', title: 'Локальные плагины', icon: 'terminal', color: '#ff9f0a',
     text: 'Ваш собственный код внутри Rack Live: свои страницы, команды и скрипты. Только вручную и только после прочтения кода.' },
   { id: 'sites', title: 'Удалённые площадки и агенты', icon: 'globe2', color: '#5e5ce6',
@@ -56,7 +58,7 @@ function ToolsView() {
   useEffect(() => { document.documentElement.classList.toggle('set-detail', !!(phone && open)); return () => document.documentElement.classList.remove('set-detail'); }, [phone, open]);
   const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
   const listMode = phone && !open;
-  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'apps' ? <AppsTool /> : cur.id === 'localplug' ? <LocalPlugTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
+  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'apps' ? <AppsTool /> : cur.id === 'learn' ? <LearnTool /> : cur.id === 'localplug' ? <LocalPlugTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
   return <div className={'set-layout' + (phone ? ' ios' : '')}>
     {listMode ? <div className="ios-list">{TOOLS_GROUPS.map((g, gi) => { const items = g[0] === 'tools' ? toolRows : g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
       return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" onClick={() => pick(x.id)}>
@@ -69,14 +71,14 @@ function ToolsView() {
       </div>; })}</div> : null}
     {!phone ? <nav className="set-nav">{TOOLS_BASE.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
         <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
-        <span className="set-txt"><b>{x.label()}</b><small>{x.desc}</small></span><Icon name="chevron" size={14} color="var(--text3)" /></button>)}
+        <span className="set-txt"><b>{x.label()}</b></span><Icon name="chevron" size={14} color="var(--text3)" /></button>)}
       <div className="set-nav-sep" />
       {toolRows.map(x => <button key={x.id} type="button" className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
         <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
-        <span className="set-txt"><b>{x.label()}</b><small>{x.desc}</small></span><Icon name="chevron" size={14} color="var(--text3)" /></button>)}
+        <span className="set-txt"><b>{x.label()}</b></span><Icon name="chevron" size={14} color="var(--text3)" /></button>)}
       <button type="button" className="set-item" onClick={() => pick('add')}>
         <span className="set-ic" style={{ background: 'var(--fill)' }}><Icon name="plus" size={16} /></span>
-        <span className="set-txt"><b>Свой инструмент или из каталога</b><small>Загрузить .zip или взять из каталога сообщества</small></span></button>
+        <span className="set-txt"><b>Свой инструмент или из каталога</b></span></button>
     </nav> : null}
     <div className={'set-body' + (listMode ? ' ios-hidden' : phone ? ' ios-push' : '')} key={phone ? 'p' + cur.id : 'd' + cur.id}>
       {phone ? <div className="ios-nav"><button type="button" className="ios-back" onClick={back}><Icon name="chevron" size={20} stroke={2.6} style={{ transform: 'rotate(180deg)' }} />Инструменты</button><b className="ios-title">{cur.label()}</b><span /></div>

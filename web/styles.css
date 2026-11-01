@@ -170,6 +170,10 @@ svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
 .modal-foot { position: sticky; bottom: 0; display: flex; gap: 10px; justify-content: flex-end; padding: 12px 18px; background: var(--elev); border-top: .5px solid var(--line); }
 .sheet { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); background: var(--elev); box-shadow: var(--shadow-lg); border-left: .5px solid var(--line); animation: slide .32s cubic-bezier(.2,1,.3,1); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); }
 @keyframes slide { from { transform: translateX(40px); opacity: 0; } }
+.overlay:has(> .sheet.popup) { z-index: 110; }          /* a device opened from inside the rack window of the plan lies above that window */
+/* the same card as a window in the middle (opened from the plan, like the speed test): the plan stays visible behind */
+.sheet.popup { position: relative; top: auto; right: auto; bottom: auto; left: auto; margin: auto; width: min(760px, calc(100vw - 24px)); max-height: calc(100vh - 40px); border-radius: 22px; border: .5px solid var(--line); animation: pop .28s cubic-bezier(.2,1.2,.4,1); }
+@media (max-width: 760px) { .overlay:has(> .sheet.popup) { align-items: flex-end; } .sheet.popup { top: auto; width: 100%; margin: auto 0 0; max-height: calc(100dvh - env(safe-area-inset-top) - 12px); border-radius: 22px 22px 0 0; border-left: 0; border-right: 0; border-bottom: 0; animation: up .3s cubic-bezier(.2,1,.3,1); } }
 @media (max-width: 760px) { .sheet { left: 0; width: auto; top: calc(env(safe-area-inset-top) + 8px); border-radius: 22px 22px 0 0; border-left: 0; animation: up .32s cubic-bezier(.2,1,.3,1); } @keyframes up { from { transform: translateY(60px); opacity: 0; } } }
 .sheet-head { position: sticky; top: 0; z-index: 3; padding: 16px 18px 0; background: var(--elev); }
 .sheet-tabs { display: flex; flex-wrap: wrap; gap: 0 4px; padding: 12px 0 0; border-bottom: .5px solid var(--line); }   /* wrap: every tab stays visible */
