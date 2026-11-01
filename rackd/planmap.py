@@ -19,6 +19,38 @@ EXTS = ('jpg', 'png', 'webp')
 ID_RE = re.compile(r'^[a-z0-9]{3,12}$')
 HEX_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
 
+# Defaults are shared by the main panel and the separate Plan app. They never
+# overwrite the plan or per-building size overrides.
+PLAN_DEFAULTS = {'mapMode': 'scheme', 'perspective': 'angled', 'surroundings3d': False,
+                 'houseView': 'last', 'lowerFloors': True, 'equipmentSize': 1.2,
+                 'markerSize': .3, 'coverage': True}
+
+
+def clean_plan_defaults(value, previous=None):
+    if not isinstance(value, dict):
+        raise ValueError('неверные настройки плана')
+    result = dict(PLAN_DEFAULTS)
+    if isinstance(previous, dict):
+        result.update({k: v for k, v in previous.items() if k in result})
+    choices = {'mapMode': ('scheme', 'sat'), 'perspective': ('angled', 'top'), 'houseView': ('first', 'last', 'all')}
+    for key, options in choices.items():
+        if key in value:
+            if value[key] not in options:
+                raise ValueError('неверное значение настройки плана: ' + key)
+            result[key] = value[key]
+    for key in ('surroundings3d', 'lowerFloors', 'coverage'):
+        if key in value:
+            if not isinstance(value[key], bool):
+                raise ValueError('неверное значение настройки плана: ' + key)
+            result[key] = value[key]
+    for key, lo, hi in (('equipmentSize', .6, 2.4), ('markerSize', .2, 1.0)):
+        if key in value:
+            number = value[key]
+            if isinstance(number, bool) or not isinstance(number, (int, float)) or not lo <= number <= hi:
+                raise ValueError('неверное значение настройки плана: ' + key)
+            result[key] = round(number, 1)
+    return result
+
 
 def folder(data_dir):
     return os.path.join(data_dir, 'plan')

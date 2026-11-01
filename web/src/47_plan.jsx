@@ -3,6 +3,21 @@ const PG = 20;
 const uid = p => p + Math.random().toString(36).slice(2, 7);
 const snap = v => Math.round(v / PG) * PG;
 const clampK = k => Math.min(6, Math.max(.08, k));
+const planRoomsOverlap = (a,b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+
+// The network map also contains discovered APs, clients and units without a poller.
+function planNetworkDevices(data) {
+  const devices = new Map((data.devices || []).map(d => [d.id, d]));
+  (data.topology?.nodes || []).forEach(n => {
+    if (n.deviceId || n.kind === 'internet' || n.kind === 'group' || n.id.startsWith('x:')) return;
+    devices.set(n.id, { id: n.id, name: n.label || n.id, kind: n.kind || 'other', host: n.sub || '', mac: n.mac || '',
+      state: { status: n.status || 'unknown' }, _topology: true, _node: n });
+  });
+  (data.plan?.buildings || []).forEach(b => (b.floors || []).forEach(f => (f.items || []).forEach(it => {
+    if (it.kind === 'device' && it.deviceSnapshot && !devices.has(it.ref)) devices.set(it.ref, { ...it.deviceSnapshot, id: it.ref, state: { status: 'unknown' }, _topology: true });
+  })));
+  return [...devices.values()];
+}
 
 function placeStatus(rack, devById) {
   const s = (rack.units || []).flatMap(u => unitDevIds(u)).map(id => devById[id] && devById[id].state && devById[id].state.status).filter(Boolean);
@@ -19,6 +34,42 @@ function floorDevices(f, data, devById) {
 function worst(devs) { const s = devs.map(d => d.state && d.state.status).filter(Boolean);
   return s.includes('offline') ? 'offline' : s.includes('warning') ? 'warning' : s.length ? 'online' : ''; }
 const statusColor = s => s === 'online' ? 'var(--green)' : s === 'warning' ? 'var(--orange)' : s === 'offline' ? 'var(--red)' : 'var(--text3)';
+const ISO_A = .72, ISO_B = .38, ISO_C = -.72, ISO_D = .38, ISO_FLOOR = 330, ISO_WALL = 145, ISO_SLAB = 18;
+const isoPoint = (x, y) => ({ x: ISO_A * x + ISO_C * y, y: ISO_B * x + ISO_D * y });
+const isoPoly = pts => pts.map(p => { const q = isoPoint(p[0], p[1]); return `${q.x},${q.y}`; }).join(' ');
+function planBounds(floors) {
+  const xs = [], ys = [];
+  (floors || []).forEach(f => {
+    (f.walls || []).forEach(w => { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); });
+    (f.rooms || []).forEach(r => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
+    (f.items || []).forEach(i => { xs.push(i.x - 30, i.x + 30); ys.push(i.y - 30, i.y + 30); });
+  });
+  if (!xs.length) return { x1: -360, y1: -260, x2: 360, y2: 260 };
+  const pad = 180;
+  return { x1: Math.min(...xs) - pad, y1: Math.min(...ys) - pad, x2: Math.max(...xs) + pad, y2: Math.max(...ys) + pad };
+}
+function planStructureBounds(floors) {
+  const xs = [], ys = [];
+  (floors || []).forEach(f => {
+    (f.walls || []).forEach(w => { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); });
+    (f.rooms || []).forEach(r => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
+  });
+  if (!xs.length) return { x1: -300, y1: -220, x2: 300, y2: 220 };
+  const pad = 24;
+  return { x1: Math.min(...xs) - pad, y1: Math.min(...ys) - pad, x2: Math.max(...xs) + pad, y2: Math.max(...ys) + pad };
+}
+function planFloorFrame(floor, fallback) {
+  const b = floor && floor.frame;
+  return b && [b.x1, b.y1, b.x2, b.y2].every(Number.isFinite) && b.x2 > b.x1 && b.y2 > b.y1 ? b : fallback;
+}
+function outsideFloorPoint(p, floor) {
+  const rooms = floor.rooms || [];
+  if (rooms.length) return !rooms.some(r => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+  const walls = floor.walls || [];
+  if (!walls.length) return false;
+  const xs = walls.flatMap(w => [w.x1, w.x2]), ys = walls.flatMap(w => [w.y1, w.y2]);
+  return p.x < Math.min(...xs) || p.x > Math.max(...xs) || p.y < Math.min(...ys) || p.y > Math.max(...ys);
+}
 function segDist(p, s) {                                     // distance from point to a wall segment
   const dx = s.x2 - s.x1, dy = s.y2 - s.y1, l2 = dx * dx + dy * dy;
   const t = l2 ? Math.max(0, Math.min(1, ((p.x - s.x1) * dx + (p.y - s.y1) * dy) / l2)) : 0;
@@ -26,10 +77,12 @@ function segDist(p, s) {                                     // distance from po
 }
 
 /* snap marker + wall draft, so the pointer is visible on any background */
-function PlanCursor({ wrap, view, tool, wallPt }) {
+function PlanCursor({ wrap, view, tool, wallPt, planeRef }) {
   const [c, setC] = useState(null);
   useEffect(() => { const el = wrap.current; if (!el) return;
-    const h = e => { const r = el.getBoundingClientRect(); setC({ x: snap((e.clientX - r.left - view.x) / view.k), y: snap((e.clientY - r.top - view.y) / view.k) }); };
+    const h = e => { const plane = planeRef && planeRef.current, m = plane && plane.getScreenCTM();
+      if (m) { const pt = el.querySelector('svg').createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; const q = pt.matrixTransform(m.inverse()); setC({ x: snap(q.x), y: snap(q.y) }); }
+      else { const r = el.getBoundingClientRect(); setC({ x: snap((e.clientX - r.left - view.x) / view.k), y: snap((e.clientY - r.top - view.y) / view.k) }); } };
     const leave = () => setC(null);
     el.addEventListener('pointermove', h); el.addEventListener('pointerleave', leave);
     return () => { el.removeEventListener('pointermove', h); el.removeEventListener('pointerleave', leave); }; }, [view, wrap]);
@@ -48,7 +101,10 @@ function usePanZoom(wrapRef, opts, initial) {
   const vr = useRef(view); vr.current = view;
   const or = useRef(opts); or.current = opts;
   const ptrs = useRef({}); const mode = useRef(null);
-  const toWorld = (cx, cy) => { const r = wrapRef.current.getBoundingClientRect(); return { x: (cx - r.left - vr.current.x) / vr.current.k, y: (cy - r.top - vr.current.y) / vr.current.k }; };
+  const toWorld = (cx, cy) => {
+    if (or.current.mapPoint) { const p = or.current.mapPoint(cx, cy); if (p) return p; }
+    const r = wrapRef.current.getBoundingClientRect(); return { x: (cx - r.left - vr.current.x) / vr.current.k, y: (cy - r.top - vr.current.y) / vr.current.k };
+  };
   const wheel = e => { e.preventDefault(); const r = wrapRef.current.getBoundingClientRect(); const mx = e.clientX - r.left, my = e.clientY - r.top;
     const k = clampK(vr.current.k * Math.exp(-e.deltaY * .0015)); setView(v => ({ k, x: mx - (mx - v.x) * k / v.k, y: my - (my - v.y) * k / v.k })); };
   useEffect(() => { const el = wrapRef.current; if (!el) return; el.addEventListener('wheel', wheel, { passive: false }); return () => el.removeEventListener('wheel', wheel); }, []);
@@ -57,14 +113,15 @@ function usePanZoom(wrapRef, opts, initial) {
   const down = e => {
     // items handle their own drag; buttons/overlays must get their click (pointer capture would steal it)
     if (e.target.closest('button, .zoom-btns, .plan-hint, .plan-open, .plan-ovl, .plan-open-g, .live-bar')) return;
-    if (e.target.closest('.plan-item, .plan-room') && !(or.current.panItems && or.current.panItems())) return;
-    ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
+    const itemTarget = e.target.closest('.plan-item, .plan-room');
+    if (itemTarget && e.pointerType !== 'touch' && !(or.current.panItems && or.current.panItems()) && !(or.current.allowCanvasOnItems && or.current.allowCanvasOnItems())) return;
+    ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY, target: e.target };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     if (Object.keys(ptrs.current).length >= 2) { mode.current = pinchBase(); return; }
-    mode.current = { pinch: false, sx: e.clientX, sy: e.clientY, vx: vr.current.x, vy: vr.current.y, moved: false, w0: toWorld(e.clientX, e.clientY), drawing: false };
+    mode.current = { pinch: false, sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, vx: vr.current.x, vy: vr.current.y, moved: false, w0: toWorld(e.clientX, e.clientY), drawing: false, target: e.target };
   };
   const move = e => {
-    if (!ptrs.current[e.pointerId]) return; ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (!ptrs.current[e.pointerId]) return; ptrs.current[e.pointerId] = { ...ptrs.current[e.pointerId], x: e.clientX, y: e.clientY };
     const pts = Object.values(ptrs.current); const m = mode.current; if (!m) return;
     if (m.pinch && pts.length >= 2) { e.preventDefault(); const r = wrapRef.current.getBoundingClientRect();
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y); const cx = (pts[0].x + pts[1].x) / 2 - r.left, cy = (pts[0].y + pts[1].y) / 2 - r.top;
@@ -76,21 +133,25 @@ function usePanZoom(wrapRef, opts, initial) {
     if (o.canPan && o.canPan() && m.moved) { e.preventDefault(); setView(v => ({ ...v, x: m.vx + dx, y: m.vy + dy })); }
   };
   const up = e => {
+    if (!ptrs.current[e.pointerId]) return;
     const m = mode.current; delete ptrs.current[e.pointerId];
     const left = Object.keys(ptrs.current).length;
-    if (left === 0) { const o = or.current;
-      if (m && !m.pinch) { if (m.drawing && o.onDraw) o.onDraw(m.w0, toWorld(e.clientX, e.clientY), true); else if (!m.moved && o.onTap) o.onTap(m.w0); }
+    if (left === 0) { const o = or.current; mode.current = null;
+      if (m && !m.pinch) { if (m.drawing && o.onDraw) o.onDraw(m.w0, toWorld(e.clientX, e.clientY), true); else if (!m.moved && o.onTap) o.onTap(m.w0, m.target); }
       mode.current = null;
-    } else if (left === 1) { const p = Object.values(ptrs.current)[0]; mode.current = { pinch: false, sx: p.x, sy: p.y, vx: vr.current.x, vy: vr.current.y, moved: true }; }
+    } else if (left === 1) { const p = Object.values(ptrs.current)[0]; mode.current = { pinch: false, sx: p.x, sy: p.y, vx: vr.current.x, vy: vr.current.y, moved: true, target: p.target }; }
   };
-  return { view, setView, toWorld, bind: { onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: up } };
+  const cancel = () => { ptrs.current = {}; mode.current = null; if (or.current.onCancel) or.current.onCancel(); };
+  return { view, setView, toWorld, bind: { onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: cancel } };
 }
 
 function ZoomBtns({ setView, onFit }) {
+  const zoom = (factor,e) => { const el = e.currentTarget.closest('.plan-canvas'), x = (el?.clientWidth || 0)/2, y = (el?.clientHeight || 0)/2;
+    setView(v => { const k = clampK(v.k*factor); return { k, x: x-(x-v.x)*k/v.k, y: y-(y-v.y)*k/v.k }; }); };
   return <div className="zoom-btns">
     {onFit ? <button className="btn" onClick={onFit} title="Показать всё"><Icon name="fit" size={17} /></button> : null}
-    <button className="btn" onClick={() => setView(v => ({ ...v, k: clampK(v.k * 1.3) }))}>+</button>
-    <button className="btn" onClick={() => setView(v => ({ ...v, k: clampK(v.k / 1.3) }))}>−</button></div>;
+    <button className="btn" aria-label="Увеличить" onClick={e => zoom(1.3,e)}>+</button>
+    <button className="btn" aria-label="Уменьшить" onClick={e => zoom(1/1.3,e)}>−</button></div>;
 }
 /* fit a set of world points into the canvas (used on open and by the «показать всё» button) */
 function fitView(el, xs, ys, setView, pad = 40) {
@@ -101,6 +162,14 @@ function fitView(el, xs, ys, setView, pad = 40) {
   setView({ k, x: (W - (x2 - x1) * k) / 2 - x1 * k, y: (H - (y2 - y1) * k) / 2 - y1 * k });
 }
 
+function PlanStandalone() {
+  const { data } = useApp();
+  return <div className="plan-standalone">
+    <header className="topbar plan-app-header"><div className="plan-app-brand"><AppIcon app="plan" size={32}/><div><b>План</b><small className="ellipsis">{data.settings.title}</small></div></div><div className="grow"/>
+    </header>
+    <main className="page page-full"><PlanView/></main>
+  </div>;
+}
 function PlanView() {
   const { data, edit } = useApp();
   const plan = data.plan || { buildings: [], links: [] };
@@ -117,7 +186,7 @@ function PlanView() {
   if (!buildings.length) return <>{banner}<Territory plan={plan} enter={() => {}} net={() => {}} /></>;      // тот же вид разметки, что ниже: когда появится первый дом, карта не перезапускается
   const goNet = id => { setBid(id); setLevel('net'); };
   if (level === 'building') { const b = buildings.find(x => x.id === bid) || buildings[0];
-    return <>{banner}<BuildingPlan building={b} plan={plan} back={() => setLevel('territory')} net={() => goNet(b.id)} /></>; }
+    return <>{banner}<BuildingPlan key={b.id} building={b} plan={plan} back={() => setLevel('territory')} net={() => goNet(b.id)} /></>; }
   if (level === 'net') { const b = buildings.find(x => x.id === bid) || buildings[0];
     return <MapView scope={houseScope(b, data, () => setLevel('territory'), () => { setBid(b.id); setLevel('building'); })} />; }
   return <>{banner}<Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} net={goNet} /></>;
@@ -129,17 +198,26 @@ function houseScope(b, data, back, openHouse) {
   return { seed: { devices, racks }, key: b.id + ':' + [...devices].sort().join(',') + '|' + [...racks].sort().join(','), title: b.name, back, backLabel: 'К плану', openHouse };
 }
 
-/* Wi-Fi coverage: speed tests pinned on a floor, drawn as soft colour spots */
-function CoverageLayer({ tests, sel, onSel }) {
-  return <g className="coverage">
-    <defs>{SPEED_LEVELS.map(([, c], i) => <radialGradient key={i} id={'cov' + i}>
-      <stop offset="0%" stopColor={c} stopOpacity=".45" /><stop offset="60%" stopColor={c} stopOpacity=".18" /><stop offset="100%" stopColor={c} stopOpacity="0" /></radialGradient>)}</defs>
-    {tests.map(t => <circle key={'b' + t.id} cx={t.where.x} cy={t.where.y} r={95} fill={`url(#cov${SPEED_LEVELS.indexOf(speedLevel(t.down))})`} style={{ pointerEvents: 'none' }} />)}
-    {tests.map(t => { const [, c] = speedLevel(t.down); const label = mbpsText(t.down);
+/* Only the measured hull is coloured; pins remain available with one or two samples. */
+function CoverageSurface({ mesh, metric }) {
+  const image=useMemo(()=>coverageRaster(mesh,metric),[mesh,metric]);
+  return image ? <image className="coverage-heatmap" x={image.x} y={image.y} width={image.w} height={image.h} href={image.url} pointerEvents="none" /> : null;
+}
+function CoverageLayer({ tests, mesh, metric, sel, onSel, placing, view, projection, markerScale = .3 }) {
+  const scale=coverageScale(mesh,metric), {a,b,c,d}=projection, det=a*d-b*c;
+  const screenMatrix=`matrix(${d/det/view.k} ${-b/det/view.k} ${-c/det/view.k} ${a/det/view.k} 0 0)`;
+  const marker=Math.max(.2,Math.min(1,markerScale))/.3;
+  return <g className="coverage" data-metric={metric}>
+    {tests.map(t => { const value=coverageValue(t,metric), color='rgb('+coverageColor(value,scale).join(',')+')';
+      const label=metric==='signal' ? (value==null ? '—' : Math.round(value)+' дБм') : mbpsText(value);
       return <g key={t.id} className={'cov-pin' + (sel === t.id ? ' sel' : '')} transform={`translate(${t.where.x},${t.where.y})`}
-        onPointerDown={e => { e.stopPropagation(); onSel(sel === t.id ? null : t.id); }}>
-        <rect x={-(label.length * 4 + 11)} y={-11} width={label.length * 8 + 22} height={22} rx={11} fill={c} />
-        <text y={4.5} textAnchor="middle" className="cov-txt">{label}</text>
+        onPointerDown={e => { if (!placing) { e.stopPropagation(); onSel(sel === t.id ? null : t.id); } }}>
+        <title>{coverageGroupLabel(t)} · {metric==='signal' ? (value==null ? 'Свежий уровень сигнала недоступен' : label) : label+' Мбит/с'}</title>
+        <g transform={screenMatrix}>
+          <rect className="cov-hit" x={-(Math.max(40,(Math.max(40,label.length*6.5+16)*marker))/2)-5} y={-Math.max(20,20*marker)} width={Math.max(40,Math.max(40,label.length*6.5+16)*marker)+10} height={Math.max(40,40*marker)} rx={13} />
+          <rect x={-(Math.max(40,label.length*6.5+16)*marker)/2} y={-11*marker} width={Math.max(40,label.length*6.5+16)*marker} height={22*marker} rx={8*marker} fill={color} />
+          <text y={4*marker} textAnchor="middle" className="cov-txt" style={{fontSize:11*marker}}>{label}</text>
+        </g>
       </g>; })}
   </g>;
 }
@@ -150,7 +228,7 @@ function Territory({ plan, enter, net }) {
   const { data, edit, savePlan, openDevice, setTab } = useApp();
   const toast = useToast(); const confirm = useConfirm();
   const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || []; const nodes = plan.nodes || [];
-  const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
+  const devById = Object.fromEntries(planNetworkDevices(data).map(d => [d.id, d]));
   const wrap = useRef(null);
   const [tool, setTool] = useState('select');               // select | link | pole | outline | bg
   const [linkFrom, setLinkFrom] = useState(null);
@@ -396,7 +474,6 @@ function Territory({ plan, enter, net }) {
       </WorkSec>
       {selB && !is3d ? <WorkSec title={'Дом «' + selB.name + '»'}>
         <WorkItem icon="home" label="Открыть дом" sub="этажи, комнаты, оборудование" onClick={() => enter(selB.id)} />
-        <WorkItem icon="map" label="Сеть дома" sub="карта сети этого дома" onClick={() => net(selB.id)} />
         {edit ? <>
           <WorkItem icon="edit" label="Переименовать" onClick={() => renameB(selB.id)} />
           <WorkItem icon="tag" label="Цвета и высота" onClick={() => setStyleFor(selB.id)} />
@@ -474,8 +551,7 @@ function Territory({ plan, enter, net }) {
           {tool === 'outline' && draft.length ? <Btn size="sm" onClick={() => setDraft([])}>Сбросить</Btn> : null}
           {tool !== 'select' ? <Btn size="sm" onClick={() => { setTool('select'); setDraft([]); setLinkFrom(null); }}>Готово</Btn> : null}</div></div> : null}
       {selB && tool === 'select' ? <div className="plan-open-g">
-        <button className="plan-open" onClick={() => enter(selB.id)}><Icon name="home" size={16} />Открыть «{selB.name.length > 14 ? selB.name.slice(0, 13) + '…' : selB.name}»</button>
-        <button className="plan-open" onClick={() => net(selB.id)}><Icon name="map" size={16} />Сеть дома</button></div> : null}
+        <button className="plan-open" onClick={() => enter(selB.id)}><Icon name="home" size={16} />Открыть «{selB.name.length > 14 ? selB.name.slice(0, 13) + '…' : selB.name}»</button></div> : null}
       {bgs.some(b => b.attr) ? <div className="plan-attrib">{(bgs.find(b => b.attr) || {}).attr}</div> : null}
       <ZoomBtns setView={setView} onFit={fitAll} />
     </div>}
@@ -539,174 +615,619 @@ function LinkEditor({ link, isNew, title, onSave, onDelete, onClose }) {
 }
 
 /* ───────── one building: floors with walls, rooms, equipment ───────── */
-function BuildingPlan({ building, plan, back, net }) {
-  const { data, edit, admin, savePlan, openDevice, setTab, refresh, pinTest, setPinTest } = useApp();
+function loadPlanSurvey(id) {
+  try { const s=JSON.parse(ssGet('rl_plan_survey:'+id));
+    return s?.v===1 && s.buildingId===id && typeof s.floorId==='string' && typeof s.roomId==='string' &&
+      Number.isInteger(s.index) && s.index>=0 && s.index<=5 && s.roomRect && ['x','y','w','h'].every(k=>Number.isFinite(s.roomRect[k])) && s.points?.length===5 && s.points.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)) ? s : null;
+  } catch (_) { return null; }
+}
+function BuildingPlan({ building, plan, back }) {
+  const { data, edit, admin, savePlan, openDevice, setTab, setMode, refresh, pinTest, setPinTest } = useApp();
   const toast = useToast(); const confirm = useConfirm();
+  const defaults = planPreferences(data.settings);
   const buildings = plan.buildings; const links = plan.links || [];
-  const [cov, setCov] = useState(true);
+  const [cov, setCov] = useState(() => defaults.coverage !== false);
+  const [covMode, setCovMode] = useState('auto');
+  const [covSource, setCovSource] = useState('');
   const [selTest, setSelTest] = useState(null);
-  const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
-  const [fid, setFid] = useState(building.floors[0] && building.floors[0].id);
-  const floor = building.floors.find(f => f.id === fid) || building.floors[0];
+  const networkDevices = planNetworkDevices(data);
+  const devById = Object.fromEntries(networkDevices.map(d => [d.id, d]));
+  const projection = { a: ISO_A, b: ISO_B, c: ISO_C, d: ISO_D };
+  const [roomResize, setRoomResize] = useState(null);
+  const indoorFloors = building.floors.filter(f => !f.outdoor);
+  const [fid, setFid] = useState(() => loadPlanSurvey(building.id)?.floorId || ((defaults.houseView === 'first' ? indoorFloors[0] : indoorFloors[indoorFloors.length - 1]) || building.floors[0]).id);
+  const floor = indoorFloors.find(f => f.id === fid) || indoorFloors[indoorFloors.length - 1] || building.floors[0];
+  const floorIndex = Math.max(0, indoorFloors.findIndex(f => f.id === floor.id));
+  const legacyOutsideItems = building.floors.filter(f => f.outdoor).flatMap(f => (f.items || []).map(it => ({ ...it, outdoor: true, _originFloorId: f.id })));
+  const sceneFloors = indoorFloors.map((f,i) => ({ ...f,
+    ...(roomResize?.floorId === f.id ? { rooms: (f.rooms || []).map(r => r.id === roomResize.id ? roomResize.rect : r) } : {}),
+    ...(i === 0 && legacyOutsideItems.length ? { items: [...(f.items || []), ...legacyOutsideItems] } : {}) }));
+  const sceneBounds = useMemo(() => planBounds(sceneFloors), [building.id, building.floors]);
+  const houseBounds = useMemo(() => planStructureBounds(indoorFloors), [building.id, building.floors]);
   const [tool, setTool] = useState('select');               // select | room | wall | place | erase
   const [pending, setPending] = useState(null);
+  const [equipQuery, setEquipQuery] = useState('');
   const [wallPt, setWallPt] = useState(null);
+  const [frameDraft, setFrameDraft] = useState(null);
   const [draft, setDraft] = useState(null);                 // room rubber-band {x,y,w,h}
   const [sel, setSel] = useState(null);
-  const [ghost, setGhost] = useState(false);
+  // Open multi-floor buildings in the exploded overview so the user can pick a floor immediately.
+  const [ghost, setGhost] = useState(() => defaults.lowerFloors !== false && indoorFloors.length > 1);
+  const [overview, setOverview] = useState(() => defaults.houseView === 'all' && !pinTest && !loadPlanSurvey(building.id));
+  const equipmentScale = Math.max(.6, Math.min(2.4, Number(building.equipmentScale) || Number(defaults.equipmentSize) || 1.2));
+  const coverageMarkerScale = Math.max(.2, Math.min(1, Number(building.coverageMarkerScale) || Number(defaults.markerSize) || .3));
+  const sceneIndex = overview ? indoorFloors.length-1 : floorIndex;
+  const floorStep = overview ? ISO_WALL + ISO_SLAB + 24 : ISO_FLOOR;
+  const [editOpen, setEditOpen] = useState(false);
+  const [roomEditor, setRoomEditor] = useState(null);
+  const [survey, setSurvey] = useState(()=>loadPlanSurvey(building.id));
+  const [surveyChoose, setSurveyChoose] = useState(false);
+  const [surveyConnection, setSurveyConnection] = useState(null);
+  const [surveyHidden, setSurveyHidden] = useState(false);
+  const [surveyPicking, setSurveyPicking] = useState(false);
+  const [surveyMeasuring, setSurveyMeasuring] = useState(false);
+  const [surveySaving, setSurveySaving] = useState(false);
+  const surveySavingRef = useRef(false);
+  const surveyRef = useRef(survey); surveyRef.current=survey;
+  useEffect(()=>ssSet('rl_plan_survey:'+building.id,survey?JSON.stringify(survey):null),[survey,building.id]);
+  useEffect(()=>{if(!surveyChoose)return;let active=true;setSurveyConnection(null);api('/api/speedtest/who').then(c=>{if(active)setSurveyConnection(c)}).catch(()=>{if(active)setSurveyConnection({})});return()=>{active=false}},[surveyChoose]);
+  const surveyFloor = survey && indoorFloors.find(f=>f.id===survey.floorId);
+  const surveyRoom = surveyFloor?.rooms?.find(r=>r.id===survey.roomId);
+  const surveyValid = !!surveyRoom && ['x','y','w','h'].every(k=>surveyRoom[k]===survey.roomRect[k]);
+  const surveyOnFloor = survey && survey.floorId===floor.id && !overview;
+  const surveyVisible = admin && !!survey && !surveyHidden;
+  const placingPoint = !!pinTest || surveyPicking;
+  const roomSaving = useRef(false);
+  const deleteConfirmOpen = useRef(false);
+  const pinSaving = useRef(false);
+  const deviceConfirmOpen = useRef(false);
   const wrap = useRef(null);
-  useEffect(() => { if (!building.floors.find(f => f.id === fid)) setFid(building.floors[0] && building.floors[0].id); }, [building.floors.length]);
+  const planeRef = useRef(null);
+  const visibleItems = floor.id === (indoorFloors[0] && indoorFloors[0].id) ? [...(floor.items || []), ...legacyOutsideItems] : (floor.items || []);
+  useEffect(() => { if (!indoorFloors.find(f => f.id === fid) && indoorFloors.length) setFid(indoorFloors[indoorFloors.length - 1].id); }, [building.floors.length]);
   useEffect(() => { if (!edit) { setTool('select'); setPending(null); setWallPt(null); } }, [edit]);
 
   const saveFloors = floors => savePlan({ ...plan, buildings: buildings.map(b => b.id === building.id ? { ...b, floors } : b), links });
-  const mutate = fn => saveFloors(building.floors.map(f => f.id === floor.id ? fn(f) : f));
-  const addFloor = outdoor => { const id = uid('f');
-    saveFloors([...building.floors, { id, name: outdoor ? 'Двор' : `${building.floors.filter(f => !f.outdoor).length + 1} этаж`, outdoor, walls: [], rooms: [], items: [] }]); setFid(id); };
-  const delFloor = async () => { if (building.floors.length < 2) return toast('Нельзя удалить единственный этаж', true);
+  const setEquipmentScale = value => savePlan({ ...plan, buildings: buildings.map(b => b.id === building.id ? { ...b, equipmentScale: Math.round(Math.max(.6,Math.min(2.4,value))*10)/10 } : b), links });
+  const setCoverageMarkerScale = value => savePlan({ ...plan, buildings: buildings.map(b => b.id === building.id ? { ...b, coverageMarkerScale: Math.round(Math.max(.2,Math.min(1,value))*10)/10 } : b), links });
+  const resetSize = key => savePlan({ ...plan, buildings: buildings.map(b => { if (b.id !== building.id) return b; const next = { ...b }; delete next[key]; return next; }), links });
+  const mutateFloor = (id, fn) => saveFloors(building.floors.map(f => f.id === id ? fn(f) : f));
+  const mutate = fn => mutateFloor(floor.id, fn);
+  const itemFloorId = it => it._originFloorId || floor.id;
+  const changeItems = (it, fn) => mutateFloor(itemFloorId(it), f => ({ ...f, items: fn(f.items || []) }));
+  const placeEquipment = w => {
+    const next = { id: uid('i'), kind: pending.kind, ref: pending.ref, x: snap(w.x), y: snap(w.y), outdoor: outsideFloorPoint(w, floor),
+      ...(pending.snapshot ? { deviceSnapshot: pending.snapshot } : {}) };
+    const nextBuildings = buildings.map(b => ({ ...b, floors: b.floors.map(f => {
+      let items = (f.items || []).filter(it => !(it.kind === pending.kind && it.ref === pending.ref));
+      if (b.id === building.id && f.id === floor.id) items = [...items, next];
+      return items.length === (f.items || []).length && items.every((it, i) => it === (f.items || [])[i]) ? f : { ...f, items };
+    }) }));
+    savePlan({ ...plan, buildings: nextBuildings, links });
+  };
+  const addFloor = () => { const id = uid('f');
+    saveFloors([...building.floors, { id, name: `${indoorFloors.length + 1} этаж`, walls: [], rooms: [], items: [] }]); setFid(id); };
+  const delFloor = async () => { if (indoorFloors.length < 2) return toast('Нельзя удалить единственный этаж', true);
     if (!(await confirm(`Удалить «${floor.name}»?`, { danger: true, ok: 'Удалить' }))) return;
-    const rest = building.floors.filter(f => f.id !== floor.id); setFid(rest[0].id); saveFloors(rest); };
+    const rest = building.floors.filter(f => f.id !== floor.id); setFid(rest.find(f => !f.outdoor).id); saveFloors(rest); };
+  const resetFloorFrame = () => mutateFloor(floor.id, f => { const { frame, ...rest } = f; return rest; });
 
-  const eraseAt = w => {                                     // tap-erase: nearest wall, else room, else item
+  const confirmDelete = async (message, action) => {
+    if (deleteConfirmOpen.current) return;
+    deleteConfirmOpen.current = true;
+    try { if (await confirm(message, { danger: true, ok: 'Удалить' })) { await action(); setSel(null); } }
+    finally { deleteConfirmOpen.current = false; }
+  };
+  const eraseAt = w => {
     const th = 14; let wi = -1, bd = th;
     (floor.walls || []).forEach((wl, i) => { const d = segDist(w, wl); if (d < bd) { bd = d; wi = i; } });
-    if (wi >= 0) { mutate(f => ({ ...f, walls: f.walls.filter((_, j) => j !== wi) })); return; }
+    if (wi >= 0) return confirmDelete('Удалить выбранную стену?', () => mutate(f => ({ ...f, walls: f.walls.filter((_, j) => j !== wi) })));
     const rm = (floor.rooms || []).find(r => w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h);
-    if (rm) { mutate(f => ({ ...f, rooms: f.rooms.filter(x => x.id !== rm.id) })); return; }
-    const it = (floor.items || []).find(i => Math.hypot(i.x - w.x, i.y - w.y) < 24);
-    if (it) mutate(f => ({ ...f, items: f.items.filter(x => x.id !== it.id) }));
+    if (rm) return confirmDelete(`Удалить комнату «${rm.text || 'Без названия'}»?`, () => mutate(f => ({ ...f, rooms: f.rooms.filter(x => x.id !== rm.id) })));
+    const it = visibleItems.find(i => Math.hypot(i.x - w.x, i.y - w.y) < 32);
+    if (it) return confirmDelete('Убрать оборудование с плана?', () => changeItems(it, items => items.filter(x => x.id !== it.id)));
   };
-  const tests = (data.speedtests || []).filter(t => t.where && t.where.b === building.id && t.where.f === floor.id);
+  const saveRoom = async e => {
+    if (e) e.preventDefault();
+    if (!roomEditor || roomSaving.current) return;
+    const text = roomEditor.name.trim();
+    if (!text) return toast('Введите название комнаты', true);
+    const f = building.floors.find(f => f.id === roomEditor.floorId);
+    if (!f || (f.rooms || []).some(r => planRoomsOverlap(roomEditor.rect,r))) return toast('Комнаты не должны перекрываться', true);
+    roomSaving.current = true;
+    const id = uid('r');
+    try { await mutateFloor(f.id, f => ({ ...f, rooms: [...(f.rooms || []), { id, ...roomEditor.rect, text, color: '#0a84ff' }] }));
+      setRoomEditor(null); setTool('select'); setSel('room:' + id); }
+    catch (err) { toast(err.message, true); }
+    finally { roomSaving.current = false; }
+  };
+  const tests = useMemo(() => (data.speedtests || []).filter(t => t.where && t.where.b === building.id && t.where.f === floor.id && Number.isFinite(t.where.x) && Number.isFinite(t.where.y)), [data.speedtests,building.id,floor.id]);
+  const coverageSources = useMemo(() => {
+    const groups=new Map(); [...tests].sort((a,b)=>(b.t||0)-(a.t||0)).forEach(t=>{const key=coverageGroup(t);if(!groups.has(key))groups.set(key,coverageGroupLabel(t))});
+    return [...groups].map(([id,label])=>({id,label}));
+  }, [tests]);
+  const coverageSource = coverageSources.some(g=>g.id===covSource) ? covSource : coverageSources[0]?.id || '';
+  const coverageTests = useMemo(()=>tests.filter(t=>coverageGroup(t)===coverageSource),[tests,coverageSource]);
+  const hasSignal = coverageTests.some(t=>coverageValue(t,'signal')!=null);
+  const coverageMetric = covMode==='auto' ? (hasSignal ? 'signal' : 'speed') : covMode;
+  const coverageData = useMemo(()=>coverageMesh(coverageTests,coverageMetric,floor),[coverageTests,coverageMetric,floor]);
+  const coverageReference = coverageScale(coverageData,coverageMetric);
+  const legacySignal = coverageMetric==='signal' && coverageTests.some(t=>coverageValue(t,'signal')!=null && t.client?.signalFresh==null);
+  const coverageHint = !tests.length ? 'На этом этаже пока нет замеров.' :
+    (covMode==='auto' && !hasSignal ? 'Уровень сигнала недоступен — показана скорость. ' : '') +
+    (coverageData.triangles.length ? 'Цвет между отметками — оценка по замерам. Пустые участки не измерены. ' :
+      'Пока только отметки. Для цветной области сделайте минимум 3 замера в разных местах одной комнаты, не на одной линии. ') +
+    (legacySignal ? 'Время опроса старых замеров неизвестно; для точности повторите их. ' : '') +
+    (coverageMetric==='signal' && !hasSignal ? 'Нет свежих данных сигнала. Замерьте через локальный адрес NAS; роутер должен видеть телефон. ' : '') +
+    'Карты разных точек и диапазонов показаны отдельно. ' + (coverageMetric==='signal' ? 'Это сигнал телефона на роутере. Для сравнения используйте один телефон.' : 'Скорость не определяет границу радиосигнала.');
   const pinAt = async (id, where) => {
-    try { await api('/api/speedtest/' + id, { method: 'PUT', body: { where } }); toast(where ? 'Замер отмечен на плане' : 'Отметка убрана'); refresh(); }
-    catch (e) { toast(e.message, true); }
+    try { await api('/api/speedtest/' + id, { method: 'PUT', body: { where } }); toast(where ? 'Замер отмечен на плане' : 'Отметка убрана'); refresh(); return true; }
+    catch (e) { toast(e.message, true); return false; }
   };
-  const onTap = w => {
-    if (pinTest) { pinAt(pinTest, { b: building.id, f: floor.id, x: Math.round(w.x), y: Math.round(w.y) }); setPinTest(null); setCov(true); return; }
+  const returnToSurvey = () => { if (!survey) return; setFid(survey.floorId); setOverview(false); setGhost(false); setSurveyHidden(false); setTool('select'); setSel(null); setEditOpen(false); setCov(true); };
+  const startSurvey = room => {
+    const points=[[.08,.08],[.92,.08],[.92,.92],[.08,.92],[.5,.5]].map(([x,y])=>({x:Math.round(room.x+room.w*x),y:Math.round(room.y+room.h*y)}));
+    setSurvey({v:1,buildingId:building.id,floorId:floor.id,roomId:room.id,roomName:room.text||'Комната '+((floor.rooms||[]).indexOf(room)+1),roomRect:{x:room.x,y:room.y,w:room.w,h:room.h},points,index:0,pendingTest:null});
+    setSurveyChoose(false); setSurveyHidden(false); setSurveyPicking(false); setPinTest(null); setTool('select'); setSel(null); setOverview(false); setGhost(false); setMode('view'); setEditOpen(false); setCov(true); setCovMode('auto');
+  };
+  const surveyMeasured = test => setSurvey(s=>s ? {...s,pendingTest:{id:test.id,down:test.down,client:test.client||{}}} : s);
+  const saveSurveyPoint = async test => {
+    const s=surveyRef.current;
+    if (!s || !surveyValid || s.index>=s.points.length || surveySavingRef.current) return false;
+    surveySavingRef.current=true; setSurveySaving(true);
+    const p=s.points[s.index];
+    try {
+      if (!(await pinAt(test.id,{b:building.id,f:s.floorId,x:p.x,y:p.y}))) return false;
+      const points=s.points.map((p,i)=>i===s.index?{...p,testId:test.id,source:coverageGroup(test)}:p);
+      const next=points.findIndex(p=>!p.testId);
+      setSurvey({...s,points,index:next<0?points.length:next,pendingTest:null});
+      setCov(true); setCovSource(coverageGroup(test)); setCovMode('auto'); setSelTest(null); setSurveyPicking(false);
+      return true;
+    } finally {surveySavingRef.current=false;setSurveySaving(false)}
+  };
+  const surveySources = survey ? new Set(survey.points.filter(p=>p.testId).map(p=>p.source)) : new Set();
+  const surveySourceChanged = survey?.pendingTest && survey.points.some(p=>p.testId&&p.source!==coverageGroup(survey.pendingTest));
+  useEffect(() => { if (pinTest) { setTool('select'); setSel(null); setWallPt(null); setPending(null); setDraft(null); setOverview(false); setSurveyPicking(false); } }, [pinTest]);
+  const onTap = async (w, target) => {
+    if (overview) return;
+    if (pinTest) {
+      if (pinSaving.current) return; pinSaving.current=true;
+      try { if (await pinAt(pinTest, { b: building.id, f: floor.id, x: Math.round(w.x), y: Math.round(w.y) })) { setPinTest(null); setCov(true); } }
+      finally { pinSaving.current=false; } return;
+    }
+    if (surveyPicking) {
+      if (!survey || !surveyValid || !surveyOnFloor) return toast('Вернитесь к комнате обхода',true);
+      const room=(floor.rooms||[]).find(r=>r.id===survey.roomId);
+      if (coverageRoom(w,floor.rooms||[])!==(floor.rooms||[]).indexOf(room) || survey.points.some((p,i)=>i!==survey.index&&Math.hypot(p.x-w.x,p.y-w.y)<PG)) return toast('Выберите другое место внутри этой комнаты',true);
+      setSurvey(s=>({...s,points:s.points.map((p,i)=>i===s.index?{x:Math.round(w.x),y:Math.round(w.y)}:p)}));setSurveyPicking(false);return;
+    }
+    const wallEl = target && target.closest && target.closest('[data-plan-wall]');
+    if (wallEl && admin && edit) {
+      const wi = Number(wallEl.getAttribute('data-plan-wall'));
+      if (tool === 'select') { setSel('wall:' + wi); return; }
+      if (tool === 'erase') { confirmDelete('Удалить выбранную стену?', () => mutate(f => ({ ...f, walls: (f.walls || []).filter((_, j) => j !== wi) }))); return; }
+    }
     if (tool === 'wall') { const p = { x: snap(w.x), y: snap(w.y) }; if (wallPt) mutate(f => ({ ...f, walls: [...(f.walls || []), { x1: wallPt.x, y1: wallPt.y, x2: p.x, y2: p.y }] })); setWallPt(p); return; }
-    if (tool === 'place' && pending) { mutate(f => ({ ...f, items: [...f.items, { id: uid('i'), kind: pending.kind, ref: pending.ref, x: snap(w.x), y: snap(w.y) }] })); setPending(null); setTool('select'); return; }
+    if (tool === 'place' && pending) { placeEquipment(w); setPending(null); setTool('select'); return; }
     if (tool === 'erase') { eraseAt(w); return; }
     if (tool === 'select') setSel(null);
   };
   const rectOf = (w0, w1) => ({ x: snap(Math.min(w0.x, w1.x)), y: snap(Math.min(w0.y, w1.y)), w: snap(Math.abs(w1.x - w0.x)), h: snap(Math.abs(w1.y - w0.y)) });
   const onDraw = (w0, w1, end) => {
     const r = rectOf(w0, w1);
-    if (tool === 'room') { if (!end) { setDraft(r); return; } setDraft(null); if (r.w < PG || r.h < PG) return;
-      const text = prompt('Название комнаты', '') || ''; mutate(f => ({ ...f, rooms: [...(f.rooms || []), { id: uid('r'), x: r.x, y: r.y, w: r.w, h: r.h, text, color: '#0a84ff' }] })); return; }
-    if (tool === 'erase') { if (!end) { setDraft(r); return; } setDraft(null); if (r.w < PG && r.h < PG) return;
-      const inside = (x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-      mutate(f => ({ ...f, walls: (f.walls || []).filter(wl => !(inside(wl.x1, wl.y1) && inside(wl.x2, wl.y2))),
-        rooms: (f.rooms || []).filter(rm => !(inside(rm.x, rm.y) && inside(rm.x + rm.w, rm.y + rm.h))),
-        items: (f.items || []).filter(i => !inside(i.x, i.y)) })); setSel(null); }
+    if (tool === 'room') {
+      if (!end) { setDraft(r); return; }
+      setDraft(null); if (r.w < PG || r.h < PG) return;
+      if ((floor.rooms || []).some(rm => planRoomsOverlap(r,rm))) return toast('Комнаты не должны перекрываться', true);
+      setRoomEditor({ floorId: floor.id, rect: r, name: '' }); return;
+    }
+    if (tool === 'erase') {
+      if (!end) { setDraft(r); return; } setDraft(null); if (r.w < PG && r.h < PG) return;
+      const inside = (x,y) => x >= r.x && x <= r.x+r.w && y >= r.y && y <= r.y+r.h;
+      const wallIds = new Set((floor.walls || []).map((w,i) => inside(w.x1,w.y1) && inside(w.x2,w.y2) ? i : -1).filter(i => i >= 0));
+      const roomIds = new Set((floor.rooms || []).filter(rm => inside(rm.x,rm.y) && inside(rm.x+rm.w,rm.y+rm.h)).map(x => x.id));
+      const itemIds = new Set((floor.items || []).filter(it => inside(it.x,it.y)).map(x => x.id));
+      const total = wallIds.size + roomIds.size + itemIds.size;
+      if (total) confirmDelete(`Удалить объекты в выделенной области (${total})?`, () => mutate(f => ({ ...f,
+        walls: (f.walls || []).filter((_,i) => !wallIds.has(i)), rooms: (f.rooms || []).filter(x => !roomIds.has(x.id)), items: (f.items || []).filter(x => !itemIds.has(x.id)) })));
+    }
   };
-  const { view, setView, toWorld, bind } = usePanZoom(wrap, { canPan: () => tool === 'select', onTap, onDraw: (tool === 'room' || tool === 'erase') ? onDraw : null });
+  const mapPoint = (cx, cy) => {
+    const plane = planeRef.current, svg = wrap.current && wrap.current.querySelector('svg'), m = plane && plane.getScreenCTM();
+    if (!m || !svg) return null;
+    const pt = svg.createSVGPoint(); pt.x = cx; pt.y = cy; const q = pt.matrixTransform(m.inverse());
+    return { x: q.x, y: q.y };
+  };
+  const { view, setView, toWorld, bind } = usePanZoom(wrap, { canPan: () => placingPoint || tool === 'select', panItems: () => placingPoint || !edit,
+    allowCanvasOnItems: () => placingPoint || edit && (tool === 'wall' || tool === 'place'), onTap,
+    onDraw: !placingPoint && (tool === 'room' || tool === 'erase') ? onDraw : null, onCancel: () => setDraft(null), mapPoint });
+
+  const resizeFloor = (corner, e) => {
+    if (placingPoint) return;
+    if (!admin || !edit || tool !== 'select') return;
+    e.stopPropagation(); e.preventDefault();
+    const base = planFloorFrame(floor, houseBounds), hasContent = !!((floor.rooms || []).length || (floor.walls || []).length), content = planStructureBounds([floor]);
+    const nextBounds = p => {
+      const n = { ...base }, minW = hasContent ? Math.max(100, content.x2 - content.x1) : 100, minH = hasContent ? Math.max(100, content.y2 - content.y1) : 100;
+      if (corner.includes('l')) n.x1 = Math.min(snap(p.x), hasContent ? content.x1 : Infinity, n.x2 - minW);
+      else n.x2 = Math.max(snap(p.x), hasContent ? content.x2 : -Infinity, n.x1 + minW);
+      if (corner.includes('t')) n.y1 = Math.min(snap(p.y), hasContent ? content.y1 : Infinity, n.y2 - minH);
+      else n.y2 = Math.max(snap(p.y), hasContent ? content.y2 : -Infinity, n.y1 + minH);
+      return n;
+    };
+    let moved = false, preview = base;
+    const move = ev => { const p = toWorld(ev.clientX, ev.clientY); moved = true; preview = nextBounds(p); setFrameDraft(preview); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      if (moved) mutateFloor(floor.id, f => ({ ...f, frame: preview })); setFrameDraft(null); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
 
   // centre the view on the floor's content whenever the floor changes
   const fitFloor = () => { const xs = [], ys = [];
-    (floor.walls || []).forEach(w => { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); });
-    (floor.rooms || []).forEach(r => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
-    (floor.items || []).forEach(i => { xs.push(i.x - 30, i.x + 30); ys.push(i.y - 40, i.y + 40); });
-    fitView(wrap.current, xs, ys, setView, 30); };
-  useEffect(() => { const t = setTimeout(fitFloor, 30); return () => clearTimeout(t); }, [fid, building.id]);
+    const shown = overview ? sceneFloors : ghost ? sceneFloors.slice(0,floorIndex+1) : [floor];
+    const b = planBounds(shown);
+    const corners = [[b.x1, b.y1], [b.x2, b.y1], [b.x2, b.y2], [b.x1, b.y2]];
+    const footprint = [[houseBounds.x1, houseBounds.y1], [houseBounds.x2, houseBounds.y1], [houseBounds.x2, houseBounds.y2], [houseBounds.x1, houseBounds.y2]].map(([x,y]) => isoPoint(x,y));
+    footprint.forEach(p => { xs.push(p.x); ys.push(p.y - ISO_WALL); });
+    shown.forEach(f => { const i = indoorFloors.findIndex(x => x.id === f.id), dy = overview || ghost ? (sceneIndex - i) * floorStep : 0;
+      const fb = f.id === floor.id && frameDraft ? frameDraft : planFloorFrame(f, houseBounds);
+      [[fb.x1,fb.y1],[fb.x2,fb.y1],[fb.x2,fb.y2],[fb.x1,fb.y2]].forEach(([x,y]) => { const p = isoPoint(x,y); xs.push(p.x); ys.push(p.y + dy, p.y + dy - ISO_WALL); });
+      corners.forEach(([x, y]) => { const p = isoPoint(x, y); xs.push(p.x); ys.push(p.y + dy, p.y + dy - ISO_WALL); }); });
+    const el = wrap.current; if (!el || !xs.length) return;
+    const W = el.clientWidth, H = el.clientHeight, mobile = W < 760;
+    const cardMargin = shown.some(f => (f.items || []).length) ? equipmentScale*.6*82+12 : 0;
+    const inset = { left: Math.max(mobile ? 26 : 48,cardMargin), right: Math.max(mobile ? 82 : 100,cardMargin), top: 112, bottom: surveyVisible ? (mobile ? 265 : 235) : mobile ? 74 : 60 };
+    if (surveyVisible && surveyOnFloor && surveyValid) {
+      xs.length=0;ys.length=0;
+      const r=surveyRoom,pad=Math.max(PG,Math.min(r.w,r.h)*.06);
+      [[r.x-pad,r.y-pad],[r.x+r.w+pad,r.y-pad],[r.x+r.w+pad,r.y+r.h+pad],[r.x-pad,r.y+r.h+pad]].forEach(([x,y])=>{const p=isoPoint(x,y);xs.push(p.x);ys.push(p.y,p.y-ISO_WALL)});
+    }
+    const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
+    const width = Math.max(100,W-inset.left-inset.right), height = Math.max(120,H-inset.top-inset.bottom);
+    const k = Math.max(.001,Math.min(1, width/Math.max(1,x2-x1), height/Math.max(1,y2-y1)) * (mobile ? .86 : .92));
+    setView({ k, x: inset.left+(width-(x2-x1)*k)/2-x1*k, y: inset.top+(height-(y2-y1)*k)/2-y1*k });
+  };
+  const fitFloorRef = useRef(fitFloor); fitFloorRef.current = fitFloor;
+  useEffect(() => {
+    let timer; const schedule = () => { clearTimeout(timer); timer = setTimeout(() => fitFloorRef.current(),60); };
+    const observer = new ResizeObserver(schedule); if (wrap.current) observer.observe(wrap.current);
+    window.addEventListener('orientationchange',schedule); schedule();
+    return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener('orientationchange',schedule); };
+  }, [fid, building.id, ghost, overview, surveyVisible, survey?.roomId, surveyValid, surveyOnFloor]);
+
+  const openPlanItem = async it => {
+    if (deviceConfirmOpen.current) return;
+    const d = devById[it.ref], place = data.racks.find(r => r.id === it.ref);
+    const name = it.kind === 'place' ? place?.name : d?.name;
+    if (!name) return;
+    deviceConfirmOpen.current = true;
+    try {
+      if (!(await confirm(`Открыть «${name}»?`, { title: 'Открыть оборудование', ok: 'Открыть' }))) return;
+      if (it.kind === 'place') setTab('rack');
+      else if (!d._topology) openDevice(d);
+      else if (d._node?.childOf) { const parent = data.devices.find(x => x.id === d._node.childOf); if (parent) openDevice(parent); }
+      else toast(`${d.name}${d.host ? ' · ' + d.host : ''}`);
+    } finally { deviceConfirmOpen.current = false; }
+  };
+  const resizeRoom = (room, edge, e) => {
+    if (placingPoint) return;
+    if (!admin || !edit || tool !== 'select' || overview) return;
+    e.stopPropagation(); e.preventDefault(); setSel('room:' + room.id);
+    const pointer = e.pointerId, start = toWorld(e.clientX,e.clientY), floorId = floor.id;
+    let preview = room, changed = false, blocked = false;
+    const cleanup = () => { window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); window.removeEventListener('pointercancel',cancel); };
+    const move = ev => {
+      if (ev.pointerId !== pointer) return;
+      const p = toWorld(ev.clientX,ev.clientY), dx = p.x-start.x, dy = p.y-start.y;
+      let l=room.x, t=room.y, r=room.x+room.w, b=room.y+room.h;
+      if (edge.includes('l')) l=Math.min(snap(room.x+dx),r-PG*2);
+      if (edge.includes('r')) r=Math.max(snap(room.x+room.w+dx),l+PG*2);
+      if (edge.includes('t')) t=Math.min(snap(room.y+dy),b-PG*2);
+      if (edge.includes('b')) b=Math.max(snap(room.y+room.h+dy),t+PG*2);
+      const next={ ...room, x:l, y:t, w:r-l, h:b-t };
+      if ((floor.rooms || []).some(other => other.id !== room.id && planRoomsOverlap(next,other))) { blocked=true; return; }
+      blocked=false; preview=next; changed=['x','y','w','h'].some(k => next[k] !== room[k]);
+      setRoomResize({floorId,id:room.id,rect:next});
+    };
+    const up = ev => { if (ev.pointerId !== pointer) return; cleanup();
+      if (changed) mutateFloor(floorId,f => ({ ...f, rooms:(f.rooms || []).map(r => r.id === room.id ? preview : r) }));
+      setRoomResize(null); if (blocked) toast('Комнаты не должны перекрываться',true);
+    };
+    const cancel = ev => { if (ev.pointerId !== pointer) return; cleanup(); setRoomResize(null); };
+    window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); window.addEventListener('pointercancel',cancel);
+  };
 
   const dragItem = (it, e) => {
-    if (pinTest) return;                                     // the tap goes to the canvas → pins the speed test here
-    if (tool === 'erase') { mutate(f => ({ ...f, items: f.items.filter(x => x.id !== it.id) })); return; }
-    if (!edit) { if (it.kind === 'device') { const d = devById[it.ref]; if (d) openDevice(d); } else if (it.kind === 'place') setTab('rack'); return; }
+    if (placingPoint) return;                                // let the canvas place the measurement
+    if (tool === 'erase') { e.stopPropagation(); confirmDelete('Убрать оборудование с плана?', () => changeItems(it, items => items.filter(x => x.id !== it.id))); return; }
+    if (!edit) {
+      if (e.pointerType === 'touch' && e.isPrimary === false) return;
+      const pointer=e.pointerId, sx=e.clientX, sy=e.clientY; let moved=false, multi=false;
+      const cleanup=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerdown',down);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',cancel);};
+      const move=ev=>{if(ev.pointerId===pointer && Math.hypot(ev.clientX-sx,ev.clientY-sy)>8)moved=true;};
+      const down=ev=>{if(ev.pointerId!==pointer)multi=true;};
+      const up=ev=>{if(ev.pointerId!==pointer)return;cleanup();if(!moved&&!multi)openPlanItem(it);};
+      const cancel=ev=>{if(ev.pointerId===pointer)cleanup();};
+      window.addEventListener('pointermove',move);window.addEventListener('pointerdown',down);window.addEventListener('pointerup',up);window.addEventListener('pointercancel',cancel);return;
+    }
     if (tool !== 'select') return;
     e.stopPropagation(); const s = toWorld(e.clientX, e.clientY); const o = { x: it.x, y: it.y }; let moved = false;
-    const move = ev => { const w = toWorld(ev.clientX, ev.clientY); moved = true; mutate(f => ({ ...f, items: f.items.map(x => x.id === it.id ? { ...x, x: snap(o.x + w.x - s.x), y: snap(o.y + w.y - s.y) } : x) })); };
+    const move = ev => { const w = toWorld(ev.clientX, ev.clientY); moved = true; const p = { x: snap(o.x + w.x - s.x), y: snap(o.y + w.y - s.y) };
+      changeItems(it, items => items.map(x => x.id === it.id ? { ...x, ...p, outdoor: x._originFloorId ? true : outsideFloorPoint(p, floor) } : x)); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (!moved) setSel(it.id); };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
   const dragRoom = (rm, e) => {
-    if (tool === 'erase') { mutate(f => ({ ...f, rooms: f.rooms.filter(x => x.id !== rm.id) })); return; }
+    if (placingPoint) return;
+    if (tool === 'erase') { e.stopPropagation(); confirmDelete(`Удалить комнату «${rm.text || 'Без названия'}»?`, () => mutate(f => ({ ...f, rooms: f.rooms.filter(x => x.id !== rm.id) }))); return; }
     if (!edit || tool !== 'select') return;
-    e.stopPropagation(); const s = toWorld(e.clientX, e.clientY); const o = { x: rm.x, y: rm.y }; let moved = false;
-    const move = ev => { const w = toWorld(ev.clientX, ev.clientY); moved = true; mutate(f => ({ ...f, rooms: f.rooms.map(x => x.id === rm.id ? { ...x, x: snap(o.x + w.x - s.x), y: snap(o.y + w.y - s.y) } : x) })); };
+    e.stopPropagation(); setSel('room:' + rm.id); const s = toWorld(e.clientX, e.clientY); const o = { x: rm.x, y: rm.y }; let moved = false;
+    const move = ev => { const w = toWorld(ev.clientX, ev.clientY); moved = true; const next = { ...rm, x: snap(o.x + w.x - s.x), y: snap(o.y + w.y - s.y) }; if ((floor.rooms || []).some(x => x.id !== rm.id && planRoomsOverlap(next,x))) return; mutate(f => ({ ...f, rooms: f.rooms.map(x => x.id === rm.id ? next : x) })); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (!moved) setSel('room:' + rm.id); };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
-  const eraseWall = i => mutate(f => ({ ...f, walls: f.walls.filter((_, j) => j !== i) }));
-  const removeSel = () => { if (!sel) return; if (sel.startsWith('room:')) mutate(f => ({ ...f, rooms: f.rooms.filter(r => 'room:' + r.id !== sel) })); else mutate(f => ({ ...f, items: f.items.filter(i => i.id !== sel) })); setSel(null); };
+  const removeSel = () => {
+    if (!sel) return;
+    const message = sel.startsWith('room:') ? 'Удалить выбранную комнату?' : sel.startsWith('wall:') ? 'Удалить выбранную стену?' : 'Убрать оборудование с плана?';
+    return confirmDelete(message, () => {
+      if (sel.startsWith('room:')) return mutate(f => ({ ...f, rooms: f.rooms.filter(r => 'room:' + r.id !== sel) }));
+      if (sel.startsWith('wall:')) { const wi = Number(sel.slice(5)); return mutate(f => ({ ...f, walls: (f.walls || []).filter((_,j) => j !== wi) })); }
+      const it = visibleItems.find(i => i.id === sel); if (it) return changeItems(it, items => items.filter(i => i.id !== it.id));
+    });
+  };
 
-  const placedRefs = new Set(buildings.flatMap(b => b.floors).flatMap(f => f.items).filter(i => i.kind !== 'label').map(i => i.ref));
-  const palette = [...data.racks.map(r => ({ kind: 'place', ref: r.id, name: r.name, icon: (PLACE_KINDS[r.kind] || PLACE_KINDS.rack).icon })),
-    ...data.devices.map(d => ({ kind: 'device', ref: d.id, name: d.name, icon: d.kind }))].filter(x => !placedRefs.has(x.ref) || (pending && pending.ref === x.ref));
-  const others = ghost ? building.floors.filter(f => f.id !== floor.id) : [];
-
+  const placedRefs = new Set(buildings.flatMap(b => b.floors).flatMap(f => f.items).filter(i => i.kind !== 'label').map(i => `${i.kind}:${i.ref}`));
+  const allPalette = [...data.racks.map(r => ({ kind: 'place', ref: r.id, name: r.name, icon: (PLACE_KINDS[r.kind] || PLACE_KINDS.rack).icon,
+      typeLabel: PLACE_KINDS[r.kind]?.label || PLACE_KINDS.rack.label, group: 'Места', search: `${r.name} ${r.kind}` })),
+    ...networkDevices.map(d => ({ kind: 'device', ref: d.id, name: d.name, icon: d.kind, typeLabel: KIND_TEXT[d.kind] || d.kind,
+      snapshot: d._topology ? { name: d.name, kind: d.kind, host: d.host || '' } : null,
+      group: 'Устройства сети', search: `${d.name} ${d.kind} ${KIND_TEXT[d.kind] || d.kind} ${d.driver || ''} ${d.ip || ''} ${d.host || ''} ${d.mac || ''} ${d.kind === 'ap' ? 'точки доступа точка доступа access point' : ''}` }))]
+    .map(x => ({ ...x, placed: placedRefs.has(`${x.kind}:${x.ref}`) }));
+  const q = equipQuery.trim().toLowerCase();
+  const palette = allPalette.filter(x => !q || `${x.search} ${x.typeLabel} ${x.group}`.toLowerCase().includes(q));
   return <div className="plan">
     <WorkMenu title={building.name}>
       <WorkSec title="Этаж">
-        <WorkChoice keep value={floor.id} options={building.floors.map(f => ({ value: f.id, label: f.name, icon: f.outdoor ? 'tree' : 'home' }))} onChange={setFid} />
-        {tests.length ? <WorkItem keep icon="wifi" label="Покрытие Wi-Fi" sub={`замеров на этаже: ${tests.length}`} on={cov} onClick={() => { setCov(!cov); setSelTest(null); }} /> : null}
+        {indoorFloors.length > 1 ? <WorkSwitch icon="eye" label="Показать нижние этажи" on={ghost} onChange={setGhost} /> : null}
       </WorkSec>
-      {edit ? <WorkSec title="Этажи и двор">
-        <WorkItem icon="plus" label="Добавить этаж" onClick={() => addFloor(false)} />
-        {!building.floors.some(f => f.outdoor) ? <WorkItem icon="tree" label="Добавить двор" onClick={() => addFloor(true)} /> : null}
-        {building.floors.length > 1 ? <WorkItem icon="trash" danger label={`Удалить «${floor.name}»`} onClick={delFloor} /> : null}
-        {building.floors.length > 1 ? <WorkSwitch icon="eye" label="Показать соседний этаж" on={ghost} onChange={setGhost} /> : null}
-      </WorkSec> : null}
-      {edit ? <WorkSec title="Инструменты">
-        <WorkChoice value={tool} options={[{ value: 'select', label: 'Двигать', icon: 'cursor' }, { value: 'room', label: 'Комната', icon: 'tag' }, { value: 'wall', label: 'Стена', icon: 'wall' },
-          { value: 'place', label: 'Оборудование', icon: 'plus' }, { value: 'erase', label: 'Удалить', icon: 'eraser' }]} onChange={v => { setTool(v); setWallPt(null); setPending(null); }} />
-        {tool === 'wall' && wallPt ? <WorkItem icon="check" label="Закончить стену" onClick={() => setWallPt(null)} /> : null}
-        {sel ? <WorkItem icon="trash" danger label="Убрать выбранное" onClick={removeSel} /> : null}
-      </WorkSec> : null}
-      <WorkSec title="Дом">
-        <WorkItem icon="map" label="Сеть дома" sub="карта сети этого дома, связанная с общей" onClick={net} />
-        <WorkItem icon="chevronLeft" label="Все дома — к плану" onClick={back} />
+      {admin ? <WorkSec title="Размер оборудования"><div className="plan-equipment-size row">
+        <Btn size="sm" icon="minus" title="Уменьшить оборудование" disabled={equipmentScale <= .6} onClick={() => setEquipmentScale(equipmentScale-.2)} />
+        <b aria-label="Масштаб оборудования">{Math.round(equipmentScale*100)}%</b>
+        <Btn size="sm" icon="plus" title="Увеличить оборудование" disabled={equipmentScale >= 2.4} onClick={() => setEquipmentScale(equipmentScale+.2)} />
+        <Btn size="sm" onClick={() => resetSize('equipmentScale')}>Сброс</Btn>
+      </div></WorkSec> : null}
+      <WorkSec title="Покрытие Wi-Fi">
+        <WorkSwitch icon="wifi" label="Показать покрытие Wi-Fi" on={cov && !overview} onChange={value => { setCov(value); setSelTest(null); if (value) setOverview(false); }} />
+        {admin ? <WorkItem icon="pin" label={survey ? 'Продолжить обход комнаты' : 'Обход комнаты · 5 точек'} onClick={()=>survey ? returnToSurvey() : setSurveyChoose(true)} /> : null}
+        <div className="plan-coverage-settings">
+          <label>Размер отметок<div className="plan-equipment-size row">
+            <Btn size="sm" icon="minus" title="Уменьшить отметки" disabled={coverageMarkerScale <= .2} onClick={() => setCoverageMarkerScale(coverageMarkerScale-.1)} />
+            <b aria-label="Размер отметок">{Math.round(coverageMarkerScale*100)}%</b>
+            <Btn size="sm" icon="plus" title="Увеличить отметки" disabled={coverageMarkerScale >= 1} onClick={() => setCoverageMarkerScale(coverageMarkerScale+.1)} />
+            <Btn size="sm" onClick={() => resetSize('coverageMarkerScale')}>Сброс</Btn>
+          </div></label>
+          <label>Показатель<select className="select" aria-label="Показатель покрытия" value={covMode} onChange={e=>{setCovMode(e.target.value);setSelTest(null)}}>
+            <option value="auto">Авто · сигнал при наличии</option><option value="signal">Сигнал · дБм</option><option value="speed">Скорость · Мбит/с</option>
+          </select></label>
+          {coverageSources.length ? <label>Точка доступа и диапазон<select className="select" aria-label="Источник покрытия" value={coverageSource} onChange={e=>{setCovSource(e.target.value);setSelTest(null)}}>
+            {coverageSources.map(g=><option key={g.id} value={g.id}>{g.label}</option>)}
+          </select></label> : null}
+        </div>
+        <div className="dim" style={{ fontSize: 12, padding: '0 10px 8px' }}>
+          {tests.length ? <div>На этаже: {tests.length} · в выбранной карте: {coverageTests.length} · мест с данными: {coverageData.samples.length}</div> : null}
+          {coverageHint}
+        </div>
       </WorkSec>
+      <WorkSec title="План дома"><WorkItem icon="chevronLeft" label="Все дома" onClick={back} /></WorkSec>
     </WorkMenu>
-    <div className={'plan-canvas' + (tool !== 'select' || pinTest ? ' crosshair' : '')} ref={wrap} {...bind}>
+    <div className={'plan-canvas' + (tool !== 'select' || placingPoint ? ' crosshair' : '')} ref={wrap} {...bind}>
       <svg>
         <defs><pattern id="pgridB" width={PG} height={PG} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <circle cx={1} cy={1} r={.8} fill="var(--line)" /></pattern></defs>
-        <rect x={0} y={0} width="100%" height="100%" fill="url(#pgridB)" />
+        <rect x={0} y={0} width="100%" height="100%" fill="var(--bg2)" />
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-          {floor.outdoor ? <rect x={-60} y={-60} width={1600} height={1100} rx={16} fill="color-mix(in srgb, var(--green) 10%, transparent)" /> : null}
-          <g className="ghost">
-            {others.flatMap(f => (f.rooms || []).map(r => <rect key={f.id + r.id} x={r.x} y={r.y} width={r.w} height={r.h} rx={6} className="plan-room-ghost" />))}
-            {others.flatMap(f => (f.walls || []).map((w, i) => <line key={f.id + 'w' + i} x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2} className="plan-wall ghost" />))}
-            {others.flatMap(f => (f.items || []).map(it => <circle key={f.id + it.id} cx={it.x} cy={it.y} r={16} className="plan-item-ghost" />))}
-          </g>
-          {(floor.rooms || []).map(r => { const rc = r.color || '#0a84ff';
-            return <g key={r.id} className={'plan-room' + (sel === 'room:' + r.id ? ' sel' : '')} onPointerDown={e => dragRoom(r, e)} style={{ cursor: edit && tool === 'select' ? 'move' : tool === 'erase' ? 'pointer' : 'default' }}>
-            <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={4} className="pr-fill" style={{ fill: `color-mix(in srgb, ${rc} 12%, var(--bg2))`, stroke: rc }} />
-            {r.text ? <rect x={r.x} y={r.y} width={Math.min(r.w, r.text.length * 7.3 + 16)} height={20} rx={4} fill={rc} opacity=".92" /> : null}
-            {r.text ? <text x={r.x + 8} y={r.y + 14} className="pr-tag">{r.text}</text> : null}</g>; })}
-          {(floor.walls || []).map((w, i) => <line key={i} className="plan-wall" x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
-            onClick={() => tool === 'erase' && eraseWall(i)} style={{ cursor: tool === 'erase' ? 'pointer' : 'default' }} />)}
-          {draft ? <rect x={draft.x} y={draft.y} width={draft.w} height={draft.h} rx={6} className={tool === 'erase' ? 'plan-erase-draft' : 'plan-room-draft'} /> : null}
-          {cov && tests.length ? <CoverageLayer tests={tests} sel={selTest} onSel={setSelTest} /> : null}
-          {(floor.items || []).map(it => <PlanItem key={it.id} it={it} devById={devById} racks={data.racks} sel={sel === it.id} edit={edit} onDown={e => dragItem(it, e)} />)}
-          {edit ? <PlanCursor wrap={wrap} view={view} tool={tool} wallPt={wallPt} /> : null}
+          <PlanIsoScene floors={sceneFloors} activeId={overview ? indoorFloors[indoorFloors.length-1].id : floor.id} activeIndex={sceneIndex} bounds={sceneBounds} houseBounds={houseBounds} ghost={ghost} planeRef={planeRef}
+            draft={draft} tool={tool} edit={edit && !overview} cov={cov && !overview} tests={coverageTests} coverageData={coverageData} coverageMetric={coverageMetric} selTest={selTest} setSelTest={setSelTest} placingPoint={placingPoint}
+            survey={surveyVisible && surveyOnFloor && surveyValid && !pinTest ? survey : null}
+            devById={devById} racks={data.racks} sel={sel} dragRoom={dragRoom} dragItem={dragItem} wrap={wrap} view={view} wallPt={wallPt}
+            admin={admin} frameDraft={frameDraft} resizeFloor={resizeFloor} projection={projection} overview={overview} equipmentScale={equipmentScale} coverageMarkerScale={coverageMarkerScale} floorStep={floorStep} resizeRoom={resizeRoom} icons={data.icons || {}} />
         </g>
       </svg>
-      <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={back}>Все дома</Btn><b className="ellipsis">{building.name}</b></div>
-      {building.floors.length > 1 ? <div className="plan-floors plan-ovl">{building.floors.map(f => <button key={f.id} className={'chip' + (f.id === floor.id ? ' on' : '')} onClick={() => setFid(f.id)}>
-        <Icon name={f.outdoor ? 'tree' : 'home'} size={13} />{f.name}</button>)}</div> : null}
-      {tool === 'place' && edit ? <div className="plan-palette plan-ovl card pad">
-        <div className="dim" style={{ fontSize: 13, marginBottom: 8 }}>{pending ? 'Теперь нажмите на план, куда поставить' : 'Выберите, что разместить:'}</div>
-        <div className="row wrap" style={{ gap: 6 }}>{palette.map(p => <button key={p.ref} className={'chip' + (pending && pending.ref === p.ref ? ' on' : '')} onClick={() => setPending(p)}><Icon name={p.icon} size={13} />{p.name}</button>)}
-          {!palette.length ? <span className="dim" style={{ fontSize: 13 }}>Всё уже размещено. Нет нужного? Добавьте устройство на вкладке «Устройства» (можно «Пинг»/«Агент» как заглушку).</span> : null}</div>
-      </div> : null}
-      {cov && selTest && tests.find(t => t.id === selTest) ? (() => { const t = tests.find(x => x.id === selTest);
+      <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={back}>Все дома</Btn><b className="ellipsis">{building.name}</b>
+        <Btn size="sm" icon="home" kind={overview ? 'primary' : ''} onClick={() => { setOverview(v => !v); setTool('select'); setPending(null); setWallPt(null); setSel(null); }}>{overview ? 'К этажу' : 'Весь дом'}</Btn>
+      </div>
+      {indoorFloors.length > 1 ? <div className="plan-floors plan-ovl"><label className="plan-floor-picker"><Icon name="home" size={16} /><span>Этаж</span>
+        <select aria-label="Выбрать этаж" value={overview ? '' : floor.id} onChange={e => { setOverview(false); setFid(e.target.value); setSel(null); }}>
+          {overview ? <option value="" disabled>Общий вид</option> : null}
+          {indoorFloors.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+        </select></label></div> : null}
+      {admin && edit ? <div className="plan-tool-current plan-ovl"><Icon name={tool === 'select' ? 'cursor' : tool === 'room' ? 'tag' : tool === 'wall' ? 'wall' : tool === 'place' ? 'plus' : 'eraser'} size={14} />
+        {overview ? 'Общий вид дома' : 'Инструмент: ' + ({ select: 'Выбрать / двигать', room: 'Комната', wall: 'Стена', place: 'Оборудование', erase: 'Удаление' })[tool]}</div> : null}
+      <div className="plan-edit-dock plan-ovl">
+        {editOpen ? <div className="plan-edit-panel card pad">
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}><b>Инструменты плана</b><button className="icon-btn" title="Закрыть" onClick={() => setEditOpen(false)}><Icon name="x" size={16} /></button></div>
+          {admin && edit ? <>
+              <div className="plan-tool-grid" aria-label="Инструменты редактирования">
+                {[['select','Выбрать / двигать','cursor'],['room','Комната','tag'],['wall','Стена','wall'],['place','Оборудование','plus'],['erase','Удалить','eraser']].map(([v,label,icon]) =>
+                  <button key={v} className={'chip' + (!overview && tool === v ? ' on' : '')} onClick={() => { setOverview(false); setTool(v); setWallPt(null); setPending(null); }}><Icon name={icon} size={15} />{label}</button>)}
+              </div>
+              <div className="plan-tool-status"><Icon name={tool === 'select' ? 'cursor' : tool === 'room' ? 'tag' : tool === 'wall' ? 'wall' : tool === 'place' ? 'plus' : 'eraser'} size={14} />
+                Сейчас: {({ select: 'Выбрать / двигать', room: 'Комната', wall: 'Стена', place: 'Оборудование', erase: 'Удаление' })[tool]}</div>
+              {!overview ? <div className="row wrap" style={{ marginTop: 8 }}>
+                <Btn size="sm" icon="plus" onClick={addFloor}>Добавить этаж</Btn>
+                {indoorFloors.length > 1 ? <Btn size="sm" icon="trash" kind="danger" onClick={delFloor}>Удалить этаж</Btn> : null}
+                {floor.frame ? <Btn size="sm" icon="fit" onClick={resetFloorFrame}>Сбросить размер этажа</Btn> : null}
+                {tool === 'wall' && wallPt ? <Btn size="sm" icon="check" onClick={() => setWallPt(null)}>Готово со стеной</Btn> : null}
+                {sel ? <Btn size="sm" icon="trash" kind="danger" onClick={removeSel}>{sel.startsWith('wall:') ? 'Удалить стену' : sel.startsWith('room:') ? 'Удалить комнату' : 'Удалить выбранное'}</Btn> : null}
+              </div> : null}
+              {tool === 'place' ? <div className="plan-equip-list">
+                <div className="dim" style={{ fontSize: 12, margin: '8px 0 5px' }}>{pending ? 'Нажмите на место установки' : 'Все устройства и места сети'}</div>
+                <input className="input plan-equip-search" value={equipQuery} onChange={e => setEquipQuery(e.target.value)} placeholder="Найти устройство или точку доступа" />
+                {palette.map(p => <button key={p.kind + ':' + p.ref} className={'plan-equip-option' + (pending && pending.ref === p.ref && pending.kind === p.kind ? ' on' : '')} onClick={() => { setPending(p); setEditOpen(false); }}>
+                  <Icon name={p.icon} size={19} /><span className="plan-equip-copy"><b>{p.name}</b><small>{p.typeLabel} · {p.group}{p.placed ? ' · уже на плане, переместить' : ''}</small></span></button>)}
+                {!palette.length ? <div className="dim" style={{ fontSize: 12 }}>{allPalette.length ? 'Ничего не найдено.' : 'В сети пока нет оборудования.'}</div> : null}
+                {pending ? <div className="dim" style={{ fontSize: 11, marginTop: 5 }}>Можно поставить за пределами стен, на участке.</div> : null}
+              </div> : null}
+          </> : <div className="dim" style={{ fontSize: 12, marginTop: 8 }}>Переключатели этажей и редактирования находятся в меню вверху.</div>}
+        </div> : null}
+        <button className={'plan-edit-fab' + (editOpen ? ' on' : '')} aria-label="Инструменты плана" title="Инструменты плана" onClick={() => setEditOpen(!editOpen)}>
+          <Icon name={editOpen ? 'x' : 'plus'} size={23} stroke={2.4} />
+        </button>
+      </div>
+      {cov && !overview && selTest && coverageTests.find(t => t.id === selTest) ? (() => { const t = coverageTests.find(x => x.id === selTest);
         return <div className="plan-testcard plan-ovl"><Card title={t.note || 'Замер скорости'} right={<Btn size="sm" icon="x" onClick={() => setSelTest(null)} />}>
           <div className="list"><SpeedRow t={t} now={data.now} /></div>
           {admin ? <div className="row wrap" style={{ marginTop: 8 }}>
             <Btn size="sm" icon="pin" onClick={() => { setPinTest(t.id); setSelTest(null); }}>Переставить</Btn>
             <Btn size="sm" kind="danger" icon="trash" onClick={() => { pinAt(t.id, null); setSelTest(null); }}>Убрать с плана</Btn></div> : null}
         </Card></div>; })() : null}
-      {cov && tests.length && !selTest ? <div className="legend plan-ovl plan-cov"><span className="dim">Скорость Wi-Fi, Мбит/с:</span>
-        {SPEED_LEVELS.map(([v, c, t]) => <span key={v}><i style={{ background: c }} />{t} {v ? 'от ' + v : 'до 15'}</span>)}</div> : null}
-      {edit && !(tool === 'place') ? <div className="plan-hint plan-ovl">{tool === 'wall' ? 'Нажимайте, чтобы ставить углы · меню → «Закончить стену»' : tool === 'room' ? 'Обведите прямоугольник комнаты' :
-        tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Тащите устройства · два пальца / колесо — зум'}</div> : null}
+      {edit && !overview && tool === 'place' && pending ? <div className="plan-placement-prompt plan-ovl">
+        <span className="ellipsis">Куда поставить «{pending.name}»?</span><Btn size="sm" icon="x" onClick={() => { setPending(null); setTool('select'); }}>Отмена</Btn>
+      </div> : null}
+      {surveyVisible && !pinTest ? <div className="plan-survey-card plan-ovl" role="region" aria-label="Обход комнаты">
+        <div className="plan-survey-head"><span className="plan-survey-badge"><Icon name="wifi" size={18} /></span><div className="grow"><small>ОБХОД КОМНАТЫ</small><b>{survey.roomName}</b></div>
+          <button className="plan-survey-close" aria-label="Свернуть обход" onClick={()=>{setSurveyHidden(true);setSurveyPicking(false)}}><Icon name="x" size={17} /></button></div>
+        <div className="plan-survey-progress" aria-label="Прогресс обхода">{survey.points.map((p,i)=><button key={i} className={(p.testId?'done ':'')+(survey.index===i?'current':'')} aria-label={'Точка обхода '+(i+1)} aria-current={survey.index===i?'step':undefined}
+          disabled={surveySaving || !surveyValid || !surveyOnFloor || !!survey.pendingTest} onClick={()=>{setSurvey(s=>({...s,index:i}));setSurveyPicking(false)}}>{i+1}</button>)}</div>
+        {!surveyValid ? <><p>Комната изменилась. Построим новый маршрут; сохранённые замеры останутся.</p><Btn size="sm" onClick={()=>{setSurvey(null);setSurveyPicking(false);setSurveyChoose(true)}}>Выбрать комнату</Btn></> :
+          !surveyOnFloor ? <><p>Маршрут находится на этаже «{surveyFloor.name}».</p><Btn kind="primary" onClick={returnToSurvey}>Вернуться к обходу</Btn></> :
+          survey.index>=5 ? <><p><b>Все 5 точек сохранены</b><br />{surveySources.size>1 ? 'Точка доступа или диапазон менялись — результаты находятся в разных картах.' : 'Посмотрите карту или повторите любую точку, нажав её номер.'}</p>
+            <div className="row wrap"><Btn size="sm" kind="primary" onClick={()=>{setSurveyChoose(true);setSurveyPicking(false)}}>Другая комната</Btn><Btn size="sm" onClick={()=>{setSurvey(null);setSurveyPicking(false)}}>Закончить</Btn></div></> :
+          <><p><b>{surveyPicking ? 'Укажите, где сможете встать' : survey.pendingTest ? 'Замер готов к сохранению' : 'Подойдите к точке '+(survey.index+1)+' из 5'}</b><br />
+            {surveyPicking ? 'Нажмите внутри этой комнаты. Затем подойдите туда для замера.' : survey.pendingTest ? 'Подтвердите: во время замера вы стояли у подсвеченной отметки.' : 'Подсвеченная отметка — ваше место. Во время замера постойте спокойно.'}</p>
+            {surveySourceChanged ? <div className="plan-survey-warning">Точка доступа или диапазон изменились — этот замер попадёт в другую карту.</div> : null}
+            {survey.pendingTest && coverageValue(survey.pendingTest,'signal')==null ? <div className="plan-survey-note">Сигнал недоступен: сохранится скорость. Для сигнала откройте локальный адрес NAS.</div> : null}
+            <div className="row wrap">{surveyPicking ? <Btn size="sm" onClick={()=>setSurveyPicking(false)}>Отмена</Btn> : survey.pendingTest ? <>
+              <Btn size="sm" kind="primary" busy={surveySaving} disabled={surveySaving} onClick={()=>saveSurveyPoint(survey.pendingTest)}>Сохранить эту точку</Btn>
+              <Btn size="sm" disabled={surveySaving} onClick={()=>setSurvey(s=>({...s,pendingTest:null}))}>Повторить замер</Btn></> : <>
+              <Btn size="sm" kind="primary" icon="gauge" onClick={()=>{setPinTest(null);setSurveyMeasuring(true)}}>Я на месте · измерить</Btn>
+              <Btn size="sm" onClick={()=>{setSurveyPicking(true);setTool('select');setSel(null);setSelTest(null)}}>Уточнить место</Btn></>}</div>
+          </>}
+        <div className="plan-survey-foot">{survey.points.filter(p=>p.testId).length} из 5 сохранено · прогресс в этой вкладке
+          {survey.index<5 ? <button className="plan-survey-end" disabled={surveySaving} onClick={async()=>{if(await confirm('Завершить обход? Сохранённые замеры останутся; новый маршрут можно начать позже.',{ok:'Завершить'})){setSurvey(null);setSurveyPicking(false)}}}>Завершить обход</button> : null}</div>
+      </div> : null}
+      {edit && !overview && !(tool === 'place') && !placingPoint && !surveyVisible ? <div className="plan-hint plan-ovl">{tool === 'wall' ? 'Нажимайте на план, чтобы провести стену · затем нажмите «Готово со стеной»' : tool === 'room' ? 'Обведите прямоугольник комнаты' :
+        tool === 'select' ? (sel?.startsWith('room:') ? 'Комната выбрана · тяните за углы или края, чтобы изменить размер' : 'Перетаскивайте оборудование и комнаты. Потяните угловые точки пола, чтобы изменить его размер.') :
+        tool === 'erase' ? 'Нажмите на стену, комнату или устройство' : 'Перетаскивайте объекты · оборудование можно ставить снаружи'}</div> : null}
       <ZoomBtns setView={setView} onFit={fitFloor} />
     </div>
+    {surveyChoose ? <Modal title="Обход комнаты" icon={<Icon name="wifi" size={21} color="var(--accent)" />} onClose={()=>setSurveyChoose(false)}>
+      <div className="survey-intro"><b>Пять точек для понятной карты</b><p>Выберите комнату. Покажем маршрут у четырёх углов и в центре, поможем сделать замеры и сохранить их на нужных местах.</p>
+        <span className="dim">Если к отметке нельзя подойти, уточните её место перед замером. Используйте один телефон.</span></div>
+      <div className="plan-survey-note">{surveyConnection?.proxy || surveyConnection?.nat ? 'Сейчас телефон не определяется: получится карта скорости. Для карты сигнала откройте локальный адрес NAS.' : 'Для карты сигнала нужен локальный адрес NAS и определение телефона роутером. Если сигнал недоступен, покажем скорость.'}</div>
+      <div className="survey-room-list">{(floor.rooms||[]).map((r,i)=><button className="survey-room-choice" key={r.id} onClick={()=>startSurvey(r)}><Icon name="home" size={21} /><span><b>{r.text||'Комната '+(i+1)}</b><small>{floor.name} · 5 точек</small></span><Icon name="chevronRight" size={18}/></button>)}</div>
+      {!(floor.rooms||[]).length ? <div className="dim">На этом этаже ещё нет комнат. Добавьте комнату или выберите другой этаж.</div> : null}
+    </Modal> : null}
+    {surveyMeasuring && survey && surveyValid && survey.index<5 ? <SpeedTestModal autoRun survey={{name:survey.roomName,step:survey.index+1,source:survey.points.find(p=>p.testId)?.source}} onSurveyMeasured={surveyMeasured} onSurveySave={saveSurveyPoint} onClose={()=>setSurveyMeasuring(false)} /> : null}
+    {roomEditor ? <Modal title="Новая комната" onClose={() => setRoomEditor(null)}>
+      <form onSubmit={saveRoom}>
+        <Field label="Название комнаты"><input className="input" aria-label="Название комнаты" autoFocus required maxLength={80} value={roomEditor.name}
+          onChange={e => setRoomEditor(r => ({ ...r, name: e.target.value }))} /></Field>
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+          <Btn onClick={() => setRoomEditor(null)}>Отмена</Btn><Btn kind="primary" type="submit" icon="check">Создать комнату</Btn>
+        </div>
+      </form>
+    </Modal> : null}
   </div>;
 }
 
-function PlanItem({ it, devById, racks, sel, edit, onDown }) {
+function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghost, planeRef, draft, tool, edit, cov, tests, coverageData, coverageMetric, selTest, setSelTest, placingPoint, survey,
+  devById, racks, sel, dragRoom, dragItem, wrap, view, wallPt, admin, frameDraft, resizeFloor, projection, overview, equipmentScale, coverageMarkerScale, floorStep, resizeRoom, icons }) {
+  const { a, b, c, d } = projection;
+  const isoPoint = (x,y) => ({ x: a*x + c*y, y: b*x + d*y });
+  const isoPoly = pts => pts.map(([x,y]) => { const p = isoPoint(x,y); return `${p.x},${p.y}`; }).join(' ');
+  const corners = [[bounds.x1, bounds.y1], [bounds.x2, bounds.y1], [bounds.x2, bounds.y2], [bounds.x1, bounds.y2]];
+  const ground = corners.map(([x, y]) => isoPoint(x, y));
+  const shellBounds = overview ? floors.reduce((b,f) => { const q = planFloorFrame(f,houseBounds); return { x1: Math.min(b.x1,q.x1), y1: Math.min(b.y1,q.y1), x2: Math.max(b.x2,q.x2), y2: Math.max(b.y2,q.y2) }; },houseBounds) : houseBounds;
+  const houseCorners = [[shellBounds.x1, shellBounds.y1], [shellBounds.x2, shellBounds.y1], [shellBounds.x2, shellBounds.y2], [shellBounds.x1, shellBounds.y2]];
+  const top = houseCorners.map(([x, y]) => isoPoint(x, y));
+  const cutWallHeight = overview ? 72 : ISO_WALL;
+  const wallFace = w => { const a = isoPoint(w.x1, w.y1), b = isoPoint(w.x2, w.y2);
+    return `${a.x},${a.y} ${b.x},${b.y} ${b.x},${b.y - cutWallHeight} ${a.x},${a.y - cutWallHeight}`; };
+  const roomPoints = r => isoPoly([[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]);
+  const draftPoints = draft && isoPoly([[draft.x, draft.y], [draft.x + draft.w, draft.y], [draft.x + draft.w, draft.y + draft.h], [draft.x, draft.y + draft.h]]);
+  const visibleFloors = (overview ? floors : ghost ? floors.slice(0,activeIndex+1) : floors.filter(f => f.id === activeId)).slice().sort((a,b) => floors.indexOf(a)-floors.indexOf(b));
+  const groundDy = activeIndex * floorStep + ISO_SLAB;
+  return <g className={'plan-iso-scene' + (overview ? ' overview' : '')}>
+    <defs>
+      <linearGradient id="plan-wall-matte" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+        <stop offset="0" stopColor="var(--plan-wall-active)" /><stop offset="1" stopColor="var(--plan-wall-shade)" />
+      </linearGradient>
+      <linearGradient id="plan-wall-matte-side" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+        <stop offset="0" stopColor="var(--plan-wall-shade)" /><stop offset="1" stopColor="var(--plan-wall-edge)" />
+      </linearGradient>
+    </defs>
+    {overview || ghost || activeIndex === 0 ? <polygon points={ground.map(p => `${p.x},${p.y + groundDy}`).join(' ')} className="plan-iso-ground" /> : null}
+    {overview ? <g className="plan-building-shell" pointerEvents="none">
+      {[[top[0],top[1]],[top[3],top[0]]].map(([p,q],k) => <g key={k}>
+        <polygon points={`${p.x},${p.y-ISO_WALL} ${q.x},${q.y-ISO_WALL} ${q.x},${q.y+groundDy} ${p.x},${p.y+groundDy}`} className={'plan-building-facade side-'+k} />
+        {floors.map((f,i) => { const y = (activeIndex-i)*floorStep+ISO_SLAB; return <line key={f.id} x1={p.x} y1={p.y+y} x2={q.x} y2={q.y+y} className="plan-building-seam" />; })}
+      </g>)}
+    </g> : null}
+    {visibleFloors.map(f => { const i = floors.findIndex(x => x.id === f.id), active = f.id === activeId, dy = (activeIndex - i) * floorStep;
+      const frame = active && frameDraft ? frameDraft : planFloorFrame(f, houseBounds);
+      const ft = [[frame.x1,frame.y1],[frame.x2,frame.y1],[frame.x2,frame.y2],[frame.x1,frame.y2]].map(([x,y]) => isoPoint(x,y));
+      const fBottom = ft.map((p,k) => [p,ft[(k+1)%4]]);
+      const fRooms = f.rooms || [], fWalls = f.walls || [], fItems = f.items || [];
+      const walls3d = fWalls.length ? fWalls : fRooms.flatMap(r => [
+        { x1: r.x, y1: r.y, x2: r.x + r.w, y2: r.y }, { x1: r.x + r.w, y1: r.y, x2: r.x + r.w, y2: r.y + r.h },
+        { x1: r.x + r.w, y1: r.y + r.h, x2: r.x, y2: r.y + r.h }, { x1: r.x, y1: r.y + r.h, x2: r.x, y2: r.y }
+      ]);
+      return <g key={f.id} data-floor-id={f.id} transform={`translate(0,${dy})`} opacity={overview ? (active ? 1 : .9) : active ? 1 : .46} pointerEvents={!overview && active ? 'auto' : 'none'} className={active ? 'plan-iso-level active' : 'plan-iso-level'}>
+        {fBottom.map((edge, k) => <polygon key={k} points={`${edge[0].x},${edge[0].y + ISO_SLAB} ${edge[1].x},${edge[1].y + ISO_SLAB} ${edge[1].x},${edge[1].y} ${edge[0].x},${edge[0].y}`}
+          className="plan-iso-slab-side" />)}
+        <polygon points={ft.map(p => `${p.x},${p.y}`).join(' ')} className="plan-iso-slab" />
+        {fRooms.map(r => { const rc = r.color || '#0a84ff', p = isoPoint(r.x + r.w / 2, r.y + r.h / 2);
+          return <g key={r.id} className={'plan-room plan-iso-room' + (active && sel === 'room:' + r.id ? ' sel' : '')}
+            onPointerDown={active ? e => dragRoom(r, e) : undefined} style={{ cursor: active && edit && tool === 'select' ? 'move' : active && tool === 'erase' ? 'pointer' : 'default' }}>
+            <polygon points={roomPoints(r)} className="pr-fill" style={{ fill: `color-mix(in srgb, ${rc} ${active ? 32 : 18}%, var(--bg2))`, stroke: rc }} />
+            {r.text ? <text x={p.x} y={p.y + 4} className="plan-iso-label" textAnchor="middle">{r.text}</text> : null}
+          </g>; })}
+        {active && cov && tests.length ? <g transform={`matrix(${a} ${b} ${c} ${d} 0 0)`}><CoverageSurface mesh={coverageData} metric={coverageMetric} /></g> : null}
+        {walls3d.map((w,wi) => ({w,wi})).sort((a,b) => isoPoint(a.w.x1+a.w.x2,a.w.y1+a.w.y2).y-isoPoint(b.w.x1+b.w.x2,b.w.y1+b.w.y2).y).map(({w,wi}) => <g key={wi} data-wall-side={Math.abs(w.x2-w.x1) >= Math.abs(w.y2-w.y1) ? 'x' : 'y'} data-plan-wall={wi < fWalls.length ? wi : undefined} className={'plan-iso-wall' + (active && sel === 'wall:' + wi ? ' selected' : '')}>
+          <polygon points={wallFace(w)} className="plan-iso-wall-face" />
+          {(() => { const a = isoPoint(w.x1, w.y1), b = isoPoint(w.x2, w.y2); return <>
+            <line x1={a.x} y1={a.y - cutWallHeight} x2={b.x} y2={b.y - cutWallHeight} className="plan-iso-wall-top" />
+            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="plan-iso-wall-base" />
+          </>; })()}
+        </g>)}
+        {active && draft ? <polygon points={draftPoints} className={tool === 'erase' ? 'plan-erase-draft' : 'plan-room-draft'} /> : null}
+        {fItems.map(it => { const p = isoPoint(it.x, it.y); return <g key={it.id} transform={`translate(${p.x - it.x},${p.y - it.y})`}>
+          <PlanItem it={it} devById={devById} racks={racks} sel={active && sel === it.id} edit={edit} scale={equipmentScale*Math.max(1,.6/view.k)} icons={icons} onDown={active ? e => dragItem(it, e) : undefined} />
+        </g>; })}
+        {active && cov && tests.length ? <g transform={`matrix(${a} ${b} ${c} ${d} 0 0)`}><CoverageLayer tests={tests} mesh={coverageData} metric={coverageMetric} sel={selTest} onSel={setSelTest} placing={placingPoint} view={view} projection={projection} markerScale={coverageMarkerScale} /></g> : null}
+        {active && survey ? <g className="plan-survey-route" pointerEvents="none">
+          <polyline points={survey.points.map(p=>{const q=isoPoint(p.x,p.y);return q.x+','+q.y}).join(' ')} fill="none" stroke="var(--accent)" opacity=".45" strokeWidth={2/view.k} strokeDasharray={`${6/view.k} ${6/view.k}`} />
+          {survey.points.map((p,i)=>{const q=isoPoint(p.x,p.y);return <g key={i} className={'plan-survey-stop'+(i===survey.index?' current':'')+(p.testId?' done':'')} data-survey-stop={i} transform={`translate(${q.x},${q.y}) scale(${1/view.k})`}>
+            {i===survey.index?<circle className="plan-survey-halo" r={24}/>:null}<circle className="plan-survey-dot" r={14}/><text y={4.5} textAnchor="middle">{p.testId?'✓':i+1}</text></g>})}
+        </g> : null}
+        {active && admin && edit && tool === 'select' && sel?.startsWith('room:') ? (() => {
+          const room=fRooms.find(r => sel === 'room:' + r.id); if (!room) return null;
+          const x=room.x,y=room.y,w=room.w,h=room.h;
+          const handles=[[x,y,'lt'],[x+w/2,y,'t'],[x+w,y,'rt'],[x+w,y+h/2,'r'],[x+w,y+h,'rb'],[x+w/2,y+h,'b'],[x,y+h,'lb'],[x,y+h/2,'l']];
+          return <g className="plan-room-selection" data-selected-room={room.id}>
+            <polygon points={roomPoints(room)} className="plan-room-selection-ring" strokeWidth={3/view.k} strokeDasharray={`${6/view.k} ${4/view.k}`} pointerEvents="none" />
+            {handles.map(([hx,hy,edge]) => { const p=isoPoint(hx,hy); return <g key={edge} className="plan-room-resize-handle" data-room-edge={edge} onPointerDown={e => resizeRoom(room,edge,e)}>
+              <circle cx={p.x} cy={p.y} r={22/view.k} fill="transparent" pointerEvents="all" />
+              <circle cx={p.x} cy={p.y} r={(edge.length===2?9:7.5)/view.k} className="plan-room-resize-dot" strokeWidth={2/view.k} pointerEvents="none" />
+            </g>; })}
+          </g>;
+        })() : null}
+        {active && admin && edit && tool === 'select' && !sel?.startsWith('room:') ? ft.map((p,k) => <g key={k} className="plan-floor-resize" onPointerDown={e => resizeFloor(['lt','rt','rb','lb'][k], e)}>
+          <circle cx={p.x} cy={p.y} r={24/view.k} className="plan-floor-handle" style={{ strokeWidth: 3/view.k }} />
+          <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 25/view.k, fill: '#fff', pointerEvents: 'none' }}>↔</text>
+        </g>) : null}
+        {ghost ? <text x={ft[0].x} y={ft[0].y - 20} className="plan-iso-level-name">{f.name}</text> : null}
+        {active ? <g ref={planeRef} transform={`matrix(${a} ${b} ${c} ${d} 0 0)`} pointerEvents="none">
+          <rect x={bounds.x1} y={bounds.y1} width={bounds.x2 - bounds.x1} height={bounds.y2 - bounds.y1} fill="transparent" />
+          {edit ? <PlanCursor wrap={wrap} view={view} tool={tool} wallPt={wallPt} planeRef={planeRef} /> : null}
+        </g> : null}
+      </g>;
+    })}
+  </g>;
+}
+
+function PlanItem({ it, devById, racks, sel, edit, onDown, scale = 1, icons = {} }) {
   if (it.kind === 'label') return <g className="plan-item plan-label" transform={`translate(${it.x},${it.y})`} onPointerDown={onDown}>
     <text textAnchor="middle" className={sel ? 'sel' : ''}>{it.text}</text></g>;
   const isPlace = it.kind === 'place';
@@ -714,13 +1235,15 @@ function PlanItem({ it, devById, racks, sel, edit, onDown }) {
   const name = ref ? ref.name : '—';
   const kind = isPlace ? (ref ? (PLACE_KINDS[ref.kind] || PLACE_KINDS.rack).icon : 'rack') : (ref ? ref.kind : 'other');
   const status = isPlace ? (ref ? placeStatus(ref, devById) : '') : (ref && ref.state ? ref.state.status : '');
-  const col = kindColor(kind);
-  return <g className={'plan-item' + (sel ? ' sel' : '')} transform={`translate(${it.x},${it.y})`} onPointerDown={onDown} style={{ cursor: edit ? 'move' : 'pointer' }}>
-    <circle r={21} className="pi-bg" style={{ fill: `color-mix(in srgb, ${col} 22%, var(--card-solid))`, stroke: col }} />
-    <g transform="translate(-11,-11)"><Icon name={kind} size={22} color={col} /></g>
-    {status ? <circle cx={15} cy={-15} r={5} fill={statusColor(status)} stroke="var(--card-solid)" strokeWidth={2} /> : null}
-    {isPlace && ref ? <><rect x={-16} y={14} width={32} height={10} rx={3} fill={col} opacity=".9" />
-      <text y={22} textAnchor="middle" fontSize="7.5" fontWeight="700" fill="#fff">{(PLACE_KINDS[ref.kind] || PLACE_KINDS.rack).label.split(' ')[0].toUpperCase()}</text></> : null}
-    <text className="pi-label" y={38} textAnchor="middle">{name.length > 16 ? name.slice(0, 15) + '…' : name}</text>
+  const col = THEME.kindColors[kind] || (document.documentElement.getAttribute('data-look') === 'test' ? (KIND_COLOR[kind] || 'var(--accent)') : kindColor(kind));
+  return <g className={'plan-item' + (sel ? ' sel' : '') + (it.outdoor ? ' outdoor' : '')} transform={`translate(${it.x},${it.y}) scale(${scale})`} onPointerDown={onDown} style={{ cursor: edit ? 'move' : 'pointer' }}>
+    <title>{name}</title>
+    <rect x={-82} y={-31} width={164} height={62} rx={12} className="pi-bg" />
+    <rect x={-73} y={-22} width={44} height={44} rx={9} className="pi-core" style={{ fill: `color-mix(in srgb, ${col} 16%, var(--card-solid))` }} />
+    <g className="pi-glyph" transform="translate(-67,-16)"><NodeGlyph svg spec={icons[it.ref] || icons['d:' + it.ref]} kind={kind} size={32} color={col} /></g>
+    {status ? <circle cx={69} cy={-19} r={5} fill={statusColor(status)} stroke="var(--card-solid)" strokeWidth={2} /> : null}
+    <text className="pi-label" x={-19} y={-2}>{name.length > 13 ? name.slice(0,12) + '…' : name}</text>
+    <text className="pi-type" x={-19} y={15}>{isPlace ? (PLACE_KINDS[ref?.kind] || PLACE_KINDS.rack).label : KIND_TEXT[kind] || 'Устройство'}</text>
+    {it.outdoor ? <text className="pi-outdoor" y={45} textAnchor="middle">УЛИЦА</text> : null}
   </g>;
 }

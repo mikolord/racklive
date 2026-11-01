@@ -6,7 +6,7 @@ const DASH_ROW = 8, DASH_GAP = 14;
 function StatsWidget() {
   if (isTestLook()) return <StatsInstr />;
   const { data } = useApp(); const devices = data.devices;
-  const problems = devices.filter(d => ['offline', 'warning'].includes(d.state && d.state.status));
+  const problems = devices.filter(d => !d.healthSkip && ['offline', 'warning'].includes(d.state && d.state.status));
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
   const poe = devices.flatMap(d => (d.state && d.state.ports) || []).reduce((a, p) => a + (p.poeW || 0), 0);
   return <div className="stats">

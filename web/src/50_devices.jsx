@@ -18,7 +18,7 @@ function DevicesView() {
     return !q || [d.name, d.host, (d.state && d.state.summary || {}).ip, d.site].join(' ').toLowerCase().includes(q.toLowerCase());
   }).sort((a, b) => sort === 'name' ? (a.name || '').localeCompare(b.name || '') : sort === 'status' ? bad(b) - bad(a) || (a.name || '').localeCompare(b.name || '') : 0);
   const sites = sort === 'group' ? [...new Set(data.devices.map(d => d.site).filter(Boolean))] : [];
-  const counts = { all: data.devices.length, problems: data.devices.filter(bad).length,
+  const counts = { all: data.devices.length, problems: data.devices.filter(d => bad(d) && !d.healthSkip).length,
     local: data.devices.filter(d => d.location !== 'remote').length, remote: data.devices.filter(d => d.location === 'remote').length };
   const LOC_TABS = [{ value: 'all', label: `Все · ${counts.all}` }, { value: 'local', label: `Локальные · ${counts.local}` }, { value: 'remote', label: `Удалённые · ${counts.remote}` }];
   const [scan, setScan] = useState(() => new URLSearchParams(location.search).get('netscan') === '1');       // «Сканировать сеть» (?netscan=1)
@@ -70,7 +70,7 @@ function DevicesView() {
               <StatusBadge status={st.status} /></div>
             <div className="dim ellipsis" style={{ fontSize: 13, marginTop: 10, minHeight: 18 }}>{deviceLine(d) || (s.model || '')}</div>
             <div className="row between dim3" style={{ fontSize: 12, marginTop: 6 }}>
-              <span>{d.location === 'remote' ? 'Удалённое' : 'Локальное'}{d.enabled === false ? ' · выключено' : ''}</span><span>{st.updated ? fmt.ago(st.updated, data.now) : ''}</span></div>
+              <span>{d.location === 'remote' ? 'Удалённое' : 'Локальное'}{d.enabled === false ? ' · выключено' : ''}{d.healthSkip ? ' · без слежки' : ''}</span><span>{st.updated ? fmt.ago(st.updated, data.now) : ''}</span></div>
           </div>; })}</div></div>;
     })}
   </>;
@@ -274,7 +274,9 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       </div></details> : null}
     <div className="row wrap" style={{ gap: 18 }}>
       <span className="row"><Switch on={f.enabled !== false} onChange={v => set('enabled', v)} /><span>Опрашивать устройство</span></span>
-      <span className="row"><Switch on={f.notify !== false} onChange={v => set('notify', v)} /><span>Уведомлять о проблемах</span></span></div>
+      <span className="row"><Switch on={f.notify !== false} onChange={v => set('notify', v)} /><span>Уведомлять о проблемах</span></span>
+      <span className="row"><Switch on={!f.noHealth} onChange={v => set('noHealth', !v)} /><span>Следить за здоровьем</span></span></div>
+    {f.noHealth ? <div className="dim3" style={{ fontSize: 12.5, marginTop: -6 }}>Устройство остаётся на карте и в списках, но не учитывается в здоровье сети, доступности, счётчике проблем, журнале и оповещениях.</div> : null}
     {device && drvId === 'agent' ? <AgentInstallInline device={device} /> : null}
     {test && !test.busy ? <div className="card pad" style={{ borderColor: test.ok ? 'var(--green)' : 'var(--red)' }}>
       {test.ok ? <><div className="row" style={{ color: 'var(--green)', fontWeight: 700 }}><Icon name="check" />Подключение работает</div>

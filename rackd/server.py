@@ -1,5 +1,5 @@
 """HTTP API, static files and the background poller."""
-import concurrent.futures, gzip, ipaddress, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
+import base64, concurrent.futures, gzip, ipaddress, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -10,13 +10,14 @@ from . import usage as usage_mod
 from . import frankfiles, frank_agent, frankbrowser, frankdev, webdrive
 from . import portal as portal_mod
 from . import remote as remote_mod
-from . import cameras, hostnet, hostops, terminal, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import localplug, capps, cameras, hostnet, hostops, terminal, modelstore, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
+from . import rackcords
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.34.1'
+VERSION = '2.42.44'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -29,8 +30,14 @@ def log(*a):
 
 
 TERM_TICKETS = {}                         # one-time passes for the terminal WebSocket: pass → (session key, until)
-GUEST_SETTINGS = ('title', 'showClients', 'hints', 'vlans', 'publicView', 'poll')               # what a guest («просмотр без пароля») may see of the settings
+GUEST_SETTINGS = ('title', 'showClients', 'hints', 'vlans', 'publicView', 'poll', 'planDefaults')   # plan display defaults contain no secrets
 TRUSTED_PROXIES = {x.strip() for x in os.environ.get('RL_TRUSTED_PROXIES', '').split(',') if x.strip()}     # e.g. nginx in front: its address
+
+
+def health_skipped(cfg, d):
+    """a device Rack Live does not watch the health of: it stays on the map and in the lists, but is left out of the network health, the availability,
+    the problem counters, the journal and the alerts — either switched off for this very device, or every remote one at once (Настройки)"""
+    return bool(d.get('noHealth')) or (bool((cfg.get('settings') or {}).get('skipRemoteHealth')) and d.get('location') == 'remote')
 
 
 def _awg_dns(body):
@@ -61,7 +68,7 @@ def port_errors(p):
     return max(i or 0, c or 0) + (o or 0)
 
 
-APP_MANIFESTS = {'/manifest.json': 'rack', '/frank-manifest.json': 'frank', '/speed-manifest.json': 'speed', '/terminal-manifest.json': 'terminal', '/cards-manifest.json': 'cards'}
+APP_MANIFESTS = {'/manifest.json': 'rack', '/frank-manifest.json': 'frank', '/speed-manifest.json': 'speed', '/terminal-manifest.json': 'terminal', '/cards-manifest.json': 'cards', '/plan-manifest.json': 'plan'}
 
 class App:
     def __init__(self):
@@ -102,8 +109,11 @@ class App:
         self.host = hostops.Host(self, DEMO)
         self.themes = themes.Themes(DATA, WEB, VERSION)
         self.models = models_mod.Library(DATA)            # «Сканер»: the user's own 3D models of devices
+        self.modelstore = modelstore.Store(DATA)          # «Магазин моделей»: ready cards from the public catalog + the owner's moderation
         self.portal_tpl = portal_mod.Templates(DATA)      # «Гостевой Wi-Fi с порталом»: designs of the guest page
         self.community = community.Community(DATA)
+        self.local = localplug.Local(DATA, lambda: self.store.cfg['devices'], lambda name, level, text: self.store.add_event(None, name, level, text), VERSION)     # the owner's own code that runs inside Rack Live (off until confirmed)
+        self.capps = capps.Apps(DATA)                   # container apps: descriptions only; what runs where is read from Docker on the device
         self.updater = updater.Updater(self, VERSION, DEMO)
         self.sites = sites_mod.Sites(self)
         self.collector = collector_mod.Collector(self, VERSION)
@@ -244,14 +254,16 @@ class App:
                 traceback.print_exc()
             self.states[d['id']] = st
             self.store.bump()
+            skip = health_skipped(self.store.cfg, d)            # not watched: no availability stats and no «offline / online» entries in the journal
             try:
-                self.uptime.from_state(d, st, st.get('updated') or time.time())
+                if not skip:
+                    self.uptime.from_state(d, st, st.get('updated') or time.time())
             except Exception:
                 traceback.print_exc()
             prev, cur = old.get('status'), st.get('status')
-            if prev is None and cur == 'offline':
+            if prev is None and cur == 'offline' and not skip:
                 self.store.add_event(d['id'], d.get('name'), 'offline', 'нет связи' + (f": {st.get('error')}" if st.get('error') else ''))
-            if prev and prev != cur:
+            if prev and prev != cur and not skip:
                 text = {'offline': 'нет связи' + (f": {st.get('error')}" if st.get('error') else ''), 'online': 'снова в сети',
                         'warning': ('не пускает Rack Live: ' + (st.get('error') or '')[:150]) if st.get('stale') else 'требует внимания'}.get(cur, cur)
                 self.store.add_event(d['id'], d.get('name'), cur, text)
@@ -360,7 +372,7 @@ class App:
                 last_alert = time.time()
                 self.usage.sample()
                 try:
-                    self.alerter.evaluate(list(self.store.cfg['devices']), self.states)
+                    self.alerter.evaluate([d for d in self.store.cfg['devices'] if not health_skipped(self.store.cfg, d)], self.states)
                 except Exception:
                     traceback.print_exc()
                 try:
@@ -426,7 +438,7 @@ class App:
             finally:
                 job['done'], job['dur'] = True, round(time.time() - job['t'])
         threading.Thread(target=run, daemon=True).start()
-        self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: {'установка' if op == 'install' else 'удаление'} начата")
+        self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: " + {'install': 'установка', 'remove': 'удаление', 'start': 'запуск', 'stop': 'остановка', 'restart': 'перезапуск'}.get(op, op) + ' начата')
         return job
 
     def ip_of_mac(self, mac):
@@ -793,15 +805,17 @@ class App:
             if not authed:
                 pd['host'] = ''
             pd['state'] = st
+            pd['healthSkip'] = health_skipped(cfg, d)           # the interface leaves these out of its problem counters
             devices.append(pd)
         units = self.store.all_units()
         topo = topology.build(cfg['devices'], self.states, units, cfg['map'].get('links'),
                               cfg['settings'].get('showClients', True), REGISTRY, cfg['map'].get('wan'))
         try:
-            # analysis always sees the clients, even when the map hides them
-            full = topo if cfg['settings'].get('showClients', True) else topology.build(
-                cfg['devices'], self.states, units, cfg['map'].get('links'), True, REGISTRY, cfg['map'].get('wan'))
-            health = analysis.analyze(full, cfg['devices'], self.states, self.store.cable)
+            # analysis always sees the clients, even when the map hides them — and never the devices that are not watched (the map still shows them)
+            hdev = [d for d in cfg['devices'] if not health_skipped(cfg, d)]
+            full = topo if cfg['settings'].get('showClients', True) and len(hdev) == len(cfg['devices']) else topology.build(
+                hdev, self.states, units, cfg['map'].get('links'), True, REGISTRY, cfg['map'].get('wan'))
+            health = analysis.analyze(full, hdev, self.states, self.store.cable)
         except Exception:
             traceback.print_exc()
             health = None
@@ -825,7 +839,7 @@ class App:
                 'cards': (cfg.get('cards') or []) if authed else [], 'models': self.models.public() if authed else [],            # hand-made device cards (the «Карточки» app) for things that are not in the rack
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
                 'icons': cfg.get('icons') or {}, 'iconLib': cfg.get('iconLib') or [],            # the icon chosen for a map node, and the library of uploaded ones (rackd/icons.py)
-                'speedtests': self.speed.public(), 'uptime': self.uptime.public(cfg['devices']),
+                'speedtests': self.speed.public(), 'uptime': self.uptime.public([d for d in cfg['devices'] if not health_skipped(cfg, d)]),
                 'events': self.store.events[-60:][::-1] if authed else [], 'now': time.time()}       # the journal holds admin addresses, logins and host names: not for guests
 
 
@@ -890,6 +904,40 @@ def card_photo(st, cid, data, method):
     entry['photo'], entry['photoType'] = int(time.time()), ext
     st.save()
     return {'ok': True, 'cards': cards}
+
+
+def store_apply(st, cid, b):
+    """«Магазин моделей»: put a catalog bundle on a card — the photo with its port marks and zoom area, and the 3D model if the bundle has one"""
+    card, photo, m3 = b['card'], b['photo'], b['model3d']
+    cfg = st.cfg
+    cards = cfg.setdefault('cards', [])
+    dev = next((d for d in cfg['devices'] if d.get('id') == cid), None)
+    unit = next((u for r in cfg['racks'] for u in r.get('units', []) if u.get('id') == cid), None)
+    own = next((c for c in cards if c.get('id') == cid and not c.get('of')), None)
+    if not (dev or unit or own):
+        return {'ok': False, 'error': 'нет такой карточки'}
+    if photo:
+        r = card_photo(st, cid, photo[0], 'POST')
+        if not r.get('ok'):
+            return r
+    entry = own or next((c for c in cards if c.get('of') == cid), None)
+    if not entry:                                                        # a 3D-only model for a device that has no card entry yet
+        entry = {'id': secrets.token_hex(4), 'of': cid, 'name': (dev or unit).get('name') or 'Устройство', 'kind': (dev or {}).get('kind') or 'other', 'rows': [], 'notes': ''}
+        cards.append(entry)
+    if photo:
+        entry.pop('spots', None); entry.pop('pzoom', None)
+        if card['spots']:
+            entry['spots'] = [{k: s[k] for k in ('n', 'x', 'y', 'w', 'h')} for s in card['spots']]
+        if card['pzoom']:
+            entry['pzoom'] = card['pzoom']
+    if m3:
+        try:
+            entry['model'] = APP.models.add(m3)
+        except ValueError as e:
+            return {'ok': False, 'error': str(e)}
+        entry.pop('view', None)
+    st.save()
+    return {'ok': True, 'cards': cards, 'models': APP.models.public()}
 
 # where a device's own web interface lives when no explicit address is set
 WEB_PORTS = {'synology': ('http', 5000), 'homeassistant': ('http', 8123)}
@@ -1301,7 +1349,7 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, path):
         if path in ('', '/'):
             path = '/index.html'
-        if path.rstrip('/') in ('/frank', '/speed', '/terminal', '/scan', '/cards'):          # separate installable apps (own manifest and icon): Frank, speed test, terminal, device cards; /scan = port scanner
+        if path.rstrip('/') in ('/frank', '/speed', '/terminal', '/scan', '/cards', '/modeler', '/plan'):          # separate installable apps, each with its own manifest and icon
             path = path.rstrip('/') + '.html'
         full = os.path.normpath(os.path.join(WEB, path.lstrip('/')))
         root = os.path.normpath(WEB)
@@ -1312,6 +1360,16 @@ class Handler(BaseHTTPRequestHandler):
             ctype = 'application/javascript'
         with open(full, 'rb') as f:
             b = f.read()
+        # ReckController runs natively and is identified by its installer marker.
+        # Keep the normal Rack Live PWA untouched on all other installations.
+        if os.path.isfile(cinstall.RCOS_MARK):
+            if path == '/index.html':
+                b = b.replace(b'href="icon.svg?v=28"', b'href="/look-test/controller.svg?v=1"')
+                b = b.replace(b'href="apple-touch-icon.png?v=28"', b'href="/look-test/controller-180.png?v=1"')
+            elif path == '/manifest.json':
+                man = json.loads(b)
+                man['icons'] = [{'src': f'/look-test/controller-{s}.png?v=1', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
+                b = json.dumps(man, ensure_ascii=False).encode('utf-8')
         self.send_response(200)
         texty = ctype.startswith(('text', 'application/javascript', 'application/json', 'image/svg'))
         self.send_header('Content-Type', ctype + ('; charset=utf-8' if ctype.startswith(('text', 'application/javascript', 'application/json')) else ''))
@@ -1319,7 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
             b = self.gz(b)
         self.send_header('Content-Length', str(len(b)))
         fixed = '?v=' in self.path and full.startswith(os.path.join(root, 'vendor') + os.sep)           # a library asked for with its version in the address never changes under it
-        self.send_header('Cache-Control', 'public, max-age=31536000, immutable' if fixed else 'no-cache' if full.endswith(('.html', '.js', '.css')) else 'max-age=86400')
+        self.send_header('Cache-Control', 'public, max-age=31536000, immutable' if fixed else 'no-cache' if full.endswith(('.html', '.js', '.css', 'manifest.json')) else 'max-age=86400')
         self.send_header('X-Content-Type-Options', 'nosniff')
         # framing: only ourselves and Telegram Web (mini app); X-Frame-Options can't express that, CSP can
         self.send_header('Content-Security-Policy', "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org")
@@ -1331,15 +1389,20 @@ class Handler(BaseHTTPRequestHandler):
         T = APP.themes
         hdr = {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"}
         if path in APP_MANIFESTS:      # an installable app's manifest with this look's icons (each app has its own)
+            if path == '/manifest.json' and os.path.isfile(cinstall.RCOS_MARK):
+                return self.static(path)
             tid = self.query().get('skin') or ''
             with open(os.path.join(WEB, path.lstrip('/')), encoding='utf-8') as f:
                 man = json.load(f)
+            if path in ('/manifest.json', '/cards-manifest.json'):
+                return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
             if tid == 'test':          # the built-in «Test» look: black aluminium icons
                 a = APP_MANIFESTS[path]
-                man['icons'] = [{'src': f'/look-test/{a}-{s}.png?v=3', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
+                revision = 4 if a == 'terminal' else 3
+                man['icons'] = [{'src': f'/look-test/{a}-{s}.png?v={revision}', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
                 return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
             d = T.data(tid) or {}
-            pw = d.get({'/manifest.json': 'pwa', '/frank-manifest.json': 'pwaFrank', '/speed-manifest.json': 'pwaSpeed'}.get(path, '')) or {}
+            pw = d.get({'/manifest.json': 'pwa', '/frank-manifest.json': 'pwaFrank', '/speed-manifest.json': 'pwaSpeed', '/plan-manifest.json': 'pwaPlan'}.get(path, '')) or {}
             if pw.get('icon192') and pw.get('icon512'):
                 man['icons'] = [{'src': pw['icon192'], 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'}, {'src': pw['icon512'], 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'}]
             return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
@@ -1370,10 +1433,90 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def local_plugins(self, method, path):
+        """«Локальные плагины» (rackd/localplug.py): management and the routes of the plugins themselves. → True if the request was answered here. Administrator only."""
+        if not (path.startswith('/api/x/') or path.startswith('/api/localplug')):
+            return False
+        if not self.need_admin():
+            return True
+        L = APP.local
+        if path == '/api/x/_scripts' and method == 'GET':
+            return self.send({'scripts': L.scripts()}) or True
+        if path == '/api/localplug' and method == 'GET':
+            return self.send({'plugins': L.list(), 'killed': L.killed(), 'warning': localplug.WARNING, 'api': localplug.LOCAL_API, 'demo': DEMO}) or True
+        if path in ('/api/localplug/guide.txt', '/api/localplug/template.zip') and method == 'GET':
+            zip_ = path.endswith('.zip')
+            b = localplug.template_zip() if zip_ else localplug.guide_text().encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/zip' if zip_ else 'text/plain; charset=utf-8')
+            self.send_header('Content-Disposition', 'attachment; filename="' + ('local-plugin-template.zip' if zip_ else 'local-plugin-guide.txt') + '"')
+            self.send_header('Content-Length', str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return True
+        if path == '/api/localplug/code' and method == 'GET':
+            q = self.query()
+            m = L.get(urllib.parse.unquote(q.get('id', '')))
+            name = urllib.parse.unquote(q.get('file', ''))
+            b = L.files(m['id']).get(name) if m else None
+            if b is None:
+                return self.err('файл не найден', 404) or True
+            return self.send({'file': name, 'text': b.decode('utf-8', 'replace')[:200_000]}) or True
+        if method == 'POST' and path in ('/api/localplug/upload', '/api/localplug/enable', '/api/localplug/disable', '/api/localplug/remove'):
+            if DEMO and not os.environ.get('RL_E2E'):
+                return self.err('в демо-режиме локальные плагины не загружаются', 400) or True
+            if path == '/api/localplug/upload':
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > localplug.MAX_ZIP:
+                    return self.err(f'архив должен быть не больше {localplug.MAX_ZIP // 1024} КБ', 413) or True
+                rep = L.install_zip(self.rfile.read(n))
+                if rep['ok']:
+                    APP.store.add_event(None, 'Локальные плагины', 'warning', f"загружен локальный плагин «{rep['plugin']['title']}» {rep['plugin']['version']} (выключен)")
+                return self.send(rep) or True
+            body = self.body()
+            pid = str(body.get('id') or '')
+            if path == '/api/localplug/enable':
+                try:
+                    return self.send({'ok': True, 'plugin': L.enable(pid, str(body.get('digest') or ''))}) or True
+                except (ValueError, RuntimeError) as e:
+                    return self.err(str(e), 400) or True
+            if path == '/api/localplug/disable':
+                L.disable(pid)
+                APP.store.add_event(None, 'Локальные плагины', 'info', f'локальный плагин «{pid}» выключен')
+                return self.send({'ok': True, 'note': 'Маршруты и фоновые задачи остановлены. Всё, что плагин успел изменить в памяти, исчезнет после перезапуска Rack Live.'}) or True
+            L.remove(pid, bool(body.get('wipe')))
+            APP.store.add_event(None, 'Локальные плагины', 'info', f'локальный плагин «{pid}» удалён')
+            return self.send({'ok': True}) or True
+        m = re.match(r'^/api/x/([a-z][a-z0-9-]{2,30})/(.*)$', path)
+        if m:
+            pid, rest = m.group(1), m.group(2)
+            if method == 'GET' and rest.startswith('files/'):
+                got = L.file(pid, urllib.parse.unquote(rest[6:]))
+                if not got:
+                    return self.err('файл не найден', 404) or True
+                return self.send_raw(got[0], got[1], {'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff'}) or True
+            n = int(self.headers.get('Content-Length') or 0) if method != 'GET' else 0
+            if n < 0 or n > 5_000_000:
+                return self.err('неверный размер запроса', 413) or True
+            code, obj, ctype = L.call(pid, method, rest, self.query(), self.rfile.read(n) if n else b'')
+            if isinstance(obj, bytes):
+                self.send_response(code)
+                self.send_header('Content-Type', ctype or 'application/octet-stream')
+                self.send_header('Content-Length', str(len(obj)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                self.wfile.write(obj)
+                return True
+            return self.send(obj, code) or True
+        return False
+
     # ── routes ──
     def do_GET(self):
         path = self.path.split('?')[0]
         try:
+            if self.local_plugins('GET', path):
+                return
             if path == '/api/term/ws':
                 return self.terminal()
             if path == '/api/site/link':                   # the control channel of a site collector (key auth; the collector dials out)
@@ -1567,10 +1710,71 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(APP.updater.info())
+            if path == '/api/capps':                        # container apps: descriptions + the devices where they can run
+                if not self.need_admin():
+                    return
+                devs = [{'id': d['id'], 'name': d.get('name'), 'driver': d.get('driver'), 'target': APP.capps.target_of(d.get('driver'))} for d in APP.store.cfg['devices']
+                        if APP.capps.target_of(d.get('driver')) and d.get('enabled', True)]
+                return self.send({'apps': [APP.capps.public(m) for m in APP.capps.list()], 'devices': devs, 'api': capps.APP_API, 'demo': DEMO})
+            if path == '/api/capps/examples':               # ready descriptions shipped with Rack Live (checked like any other): one click adds one
+                if not self.need_admin():
+                    return
+                have = {m['id'] for m in APP.capps.list()}
+                ex = []
+                for n in sorted(os.listdir(capps.EXAMPLES)):
+                    try:
+                        with open(os.path.join(capps.EXAMPLES, n), encoding='utf-8') as f:
+                            txt = f.read()
+                        errors, warnings, m = capps.check({'app.json': txt.encode('utf-8')})
+                    except OSError:
+                        continue
+                    if m:
+                        ex.append({'id': m['id'], 'title': m['title'], 'description': m['description'], 'risk': m['risk'], 'added': m['id'] in have, 'app': txt})
+                return self.send({'examples': ex})
+            if path == '/api/capps/states':                 # what runs on one device (read from Docker's labels), with the address to open each app
+                if not self.need_admin():
+                    return
+                d = next((x for x in APP.store.cfg['devices'] if x['id'] == self.query().get('device')), None)
+                drv = REGISTRY.get((d or {}).get('driver'))
+                if not d or not APP.capps.target_of(d.get('driver')) or not hasattr(drv, 'command'):
+                    return self.err('на этом устройстве приложения не запускаются', 400)
+                if DEMO:
+                    return self.send({'ok': True, 'states': {}, 'host': ''})
+                try:
+                    states = capps.Apps.states(d, drv)
+                except Exception as e:
+                    return self.err(f'не удалось прочитать состояние: {str(e)[:150]}', 502)
+                host = (urllib.parse.urlparse(drv._base(d)).hostname if hasattr(drv, '_base') else (d.get('host') or '')) or ''
+                return self.send({'ok': True, 'states': states, 'host': host})
             if path == '/api/community':                    # installed community plugins (admin only)
                 if not self.need_admin():
                     return
                 return self.send({'plugins': [APP.community.public(m) for m in APP.community.list()], 'api': community.PLUGIN_API})
+            if path.startswith('/api/models/store/'):        # «Магазин моделей» and its moderation (admin only; every GitHub call is made here, the token never leaves the server)
+                if not self.need_admin():
+                    return
+                ms = APP.modelstore
+                try:
+                    if path == '/api/models/store/index':
+                        return self.send(ms.index(force=self.query().get('refresh') == '1'))
+                    m = re.match(r'^/api/models/store/photo/([a-z0-9-]{3,61})$', path)
+                    if m:
+                        got = ms.photo(m.group(1))
+                        return self.send_raw(got[0], got[1], {'Cache-Control': 'private, max-age=3600', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data:"}) if got else self.err('нет фото', 404)
+                    m = re.match(r'^/api/models/store/model/([a-z0-9-]{3,61})$', path)
+                    if m:                                    # what is inside: port marks, zoom area, the 3D model (for the preview)
+                        b = ms.bundle(m.group(1))
+                        return self.send({'ok': True, 'card': b['card'], 'has_photo': bool(b['photo']), 'model3d': b['model3d']})
+                    if path == '/api/models/store/token':
+                        return self.send(ms.token_info())
+                    if path == '/api/models/store/pulls':
+                        return self.send({'ok': True, 'pulls': ms.pulls()})
+                    m = re.match(r'^/api/models/store/pulls/(\d{1,6})$', path)
+                    if m:
+                        return self.send(dict(ms.preview(int(m.group(1))), ok=True))
+                except modelstore.StoreError as e:
+                    return self.send({'ok': False, 'error': str(e)})
+                return self.err('не найдено', 404)
             if path == '/api/models/guide.txt':              # «Сканер»: the instruction to hand to a neural network that makes a 3D model
                 if not self.need_admin():
                     return
@@ -1675,6 +1879,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         st = APP.store
         try:
+            if self.local_plugins(method, path):
+                return
             if path == '/api/speedtest/up' and method == 'POST':     # raw bytes, read before any JSON parsing
                 if not self.can_view():
                     return self.err('нужен вход', 401)
@@ -1969,7 +2175,13 @@ class Handler(BaseHTTPRequestHandler):
             # ── admin API ──
             if path == '/api/settings' and method == 'PUT':
                 s = st.cfg['settings']
-                for k in ('title', 'poll', 'publicView', 'showClients', 'hints', 'vlans', 'devMode'):
+                if 'planDefaults' in body:
+                    try:
+                        plan_defaults = planmap.clean_plan_defaults(body['planDefaults'], s.get('planDefaults'))
+                    except ValueError as e:
+                        return self.err(str(e), 400)
+                    s['planDefaults'] = plan_defaults
+                for k in ('title', 'poll', 'publicView', 'showClients', 'hints', 'vlans', 'devMode', 'skipRemoteHealth'):
                     if k in body:
                         s[k] = body[k]
                 if body.get('newPassword'):
@@ -2123,7 +2335,7 @@ class Handler(BaseHTTPRequestHandler):
                         if total < need:
                             return self.err(f"«{r.get('name') or 'Шкаф'}»: шкаф меньше занятого места — оборудование стоит до U{need}")
                     out.append({'id': r.get('id') or 'rack' + secrets.token_hex(3), 'name': (r.get('name') or 'Место').strip()[:40],
-                                'kind': kind, 'totalU': total, 'units': units})
+                                'kind': kind, 'totalU': total, 'units': units, **rackcords.clean(r, units)})
                 st.cfg['racks'] = out
                 st.save()
                 return self.send({'ok': True})
@@ -2254,6 +2466,99 @@ class Handler(BaseHTTPRequestHandler):
                 st.cfg['notify'] = new
                 st.save()
                 return self.send({'ok': True, 'menu': menu})
+            if path == '/api/capps/check' and method == 'POST':           # «Контейнерные приложения»: check an app.json (no start) and show what it would run and may do
+                if not self.need_admin():
+                    return
+                errors, warnings, m = capps.check({'app.json': str(body.get('app') or '').encode('utf-8')})
+                return self.send({'ok': not errors, 'errors': errors, 'warnings': warnings, 'app': m})
+            if path == '/api/capps/add' and method == 'POST':             # keep an app description (checked; nothing is started)
+                if not self.need_admin():
+                    return
+                rep = APP.capps.add(str(body.get('app') or ''))
+                if rep['ok']:
+                    st.add_event(None, 'Приложения', 'info', f"описание приложения «{rep['app']['id']}» добавлено (риск: {rep['app']['risk']})")
+                return self.send(rep)
+            if path == '/api/capps/remove' and method == 'POST':
+                if not self.need_admin():
+                    return
+                APP.capps.remove(str(body.get('id') or ''))
+                return self.send({'ok': True})
+            if path == '/api/capps/job' and method == 'POST':
+                if not self.need_admin():
+                    return
+                j = APP.jobs.get(str(body.get('job') or ''))
+                return self.send({k: v for k, v in j.items() if k != 'device'} if j else {'done': True, 'error': 'задача не найдена'})
+            if path == '/api/capps/run' and method == 'POST':             # install / start / stop / restart / remove on a device, as a background job, after the administrator confirmed (digest)
+                if not self.need_admin():
+                    return
+                d = next((x for x in st.cfg['devices'] if x['id'] == str(body.get('device') or '')), None)
+                drv = REGISTRY.get((d or {}).get('driver'))
+                aid, op = str(body.get('app') or ''), str(body.get('op') or '')
+                if not d or not hasattr(drv, 'command') or not APP.capps.get(aid) or op not in ('install', 'start', 'stop', 'restart', 'remove'):
+                    return self.err('неверный запрос')
+                if DEMO:
+                    return self.err('в демо-режиме приложения не запускаются', 400)
+                st.add_event(d['id'], d.get('name'), 'warning', f"приложение {aid}: {op} подтверждено администратором")
+                return self.send({'ok': True, 'job': APP.start_plugin_job(d, capps.Shim(APP.capps, drv), aid, op, {k: body.get(k) for k in ('values', 'digest', 'keep_data', 'ports')})['id']})
+            if path == '/api/capps/ports' and method == 'POST':           # are the host ports (default or chosen) free on the device? Read-only.
+                if not self.need_admin():
+                    return
+                d = next((x for x in st.cfg['devices'] if x['id'] == str(body.get('device') or '')), None)
+                drv = REGISTRY.get((d or {}).get('driver'))
+                if not d or not hasattr(drv, 'command') or not APP.capps.get(str(body.get('app') or '')):
+                    return self.err('неверный запрос')
+                if DEMO:
+                    return self.send({'ok': True, 'installed': False, 'ports': []})
+                try:
+                    return self.send({'ok': True, **APP.capps.check_ports(d, drv, str(body.get('app')), body.get('ports'))})
+                except ValueError as e:
+                    return self.err(str(e), 400)
+                except Exception as e:
+                    return self.err(f'не удалось проверить порты: {str(e)[:150]}', 502)
+            if path.startswith('/api/models/store/'):             # «Магазин моделей»: put a catalog model on a card; the owner's token and the moderation of requests
+                if not self.need_admin():
+                    return
+                ms = APP.modelstore
+                try:
+                    if path == '/api/models/store/apply' and method == 'POST':
+                        r = store_apply(st, str(body.get('card') or ''), ms.bundle(str(body.get('id') or '')))
+                        if r.get('ok'):
+                            st.add_event(None, 'Магазин моделей', 'info', f"модель «{body.get('id')}» применена к карточке")
+                        return self.send(r)
+                    if path == '/api/models/store/publish' and method == 'POST':           # «Создать модель»: the owner's finished model (made in /modeler) → the public catalog
+                        photo = None
+                        if body.get('photo'):
+                            try:
+                                blob = base64.b64decode(str(body['photo']), validate=True)
+                            except Exception:
+                                return self.send({'ok': False, 'error': 'фото повреждено'})
+                            photo = (blob, modelstore.check_photo(blob))
+                        m3 = None
+                        if body.get('model3d'):
+                            m3, errs = models_mod.validate(body['model3d'])
+                            if errs:
+                                return self.send({'ok': False, 'error': '3D-модель не прошла проверку: ' + '; '.join(errs[:2])})
+                        spots = [s for s in (body.get('spots') or [])[:200] if isinstance(s, dict)]
+                        zoom = body.get('pzoom') if isinstance(body.get('pzoom'), dict) and all(isinstance(body['pzoom'].get(k), (int, float)) for k in ('x', 'y', 'w', 'h')) else None
+                        r = ms.publish(str(body.get('vendor') or ''), str(body.get('model') or ''), str(body.get('kind') or ''), photo, spots if photo else [], zoom if photo else None, m3,
+                                       str(body.get('license') or 'own'), str(body.get('author') or ''), str(body.get('title') or ''), str(body.get('notes') or ''),
+                                       str(body.get('source') or ''), str(body.get('vendor_dir') or '') or None, str(body.get('id') or '') or None)
+                        st.add_event(None, 'Магазин моделей', 'info', f"модель «{r['id']}» опубликована в каталоге")
+                        return self.send(dict(r, ok=True))
+                    if path == '/api/models/store/token' and method == 'PUT':
+                        return self.send(dict(ms.set_token(str(body.get('token') or '')), ok=True))
+                    if path == '/api/models/store/token' and method == 'DELETE':
+                        ms.clear_token()
+                        return self.send(dict(ms.token_info(), ok=True))
+                    m = re.match(r'^/api/models/store/pulls/(\d{1,6})/(merge|close)$', path)
+                    if m and method == 'POST':
+                        n = int(m.group(1))
+                        r = ms.merge(n) if m.group(2) == 'merge' else ms.close(n, str(body.get('comment') or ''))
+                        st.add_event(None, 'Магазин моделей', 'info', f"заявка #{n}: {'принята' if m.group(2) == 'merge' else 'отклонена'}")
+                        return self.send(r)
+                except modelstore.StoreError as e:
+                    return self.send({'ok': False, 'error': str(e)})
+                return self.err('не найдено', 404)
             if path == '/api/models' and method == 'POST':        # check (dry) or add / replace a 3D model; errors are worded for the neural network
                 model, errors = models_mod.validate(body.get('model'))
                 if errors:
@@ -2357,10 +2662,31 @@ class Handler(BaseHTTPRequestHandler):
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/speedtest' and method == 'POST':
+                # A moving phone must not be mapped with yesterday's / previous room's RSSI.
+                # Refresh only its known router, using the same busy guard as the poll loop.
+                ip = self.client_ip()
+                client = speedtest.who(st.cfg['devices'], APP.states, ip)
+                did = client.get('routerId')
+                if client.get('wifi') and (client.get('signalAge') is None or client['signalAge'] > 3):
+                    if did in APP.running:
+                        deadline = time.monotonic() + 3
+                        while did in APP.running and time.monotonic() < deadline:
+                            time.sleep(.1)
+                    else:
+                        device = next((d for d in st.cfg['devices'] if d['id'] == did), None)
+                        if device and device.get('enabled', True) and device.get('driver') == 'keenetic' and device.get('location') != 'agent':
+                            APP.running.add(did)
+                            try:
+                                APP.poll_device(device)
+                            except Exception:
+                                pass  # Keep the speed result; stale / missing RSSI is excluded from the signal map.
+                            finally:
+                                APP.running.discard(did)
+                    client = speedtest.who(st.cfg['devices'], APP.states, ip)
                 num = lambda k: round(float(body[k]), 2) if isinstance(body.get(k), (int, float)) else None
                 rec = {'kind': 'browser', 'down': num('down'), 'up': num('up'), 'ping': num('ping'), 'jitter': num('jitter'),
                        'note': str(body.get('note') or '')[:80], 'where': body.get('where') if isinstance(body.get('where'), dict) else None,
-                       'client': speedtest.who(st.cfg['devices'], APP.states, self.client_ip())}
+                       'client': client}
                 return self.send({'ok': True, 'test': APP.speed.add(rec)})
             m = re.match(r'/api/speedtest/(\w+)$', path)
             if m and method == 'PUT':
@@ -2872,6 +3198,8 @@ def main():
         APP.store.cfg['auth'] = APP.store.cfg.get('auth') or {'demo': True}
         APP.sites.demo_seed()
         log('DEMO mode: made-up office network, login disabled')
+    if not DEMO:
+        APP.local.load_all()                                # confirmed local plugins (a failing one is switched off, never blocks the start)
     threading.Thread(target=APP.poller, daemon=True).start()
     if not DEMO or os.environ.get('RL_E2E'):
         threading.Thread(target=APP.collector.loop, daemon=True).start()

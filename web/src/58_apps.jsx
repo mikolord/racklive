@@ -5,9 +5,11 @@ const APPS = [
   { id: 'frank', path: '/frank', name: 'Frank', icon: APP_ICON_SET.frank, text: 'Помощник: вопросы о сети простыми словами, разговоры сохраняются' },
   // the speed test measures the home network: it is installed by the LAN address — through the domain the traffic would go via the router's https proxy
   { id: 'speed', path: '/speed', name: 'Тест скорости', icon: APP_ICON_SET.speed, text: 'Замер Wi-Fi и домашней сети с телефона — в каждой комнате', lan: true },
+  { id: 'plan', path: '/plan', name: 'План', icon: APP_ICON_SET.plan, text: 'Дома и этажи в 3D, оборудование, тепловая карта Wi-Fi и пошаговый обход комнат — сразу на плане.', lan: true },
   { id: 'terminal', path: '/terminal', name: 'Терминал', icon: APP_ICON_SET.terminal, text: 'SSH-терминал к вашим серверам, NAS и роутерам — как отдельное приложение, на телефоне и на компьютере' },
-  { id: 'cards', path: '/cards', name: 'Сканер', icon: APP_ICON_SET.cards, text: 'Открывается сразу на камере: наведите на QR-наклейку устройства, и появится его карточка (порты, нагрузка ИБП и т. д.). Что показывать в карточках и их наклейки настраиваются здесь.' },
-  { id: 'rack', path: '/', name: 'Rack Live', icon: APP_ICON_SET.rack, text: 'Вся панель: шкафы, карта, устройства, уведомления' },
+  { id: 'cards', path: '/cards', name: 'Сканер', icon: APP_ICONS.cards, text: 'Открывается сразу на камере: наведите на QR-наклейку устройства, и появится его карточка (порты, нагрузка ИБП и т. д.). Что показывать в карточках и их наклейки настраиваются здесь.' },
+  { id: 'modeler', path: '/modeler', name: 'Создать модель', icon: APP_ICON_SET.modeler, text: 'Сделать модель устройства для магазина: загрузить фото, отметить порты пальцем (с лупой), задать границы приближения и опубликовать в каталог.' },
+  { id: 'rack', path: '/', name: 'Rack Live', icon: APP_ICONS.rack, text: 'Вся панель: шкафы, карта, устройства, уведомления' },
 ];
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isInstalled = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
@@ -51,6 +53,7 @@ function InstallModal({ app, base, lanBase, onClose }) {
   const toast = useToast();
   const copy = () => { const ok = copyText(url); toast(ok ? 'Ссылка скопирована' : 'Не получилось скопировать — выделите ссылку вручную', !ok); };
   return <Modal title={'Установить «' + app.name + '»'} onClose={onClose} icon={<img src={app.icon} width="28" height="28" style={{ borderRadius: 7 }} alt="" />}>
+    {window.RL_APP===app.id ? <InstallBanner app={app.id} name={app.name}/> : null}
     {both ? <div className="col" style={{ gap: 8 }}>
       <Seg value={via} onChange={setVia} options={[{ value: 'domain', label: 'Через домен' }, { value: 'lan', label: 'Домашний адрес' }]} />
       <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45 }}>{via === 'domain'
@@ -94,6 +97,7 @@ function AppAccordion({ a, onInstall }) {
       <div className="dim" style={{ fontSize: 12.8, lineHeight: 1.45, margin: '0 0 8px' }}>{a.text}</div>
       <button type="button" className="plug-row" onClick={onInstall}><span className="ico-circle"><Icon name="download" size={16} /></span>
         <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>Установить на телефон</b><small>QR-код и пошаговая инструкция</small></span><Icon name="chevron" size={14} /></button>
+      {a.id === 'modeler' ? <a className="plug-row" href="/modeler" target="_blank" rel="noreferrer"><span className="ico-circle"><Icon name="plus" size={16} /></span><span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b>Открыть и создать модель</b><small>фото → порты → приближение → публикация</small></span><Icon name="chevron" size={14} /></a> : null}
       {a.id === 'cards' ? <ScannerMenu /> : null}
     </div> : null}
   </div>;
@@ -126,8 +130,8 @@ function AppsCard() {
   return <Card title={<span className="row" style={{ gap: 8 }}><Icon name="phone" size={15} />Приложения на телефон</span>} style={{ gridColumn: '1 / -1' }}>
     <div className="notify-grid">
       <div className="col" style={{ gap: 12 }}>
-        <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>Frank и тест скорости ставятся на экран телефона отдельными значками — как обычные приложения.
-          Лучше ставить по адресу с <b>https</b>: тогда на Android работает установка, а в Frank — голосовой ввод.</div>
+        <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>План, Frank и другие инструменты ставятся на экран телефона отдельными значками — как обычные приложения.
+          Для установки на Android используйте адрес с <b>https</b>.</div>
         <div className="apps-addr">
           <div className="dim3" style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px' }}>Адрес для установки</div>
           {apps.url ? <div className="row wrap" style={{ gap: 8 }}><a className="mono" href={apps.url} target="_blank" rel="noreferrer" style={{ fontSize: 14, fontWeight: 600 }}>{apps.url}</a>

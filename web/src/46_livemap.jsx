@@ -8,6 +8,8 @@ const LIVE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_I
 /* Схема в стиле Google/Apple: векторные плитки OpenStreetMap (OpenFreeMap, без ключа), стиль «positron» перекрашивается под тему приложения (data-theme на <html>):
    светлая — серые дома и сине-серые дороги, тёмная — те же тона в темноте. Дома OSM объёмные, номера домов видны с 17-го масштаба. Спутник Esri — второй режим. */
 const LIVE_STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
+const PLAN_DEFAULTS = { mapMode: 'scheme', perspective: 'angled', surroundings3d: false, houseView: 'last', lowerFloors: true, equipmentSize: 1.2, markerSize: .3, coverage: true };
+const planPreferences = settings => ({ ...PLAN_DEFAULTS, ...((settings && settings.planDefaults) || {}) });
 const LIVE_SCHEME = {
   light: { bg: '#f6f6f6', bld: '#e4e4e8', road: '#aab6c8', edge: '#9eabbf', water: '#cfdcea', park: '#ecefea', text: '#5d6b82', halo: '#f6f6f6', num: '#7a8696' },
   dark: { bg: '#1b1c20', bld: '#2c2e35', road: '#3f4859', edge: '#363e4c', water: '#1e2b39', park: '#1f231f', text: '#97a3b8', halo: '#1b1c20', num: '#7f8aa0' } };
@@ -120,10 +122,12 @@ function featScreen(fs, map, pt) {
 /* spec = { center: [lon, lat], houses: [{ id, name, ring: [[lon, lat]…], center: {lon, lat}, floors, devs, status, color, edge, hl, height }], poles: [{ id, name, lon, lat }], links: [{ coords: [[lon, lat], [lon, lat]] }] } */
 function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, onRename, onDelete, onOpen, onNet, onAddPole, onAddNode, onMovePoint, onLinkPick, linkFrom, onEditLink,
   onRenamePoint, onDeletePoint, onBindNode, onOpenRef, noOutline }) {
-  const toast = useToast();
+  const toast = useToast(); const { data } = useApp();
+  const defaults = planPreferences(data.settings);
   const box = useRef(null); const mapRef = useRef(null); const marksRef = useRef([]); const vtxRef = useRef([]);
-  const [err, setErr] = useState(''); const [ready, setReady] = useState(false); const [flat, setFlat] = useState(false);
-  const [mode, setMode] = useState(lsGet('rl_live_mode', '') === 'sat' ? 'sat' : 'scheme'); const modeRef = useRef(mode); modeRef.current = mode;
+  const [err, setErr] = useState(''); const [ready, setReady] = useState(false); const [loadingMap, setLoadingMap] = useState(true); const [flat, setFlat] = useState(() => defaults.perspective === 'top');
+  const [progress, setProgress] = useState({ total: 0, loaded: 0, failed: 0 });
+  const [mode, setMode] = useState(() => defaults.mapMode === 'sat' ? 'sat' : 'scheme'); const modeRef = useRef(mode); modeRef.current = mode;
   const [tool, setTool] = useState(null); const [draft, setDraft] = useState([]);                  // «Обвести дом»: инструмент и углы [lon, lat]
   const [vedit, setVedit] = useState(false); const [selV, setSelV] = useState(null);                // правка углов выбранного дома
   const [styleOpen, setStyleOpen] = useState(false);
@@ -133,7 +137,7 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
     if (onAddHouse(ring, name) !== false) { setDraft([]); setTool(null); }
   };
   const finishRef = useRef(null); finishRef.current = finishWith;
-  const [lite, setLite] = useState(() => { const v = lsGet('rl_live_lite', ''); return v ? v === '1' : (window.matchMedia && matchMedia('(max-width: 760px)').matches); });       // на телефоне здания района по умолчанию плоские
+  const [lite, setLite] = useState(() => defaults.surroundings3d !== true); // only surrounding map buildings; user's buildings remain 3D
   const liteRef = useRef(lite); liteRef.current = lite;
   const restyle = () => { const map = mapRef.current; if (!map) return; liveStyle(modeRef.current, R.current.spec, R.current.draft, R.current.sel, liteRef.current).then(st => { if (mapRef.current === map) map.setStyle(st, { diff: false }); })
     .catch(() => { if (modeRef.current === 'scheme') { setMode('sat'); modeRef.current = 'sat'; restyle(); } }); };      // схема недоступна (нет сети до OpenFreeMap) — спутник
@@ -143,12 +147,23 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
       let style; try { style = await liveStyle(modeRef.current, R.current.spec, [], R.current.sel, liteRef.current); } catch (e) { modeRef.current = 'sat'; setMode('sat'); style = await liveStyle('sat', R.current.spec, [], R.current.sel, liteRef.current); }
       if (dead) return;
       try {
-        map = new ml.Map({ container: box.current, center: R.current.spec.center, zoom: 17, pitch: 58, bearing: -25, maxPitch: 78, renderWorldCopies: false, fadeDuration: 0, style,
+        map = new ml.Map({ container: box.current, center: R.current.spec.center, zoom: 17, pitch: flat ? 0 : 58, bearing: flat ? 0 : -25, maxPitch: 78, renderWorldCopies: false, fadeDuration: 0, style,
           pixelRatio: Math.min(window.devicePixelRatio || 1, 2) });                 // на экранах 3× карта рисовалась в 9 раз большем числе точек — хватает и двойной плотности
+        if (map.touchZoomRotate) map.touchZoomRotate.enable(); if (map.dragPan) map.dragPan.enable();
+        map.getCanvasContainer().style.touchAction = 'none';
       } catch (e) { setErr('Эта карта рисуется видеокартой (WebGL), а в вашем браузере она недоступна.'); return; }
       themeWatch = new MutationObserver(() => { if (modeRef.current === 'scheme') restyle(); });       // тема приложения сменилась — схема перекрашивается
       themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
       mapRef.current = map;
+      // MapLibre discovers visible tiles dynamically. Count actual discovered
+      // base-map tiles rather than inventing a total or timing-based percentage.
+      const tiles = new Map();
+      const tileKey = e => e && e.tile && e.coord && (e.sourceId === 'sat' || e.sourceId === 'openmaptiles') ? e.sourceId + ':' + e.coord.key : null;
+      const updateProgress = () => { if (dead) return; const values = [...tiles.values()]; setProgress({ total: values.length, loaded: values.filter(x => x === 'loaded').length, failed: values.filter(x => x === 'failed').length }); };
+      map.on('sourcedataloading', e => { const key = tileKey(e); if (key && !tiles.has(key)) { tiles.set(key, 'loading'); updateProgress(); } });
+      map.on('sourcedata', e => { const key = tileKey(e); if (key && e.tile.state === 'loaded' && tiles.get(key) !== 'loaded') { tiles.set(key, 'loaded'); updateProgress(); } });
+      map.on('error', e => { const key = tileKey(e); if (key) { tiles.set(key, 'failed'); updateProgress(); } });
+      map.once('idle', () => { if (!dead) setLoadingMap(false); });
       if (/[?&]wmtest=1/.test(location.search)) window.__rlLive = { map, ml };        // только для проверки в tools/planmap_draw_test.py: нажатия по карте имитируются
       map.addControl(new ml.NavigationControl({ visualizePitch: true }), 'top-left');
       map.on('error', e => { if (/WebGL|context/i.test(String((e && e.error && e.error.message) || e))) setErr('Эта карта рисуется видеокартой (WebGL), а в вашем браузере она недоступна.'); });
@@ -179,7 +194,7 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
           if (r.tool === 'rect') { const nd = [...d, pt]; if (nd.length >= 3) finishRef.current(rectFrom3(nd)); else setDraft(nd); }
         });
         const sp = R.current.spec, pts = sp.houses.flatMap(h => h.ring).concat(sp.poles.map(p => [p.lon, p.lat]));
-        if (pts.length) { const b = new ml.LngLatBounds(pts[0], pts[0]); pts.forEach(p => b.extend(p)); map.fitBounds(b, { padding: 90, maxZoom: 19, pitch: 58, bearing: -25, duration: 0 }); }
+        if (pts.length) { const b = new ml.LngLatBounds(pts[0], pts[0]); pts.forEach(p => b.extend(p)); map.fitBounds(b, { padding: 90, maxZoom: 19, pitch: flat ? 0 : 58, bearing: flat ? 0 : -25, duration: 0 }); }
         setReady(true);
       });
     }).catch(e => { if (!dead) setErr(e.message); });
@@ -239,7 +254,7 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
   useEffect(() => { if (!selHouse) { setVedit(false); setSelV(null); setStyleOpen(false); } }, [selHouse]);
 
   const tilt = f => { setFlat(f); if (mapRef.current) mapRef.current.easeTo({ pitch: f ? 0 : 58, bearing: f ? 0 : -25, duration: 600 }); };
-  const swap = m => { lsSet('rl_live_mode', m); modeRef.current = m; setMode(m); restyle(); };
+  const swap = m => { modeRef.current = m; setMode(m); restyle(); };
   const fitAll = () => { const map = mapRef.current, ml = window.maplibregl; if (!map || !ml) return;
     const pts = spec.houses.flatMap(h => h.ring).concat(spec.poles.map(p => [p.lon, p.lat]), (spec.nodes || []).map(p => [p.lon, p.lat]));
     if (!pts.length) { map.easeTo({ center: spec.center, zoom: 17, duration: 600 }); return; }
@@ -263,7 +278,7 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
         <WorkChoice keep value={mode} options={[{ value: 'scheme', label: 'Схема', icon: 'map' }, { value: 'sat', label: 'Спутник', icon: 'globe' }]} onChange={swap} />
         <WorkItem icon="fit" label="Показать все дома" onClick={fitAll} />
         <WorkItem icon="eye" label={flat ? 'Наклонить карту (3D)' : 'Вид сверху'} onClick={() => tilt(!flat)} />
-        {mode === 'scheme' ? <WorkSwitch icon="home" label="Объёмные здания района" on={!lite} onChange={v => { lsSet('rl_live_lite', v ? '0' : '1'); liteRef.current = !v; setLite(!v); restyle(); }} /> : null}
+        {mode === 'scheme' ? <WorkSwitch icon="home" label="Объёмные здания района" on={!lite} onChange={v => { liteRef.current = !v; setLite(!v); restyle(); }} /> : null}
       </WorkSec>
       {edit ? <WorkSec title="Обвести дом">
         <WorkItem icon="home" label="По зданию на карте" sub="одно нажатие по зданию" on={tool === 'auto'} onClick={() => pick('auto')} />
@@ -292,7 +307,17 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
           <Icon name={x.kind === 'house' ? 'home' : x.kind === 'pole' ? 'pole' : x.kind === 'rack' ? 'rack' : x.kind === 'node' ? 'rack' : 'server'} size={16} />
           <span className="grow ellipsis" style={{ marginLeft: 8 }}>{x.name}</span><span className="dim" style={{ fontSize: 12 }}>{x.sub}</span></div>)}</div>
           : fq.trim() ? <div className="dim" style={{ fontSize: 13, padding: '8px 4px' }}>Ничего не найдено</div> : null}</div> : null}
-      {!ready && !err ? <div className="live-msg">Загружаю карту…</div> : null}
+      {!ready || loadingMap || err ? <div className="live-loading-panel" aria-live="polite">
+        {!err ? <div className="live-loading-status" role="status">
+          <div className="live-loading-heading"><span>Загрузка карты</span>{progress.total ? <b>{Math.round(progress.loaded / progress.total * 100)}%</b> : <span>Подготовка…</span>}</div>
+          {progress.total ? <><div className="live-loading-track" role="progressbar" aria-label="Загружено фрагментов карты" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.loaded}><i style={{ width: (progress.loaded / progress.total * 100) + '%' }} /></div>
+            <small>{progress.loaded} из {progress.total} фрагментов{progress.failed ? ' · часть недоступна' : ''}</small></> : <div className="live-loading-indeterminate" />}
+        </div> : null}
+        {(spec.houses.length || (noOutline || []).length) ? <label className="live-loading-houses">Открыть дом
+          <select className="select" aria-label="Открыть дом во время загрузки карты" value="" onChange={e => { if (e.target.value) onOpen(e.target.value); }}>
+            <option value="">Выбрать дом…</option>{[...spec.houses, ...(noOutline || [])].map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+          </select></label> : null}
+      </div> : null}
       {err ? <div className="live-msg err">{err}</div> : null}
       {ready && !tool && !vedit && !spec.houses.length ? <div className="live-msg hint">{edit ? 'Откройте меню справа вверху → «Обвести дом»: нажмите на здание на карте или отметьте его углы.' : 'Домов пока нет. Включите «Редактирование» в меню — тогда можно обвести дом на карте.'}</div> : null}
       {tool ? <div className="live-bar"><div className="live-bar-t">{tool === 'link' && linkFrom ? `От «${nameOf(linkFrom)}» — нажмите на второй дом, столб или узел` : LIVE_TOOLS[tool]}{draft.length ? ` · точек: ${draft.length}` : ''}</div>

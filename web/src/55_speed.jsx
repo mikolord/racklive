@@ -138,8 +138,11 @@ function useSpeedTest(autoRun) {
   const [saved, setSaved] = useState(null);
   const [note, setNote] = useState('');
   const alive = useRef(true);
+  const testing = useRef(false);
   useEffect(() => { api('/api/speedtest/who').then(setWho).catch(() => setWho({})); return () => { alive.current = false; }; }, []);
   const start = async () => {
+    if (testing.current) return;
+    testing.current = true;
     setRes(null); setSaved(null);
     try {
       setRun({ phase: 'Задержка', value: 0, progress: null });
@@ -150,9 +153,12 @@ function useSpeedTest(autoRun) {
       const up = await runPhase('up', (v, pr) => alive.current && setRun({ phase: 'Отдача ↑', value: v, progress: pr }));
       const r = { down, up, ...p };
       if (!alive.current) return;
-      setRun(null); setRes(r);
-      if (admin) { const s = await api('/api/speedtest', { method: 'POST', body: { ...r, note } }); setSaved(s.test); refresh(); }
+      setRes(r);
+      if (admin) { setRun({ phase: 'Сохраняю замер', value: down, progress: null });
+        const s = await api('/api/speedtest', { method: 'POST', body: { ...r, note } }); setSaved(s.test); setWho(s.test.client || {}); refresh(); }
+      setRun(null);
     } catch (e) { setRun(null); toast('Тест не удался: ' + e.message, true); }
+    finally { testing.current = false; }
   };
   const saveNote = async () => { if (!saved) return; try { await api('/api/speedtest/' + saved.id, { method: 'PUT', body: { note } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
   const del = async t => { if (!(await confirm('Удалить этот замер?', { danger: true, ok: 'Удалить' }))) return;
@@ -162,12 +168,16 @@ function useSpeedTest(autoRun) {
     hasPlan: ((data.plan || {}).buildings || []).length > 0, list: (data.speedtests || []).slice().reverse() };
 }
 
-function SpeedTestModal({ onClose, autoRun }) {
+function SpeedTestModal({ onClose, autoRun, survey, onSurveyMeasured, onSurveySave }) {
   const { pinSpeedTest } = useApp();
   const s = useSpeedTest(autoRun); const { data, admin, who, run, res, saved, note, setNote, start, saveNote, del, hasPlan, list } = s;
-  return <Modal title="Тест скорости" onClose={onClose} icon={<Icon name="gauge" size={20} color="var(--accent)" />}>
-    <Hint id="speed-intro">Тест меряет скорость между этим устройством и сервером Rack Live — то есть вашу домашнюю сеть и Wi-Fi, а не интернет.
-      Пройдитесь по дому и сделайте тест в каждой комнате — на «Плане» получится карта покрытия Wi-Fi.</Hint>
+  const [committing,setCommitting]=useState(false);
+  const commit=async()=>{if(!saved||committing)return;setCommitting(true);try{if(await onSurveySave(saved))onClose()}finally{setCommitting(false)}};
+  useEffect(()=>{if(saved && survey && onSurveyMeasured)onSurveyMeasured(saved)},[saved?.id]);
+  return <Modal title={survey ? 'Обход · точка '+survey.step+' из 5' : 'Тест скорости'} onClose={()=>{if(!committing)onClose()}} icon={<Icon name="gauge" size={20} color="var(--accent)" />}>
+    {survey ? <div className="survey-measure-intro"><b>{survey.name}</b><span>Стойте у подсвеченной отметки до конца замера. После результата подтвердите сохранение точки.</span></div> :
+      <Hint id="speed-intro">Тест меряет скорость между этим устройством и сервером Rack Live — то есть вашу домашнюю сеть и Wi-Fi, а не интернет.
+      Для карты выберите «Обход комнаты» в меню плана: он подскажет места замеров.</Hint>}
     <WhoLine who={who} />
     <Gauge value={run ? run.value : res ? res.down : 0} phase={run ? run.phase : res ? 'Загрузка ↓' : ''} progress={run ? run.progress : null} />
     {res ? <>
@@ -177,11 +187,13 @@ function SpeedTestModal({ onClose, autoRun }) {
       <div className="speed-verdict" style={{ borderColor: speedLevel(res.down)[1] }}>{speedVerdict(res, who).map((l, i) => <div key={i}>{l}</div>)}</div>
       {saved ? <div className="row wrap" style={{ gap: 8 }}>
         <input className="input grow" style={{ minWidth: 160 }} value={note} placeholder="Где вы? Например: кухня, у окна" onChange={e => setNote(e.target.value)} onBlur={saveNote} />
-        {hasPlan ? <Btn icon="pin" kind="primary" onClick={() => { onClose(); pinSpeedTest(saved.id); }}>Отметить на плане</Btn> : null}
+        {survey ? <Btn icon="pin" kind="primary" busy={committing} disabled={committing||!!run} onClick={commit}>Сохранить точку обхода</Btn> : hasPlan ? <Btn icon="pin" kind="primary" onClick={() => { onClose(); pinSpeedTest(saved.id); }}>Отметить на плане</Btn> : null}
       </div> : !admin ? <div className="dim3" style={{ fontSize: 12.5 }}>Результат не сохранён: сохранять замеры может только администратор (войдите).</div> : null}
     </> : null}
-    <Btn kind="primary" busy={!!run} onClick={start} style={{ padding: 13 }}>{run ? 'Идёт тест…' : res ? 'Повторить тест' : 'Начать тест'}</Btn>
-    {list.length ? <div>
+    {survey && saved && survey.source && survey.source!==coverageGroup(saved) ? <div className="plan-survey-warning">Точка доступа или диапазон изменились. Этот замер будет в отдельной карте.</div> : null}
+    {survey && saved && coverageValue(saved,'signal')==null ? <div className="plan-survey-note">Сигнал недоступен — сохранится скорость. Для карты сигнала нужен локальный адрес NAS.</div> : null}
+    <Btn kind="primary" busy={!!run} disabled={!!run||committing} onClick={start} style={{ padding: 13 }}>{run ? 'Идёт тест…' : res ? 'Повторить тест' : 'Начать тест'}</Btn>
+    {!survey && list.length ? <div>
       <div className="card-title" style={{ margin: '6px 0 4px' }}>Замеры · {list.length}</div>
       <div className="list">{list.slice(0, 30).map(t => <SpeedRow key={t.id} t={t} now={data.now} onDelete={admin ? () => del(t) : null} />)}</div>
     </div> : null}

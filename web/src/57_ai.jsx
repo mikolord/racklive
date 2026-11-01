@@ -228,7 +228,6 @@ function FrankMenu({ onClose }) {
   </div>;
 }
 
-const SPEECH = window.isSecureContext ? (window.SpeechRecognition || window.webkitSpeechRecognition || null) : null;
 const CUR_KEY = 'rl_ai_cur';                                   // the open conversation, per browser
 const dayLabel = t => { const d = new Date(t * 1000), now = new Date(), y = new Date(now - 864e5);
   const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -279,16 +278,19 @@ function AiPanel({ initial, onClose, standalone }) {
       }
     } catch (e) { }
     if (polling.current === job) polling.current = null;
-    if (alive.current && cur.current === chatId) { setBusy(null); open(chatId, true); }
+    if (alive.current && cur.current === chatId) {
+      setBusy(null);
+    }
   };
   const open = async (id, quiet) => {
     setView('chat'); setCid(id); if (!quiet) { setBusy(null); setLoading(true); }
-    if (!id) { setMsgs([]); setCtx(null); setLoading(false); return; }
+    if (!id) { setMsgs([]); setCtx(null); setLoading(false); return null; }
     try {
       const c = await api('/api/ai/chats/' + id);
-      if (!alive.current || cur.current !== id) return;
+      if (!alive.current || cur.current !== id) return null;
       setMsgs(c.messages); setCtx(c.ctx || null);
       if (c.job) { setBusy(b => b || { stage: 'Думаю…', tools: [], t0: Date.now() }); follow(c.job, id); }
+      return c;
     } catch (e) { if (e.status === 404) { setCid(null); setMsgs([]); } else toast(e.message, true); }
     finally { if (alive.current) setLoading(false); }
   };
@@ -309,7 +311,9 @@ function AiPanel({ initial, onClose, standalone }) {
       if (!alive.current) return;
       if (cur.current === id) { cur.current = r.chat; setCid(r.chat); }
       follow(r.job, r.chat);
-    } catch (e) { setBusy(null); setMsgs(m => [...m, { role: 'assistant', text: e.message, err: true }]); }
+    } catch (e) {
+      setBusy(null); setMsgs(m => [...m, { role: 'assistant', text: e.message, err: true }]);
+    }
   };
   useEffect(() => {
     if (initial && ai.ready && !asked.current) { asked.current = true; send(initial); }
@@ -330,7 +334,6 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   const today = ai.today || {};
   const title = view === 'list' ? 'Разговоры' : T('frank.name', 'Frank');
-  // voice input: the browser's own speech recognition (Safari/Chrome; needs https — on a plain http address the button is hidden)
   const [quick, setQuick] = useState(false);
   const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1');
   const act = async (p, run) => {
@@ -338,20 +341,6 @@ function AiPanel({ initial, onClose, standalone }) {
       if (run) toast(r.proposal.status === 'done' ? '✓ ' + r.proposal.result : r.proposal.result, r.proposal.status !== 'done'); }
     catch (e) { toast(e.message, true); open(cid, true); }
   };
-  const [listening, setListening] = useState(false);
-  const recRef = useRef(null);
-  const toggleMic = () => {
-    if (listening && recRef.current) { recRef.current.stop(); return; }
-    try {
-      const r = new SPEECH(); const base = q.trim();
-      r.lang = 'ru-RU'; r.interimResults = true; r.continuous = false;
-      r.onresult = e => { let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setQ((base ? base + ' ' : '') + t); };
-      r.onend = () => setListening(false);
-      r.onerror = e => { setListening(false); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Нет доступа к микрофону — разрешите его в настройках браузера', true); };
-      r.start(); recRef.current = r; setListening(true); setQuick(false);
-    } catch (e) { setListening(false); toast('Голосовой ввод недоступен: ' + e.message, true); }
-  };
-  useEffect(() => () => { try { recRef.current && recRef.current.abort(); } catch (e) { } }, []);
   const toggleList = () => { if (view === 'list') setView('chat'); else { setView('list'); setChats(null); loadList(); } };
   const sub = ai.ready ? `${ai.title} · ${ai.effModel}${ai.agent ? ' · агент: ' + ((AGENT_MODES.find(x => x[0] === ai.agentMode) || AGENT_MODES[0])[1]).toLowerCase() : ''}` : 'не настроен';
   return <div className={standalone ? 'frank-app' : 'overlay ai-overlay'} onMouseDown={e => onClose && e.target === e.currentTarget && onClose()}>
@@ -420,7 +409,7 @@ function AiPanel({ initial, onClose, standalone }) {
         <CmdHint q={q} onPick={c => setQ(c + ' ')} />
         <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} />
         <AttachChips files={att} onRemove={dropAtt} />
-        <textarea rows={1} value={q} placeholder={busy ? busy.stage : listening ? 'Говорите…' : 'Спросите Frank о сети или введите /'} onChange={e => setQ(e.target.value)} onKeyDown={key}
+        <textarea rows={1} value={q} placeholder={busy ? busy.stage : 'Спросите Frank о сети или введите /'} onChange={e => setQ(e.target.value)} onKeyDown={key}
           disabled={!!busy} onFocus={() => setQuick(false)} onPaste={onPaste} />
         <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
         <div className="fr-dock-row">
@@ -428,7 +417,6 @@ function AiPanel({ initial, onClose, standalone }) {
           <button type="button" className="fr-dbtn" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()} disabled={!!busy}><Icon name="clip" size={20} stroke={2} /></button>
           <div className="fr-model"><b>{ai.title.split(' ')[0]}</b><span>{ai.effModel}</span></div>
           <div className="grow" />
-          {SPEECH ? <button type="button" className={'fr-dbtn' + (listening ? ' rec' : '')} title="Сказать голосом" onClick={toggleMic} disabled={!!busy}><Icon name="mic" size={21} stroke={2} /></button> : null}
           <button type="button" className={'fr-send' + ((q.trim() || att.length) && !busy ? ' on' : '')} disabled={(!q.trim() && !att.length) || !!busy} onClick={() => send(q)} title="Отправить">
             {busy ? <span className="spin-dot" /> : <Icon name="arrowUp" size={21} stroke={2.4} />}</button>
         </div>

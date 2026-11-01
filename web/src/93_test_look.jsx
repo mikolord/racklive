@@ -76,7 +76,7 @@ const scoreTone = s => (s == null ? null : s >= 80 ? 'var(--accent)' : s >= 50 ?
 function StatsInstr() {
   const { data } = useApp(); const devices = data.devices;
   const on = devices.filter(d => d.state && d.state.status === 'online').length;
-  const problems = devices.filter(d => ['offline', 'warning'].includes(d.state && d.state.status)).length;
+  const problems = devices.filter(d => !d.healthSkip && ['offline', 'warning'].includes(d.state && d.state.status)).length;
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
   const poe = devices.flatMap(d => (d.state && d.state.ports) || []).reduce((a, p) => a + (p.poeW || 0), 0);
   const cell = (k, v, sub, frac, warn, digits) => <div className={'sp-cell' + (warn ? ' warn' : '')}>
@@ -98,10 +98,12 @@ function uptimeDays(list) {
   const n = Math.max(0, ...list.map(u => (u.days || []).length));
   return Array.from({ length: n }, (_, i) => { const v = list.map(u => (u.days || [])[i]).filter(x => x != null); return v.length ? Math.min(...v) : null; });
 }
-/* «Доступность»: 30 thin day strokes — only a day with an outage is coloured */
+/* «Доступность»: 30 day strokes, all in the system colour — a day's availability is the stroke's HEIGHT (a whole day is the tallest, the worse the day the lower) */
+const dayH = p => (p == null ? 18 : p >= 99.9 ? 100 : Math.max(22, 100 - (99.9 - p) * 25));
+const dayBg = p => (p == null ? 'var(--fill2)' : 'var(--accent)');
 function DayTicks({ days }) {
   days = [...Array(Math.max(0, 30 - days.length)).fill(null), ...days].slice(-30);        // always 30 strokes, the oldest on the left
-  return <div className="dk">{days.map((p, i) => <i key={i} style={{ '--i': i, background: p == null ? 'var(--fill2)' : p >= 99.9 ? 'var(--green)' : p >= 99 ? 'var(--orange)' : 'var(--red)', height: p == null ? '35%' : '100%' }}
+  return <div className="dk">{days.map((p, i) => <i key={i} style={{ '--i': i, background: dayBg(p), height: dayH(p) + '%' }}
     title={p == null ? 'нет данных' : pctText(p)} />)}</div>;
 }
 
@@ -144,7 +146,7 @@ const TT_ART = {
     return <svg className="tt-svg" viewBox="0 0 100 30" preserveAspectRatio="none"><line x1="0" x2="100" y1="29" y2="29" className="tt-base" />
       <polyline points={pts.map((v, i) => `${i / (pts.length - 1) * 100},${y(v)}`).join(' ')} className="tt-line" /></svg>; },
   uptime: d => { const list = (d.uptime || []).filter(u => u.kind !== 'ap'); const days = [...Array(30).fill(null), ...uptimeDays(list)].slice(-30);
-    return <div className="tt-days">{days.map((p, i) => <i key={i} style={{ background: p == null ? 'var(--fill2)' : p >= 99.9 ? 'var(--green)' : p >= 99 ? 'var(--orange)' : 'var(--red)', height: p == null ? '40%' : '100%' }} />)}</div>; },
+    return <div className="tt-days">{days.map((p, i) => <i key={i} style={{ background: dayBg(p), height: dayH(p) + '%' }} />)}</div>; },
   ups: d => { const u = upsFirst(d); const s = u && u.state.ups; if (!s) return null; const f = s.charge != null ? s.charge / 100 : Math.min(1, (s.runtimeMin || 0) / 120);
     return <svg className="tt-svg" viewBox="0 0 100 30"><rect x="1" y="4" width="90" height="22" className="tt-frame" /><rect x="91" y="11" width="6" height="8" className="tt-frame" />
       {Array.from({ length: 10 }, (_, i) => <rect key={i} x={5 + i * 8.5} y="8" width="6.5" height="14" className={i < Math.round(f * 10) ? 'tt-unit on' : 'tt-unit'} />)}</svg>; },
@@ -161,10 +163,12 @@ const TT_ART = {
   note: (d, w) => <div className="tt-note">{((w.opts || {}).text || 'Пустая заметка').split('\n').slice(0, 4).map((l, i) => <div key={i} className="ellipsis">{l || ' '}</div>)}</div>,
 };
 const TT_NO_VALUE = new Set(['advice', 'frank', 'note']);
+const TT_ACCENT_LED = new Set(['advice', 'newdev']);
 function TestTile({ w, d, name, data, onTap, arranging }) {
   const t = d.tile ? d.tile(data, w) || {} : {};
   const art = TT_ART[w.type] ? TT_ART[w.type](data, w) : null;
-  const led = t.tone === 'red' || t.bad ? 'var(--red)' : t.tone === 'yellow' ? 'var(--orange)' : null;
+  // «Советы Frank» and «Новые в сети» are not alarms — their lamp is in the system colour, not red
+  const led = (t.bad && TT_ACCENT_LED.has(w.type)) ? 'var(--accent)' : t.tone === 'red' || t.bad ? 'var(--red)' : t.tone === 'yellow' ? 'var(--orange)' : null;
   const showV = t.v !== '' && t.v != null && !TT_NO_VALUE.has(w.type);
   return <button type="button" className={'tt t-' + w.type} onClick={arranging ? undefined : onTap}>
     <span className="tt-top"><span className="tt-k ellipsis">{name}</span>{led ? <i className="tt-led" style={{ background: led, boxShadow: `0 0 6px ${led}` }} /> : null}</span>
@@ -311,31 +315,32 @@ function R3Box({ x, y, z, w, h, d, front, cls = '', onClick, title, flip }) {
     <R3Face w={w} h={d} tf={T(x - w / 2, y + h / 2, z + d / 2, 'rotateX(-90deg)')} cls={cls + ' bottom'} />
   </>;
 }
-function R3Front({ unit, dev, data }) {
+function R3Front({ unit, dev, rack, data, cords = false }) {
   const many = unitDevIds(unit);
   const st = dev && dev.state ? dev.state.status : null;
-  const pm = pmLeds(data, unit), ports = pm || (dev && dev.state && dev.state.ports) || [], sock = socketLeds(unit, dev);
-  const leds = (sock || ports).filter(p => p.kind !== 'sfp').slice(0, unit.uSize > 1 ? 48 : 24);
-  return <div className={'r3u' + (unit.type === 'blank' ? ' blank' : '')}>
+  const pm = pmLeds(data, unit), ports = cords ? rackCordPorts(rack, data, unit, unitDevIds(unit)[0], pm || (dev && dev.state && dev.state.ports)) : pm || (dev && dev.state && dev.state.ports) || [], sock = socketLeds(unit, dev);
+  const leds = (sock || ports).filter(p => cords || p.kind !== 'sfp').slice(0, cords || unit.uSize > 1 ? 48 : 24);
+  return <div data-cord-unit={unit.id} className={'r3u' + (unit.type === 'blank' ? ' blank' : '')}>
     <i className="r3-ear l" /><i className="r3-ear r" />
     {unit.type === 'blank' ? null : <>
       <div className="r3u-id">{st ? <i className={'r3u-led ' + st} /> : null}<span className="ellipsis">{many.length > 1 ? many.map(id => (data.devices.find(x => x.id === id) || {}).name).filter(Boolean).join(' · ') : unit.name}</span></div>
-      {leds.length >= (pm || sock ? 1 : 4) ? <Leds ports={leds} min={1} round={!!sock} /> : <div className="r3u-vent" />}
+      {cords && many.length > 1 ? <div className="r3-shelf-ports">{many.map(id => { const d = data.devices.find(x => x.id === id); return d ? <div key={id} data-cord-device={id}><Leds ports={rackCordPorts(rack, data, unit, id, (d.state || {}).ports)} min={1} all /></div> : null; })}</div>
+        : leds.length >= (cords || pm || sock ? 1 : 4) ? <Leds ports={leds} min={1} round={!!sock} all={cords} /> : <div className="r3u-vent" />}
     </>}
   </div>;
 }
-function Rack3D({ rack, devById, side, onUnit }) {
+function Rack3D({ rack, devById, side, onUnit, flatten = false, cords = false, onCord }) {
   const { data } = useApp();
-  const wrap = useRef(null); const [cw, setCw] = useState(640);
+  const wrap = useRef(null), cordRoot = useRef(null); const [cw, setCw] = useState(640);
   useLayoutEffect(() => { const el = wrap.current; if (!el) return; const r = () => setCw(el.clientWidth); r(); const ro = new ResizeObserver(r); ro.observe(el); return () => ro.disconnect(); }, []);
   const [rot, setRot] = useState({ x: -10, y: side === 'back' ? 156 : -24 });
   useEffect(() => { setRot(r => ({ ...r, y: side === 'back' ? 156 : -24 })); }, [side]);
-  const g = useRef(null); const moved = useRef(false);
-  const down = e => { if (e.button > 0) return; g.current = { x: e.clientX, y: e.clientY, r: rot }; moved.current = false; };
+  const g = useRef(null); const moved = useRef(false); const [dragging, setDragging] = useState(false);
+  const down = e => { if (e.button > 0) return; g.current = { x: e.clientX, y: e.clientY, r: rot }; moved.current = false; setDragging(true); };
   const move = e => { const s = g.current; if (!s) return; const dx = e.clientX - s.x, dy = e.clientY - s.y;
     if (!moved.current && Math.hypot(dx, dy) < 6) return; moved.current = true; try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) { }
     setRot({ y: s.r.y + dx * .45, x: Math.max(-40, Math.min(25, s.r.x - dy * .3)) }); };
-  const up = () => { g.current = null; setTimeout(() => { moved.current = false; }, 0); };
+  const up = () => { g.current = null; setDragging(false); setTimeout(() => { moved.current = false; }, 0); };
   const k = Math.max(.42, Math.min(.95, (cw - 30) / (R3.W * 1.5)));
   const total = rack.totalU, W = R3.W * k, D = R3.D * k, uh = R3.U * k, inner = total * uh, H = (R3.TOP + R3.BOT) * k + inner;
   const top = -H / 2 + R3.TOP * k;
@@ -348,10 +353,10 @@ function Rack3D({ rack, devById, side, onUnit }) {
     const zf = D / 2 - 26 * k, z = back ? -zf + dd / 2 : zf - dd / 2;
     const open = () => { if (!moved.current) onUnit(u); };
     return <R3Box key={u.id} x={0} y={y} z={z} w={R3.PANEL * k} h={h} d={dd} flip={back} cls={'r3-unit' + (dev ? '' : ' plain')} onClick={open} title={u.name}
-      front={<R3Front unit={u} dev={dev} data={data} />} />; };
-  return <div className="r3-wrap" ref={wrap} style={{ '--k': k, height: H + 90 }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+      front={<R3Front unit={u} dev={dev} rack={rack} data={data} cords={cords} />} />; };
+  return <div className={'r3-wrap' + (dragging ? ' r3-dragging' : '')} ref={wrap} style={{ '--k': k, height: H + 90 }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
     onDoubleClick={() => setRot({ x: -10, y: side === 'back' ? 156 : -24 })}>
-    <div className="r3-stage"><div className="r3-obj" style={{ transform: `rotateX(${rot.x}deg) rotateY(${rot.y}deg)` }}>
+    <div className="r3-stage"><div ref={cordRoot} className={'r3-obj' + (flatten ? ' r3-flatten' : '')} style={{ transform: flatten ? `rotateX(0deg) rotateY(${side === 'back' ? 180 : 0}deg) scale(1.1)` : `rotateX(${rot.x}deg) rotateY(${rot.y}deg)` }}>
       {/* the cabinet: outer skin and the inner walls you see through the open front */}
       <R3Face w={D} h={H} tf={P(W / 2, -H / 2, D / 2, 'rotateY(90deg)')} cls={shell + ' side'} />
       <R3Face w={D} h={H} tf={P(-W / 2, -H / 2, -D / 2, 'rotateY(-90deg)')} cls={shell + ' side'} />
@@ -375,6 +380,9 @@ function Rack3D({ rack, devById, side, onUnit }) {
       {/* the rear frame */}
       <R3Face w={W} h={R3.TOP * k} tf={P(W / 2, -H / 2, -D / 2 - .5, 'rotateY(180deg)')} cls={shell + ' bezel head'}><span className="r3-name">{rack.name} · тыл</span></R3Face>
       {rack.units.map(unitBox)}
+      {cords ? <R3Face w={W} h={H} tf={side === 'back' ? P(W / 2, -H / 2, -D / 2 - 4 * k, 'rotateY(180deg)') : P(-W / 2, -H / 2, D / 2 + 4 * k)} cls="r3-cord-plane">
+        <RackCordOverlay root={cordRoot} rack={rack} data={data} side={side} enabled={cords} width={W} height={H} scale={k} mode="3d" onPick={onCord} />
+      </R3Face> : null}
     </div></div>
     <div className="r3-hint">потяните, чтобы повернуть · двойное нажатие — как было</div>
   </div>;

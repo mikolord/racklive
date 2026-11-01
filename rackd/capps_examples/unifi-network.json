@@ -1,0 +1,45 @@
+{
+  "app_api": 1,
+  "id": "unifi-network",
+  "title": "UniFi Network Application",
+  "description": "Контроллер для точек доступа и коммутаторов UniFi: настройка Wi-Fi, клиенты, обновления. Работает вместе с базой MongoDB. Точки привыкают к нему по адресу http://АДРЕС-УСТРОЙСТВА:8080/inform (если порт 8080 меняли, подставьте свой).",
+  "version": "latest-2026-10-28",
+  "home": "https://docs.linuxserver.io/images/docker-unifi-network-application/",
+  "license": "Ubiquiti EULA",
+  "author": "LinuxServer.io",
+  "targets": ["ssh", "synology"],
+  "fields": [
+    {"id": "tz", "label": "Часовой пояс", "type": "text", "default": "Europe/Moscow"},
+    {"id": "db_password", "label": "Пароль базы данных (придумайте любой)", "type": "password", "required": true, "hint": "Нужен только самому контроллеру, запоминать не нужно"}
+  ],
+  "services": {
+    "db": {
+      "image": "mongo@sha256:8bb4442761a63a8dda452744082cdac9644b429807eb977b42324a63cef59ca4",
+      "memory": "1g",
+      "cpus": 1,
+      "volumes": [{"name": "dbdata", "path": "/data/db"}],
+      "env": {"MONGO_INITDB_ROOT_USERNAME": "unifi", "MONGO_INITDB_ROOT_PASSWORD": "${RL_P_DB_PASSWORD}"},
+      "caps": ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"]
+    },
+    "app": {
+      "image": "lscr.io/linuxserver/unifi-network-application@sha256:8389f585c6443af7051b4696a09e4bb5408636da7f99c5a0e5a883595c1d434c",
+      "memory": "1536m",
+      "cpus": 2,
+      "depends_on": ["db"],
+      "ports": [
+        {"container": 8443, "host": 8443, "label": "Веб-интерфейс (https)", "web": true},
+        {"container": 8080, "host": 8080, "label": "Связь с точками доступа"},
+        {"container": 3478, "host": 3478, "proto": "udp", "label": "STUN", "fixed": true},
+        {"container": 10001, "host": 10001, "proto": "udp", "label": "Поиск устройств", "fixed": true}
+      ],
+      "volumes": [{"name": "config", "path": "/config"}],
+      "env": {
+        "PUID": "1000", "PGID": "1000", "TZ": "${RL_P_TZ}",
+        "MONGO_USER": "unifi", "MONGO_PASS": "${RL_P_DB_PASSWORD}", "MONGO_HOST": "db", "MONGO_PORT": "27017",
+        "MONGO_DBNAME": "unifi", "MONGO_AUTHSOURCE": "admin", "MEM_LIMIT": "1024", "MEM_STARTUP": "1024"
+      },
+      "caps": ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"]
+    }
+  },
+  "ui": {"mode": "link", "service": "app", "port": 8443, "scheme": "https", "path": "/", "title": "Открыть UniFi"}
+}

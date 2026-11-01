@@ -60,24 +60,24 @@ function deviceLine(dev) {
   return parts.join(' · ');
 }
 
-function Leds({ ports, min = 4, round }) {
+function Leds({ ports, min = 4, round, all = false }) {
   if (!ports || ports.length < min) return null;
-  const list = ports.filter(p => p.kind !== 'sfp').slice(0, 48);
+  const list = ports.filter(p => all || p.kind !== 'sfp').slice(0, 48);
   return <div className={'leds' + (round ? ' round' : '')} style={{ gridTemplateRows: list.length > 8 ? 'repeat(2, 7px)' : '7px' }}>
-    {list.map(p => <i key={p.n} className={p.cls || (p.disabled ? 'off' : speedClass(p))} />)}</div>;
+    {list.map(p => <i key={p.n} data-cord-port={String(p.n)} title={'Порт ' + p.n} className={p.cls || (p.disabled ? 'off' : speedClass(p))} />)}</div>;
 }
 
-function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, swap, top }) {
+function RackUnit({ unit, dev, rack, edit, onClick, onPointerDown, dragging, swap, top, cords = false }) {
   const { data, openDevice } = useApp();
   const many = unitDevIds(unit);
   if (many.length > 1) {                          // a shelf with several devices: one cell each
     const h = unit.uSize * U_PX - 4;
-    return <div className={['unit', 'shelf-multi', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
+    return <div data-cord-unit={unit.id} className={['unit', 'shelf-multi', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
       style={{ top: top + 2, height: h, cursor: edit ? 'grab' : 'pointer' }} onClick={edit ? onClick : undefined} onPointerDown={onPointerDown}>
       <div className="strip" style={{ background: unit.color || '#0a84ff' }} />
       {many.map(id => { const d = data.devices.find(x => x.id === id); if (!d) return null; const st = (d.state || {}).status;
-        return <div key={id} className="shelf-cell" onClick={e => { if (edit) return; e.stopPropagation(); openDevice(d); }}>
-          <Icon name={d.kind} size={14} color="currentColor" />{st ? <span className={'dot ' + st} /> : null}<span className="ellipsis">{d.name}</span></div>; })}
+        return <div key={id} data-cord-device={id} className="shelf-cell" onClick={e => { if (edit) return; e.stopPropagation(); openDevice(d); }}>
+          <Icon name={d.kind} size={14} color="currentColor" />{st ? <span className={'dot ' + st} /> : null}<span className="ellipsis">{d.name}</span>{cords ? <Leds ports={rackCordPorts(rack, data, unit, id, (d.state || {}).ports)} min={1} all /> : null}</div>; })}
     </div>;
   }
   const kind = PASSIVE.includes(unit.type) ? unit.type : (dev && dev.kind) || unit.type;
@@ -85,7 +85,7 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, swap, top
   const pmPorts = pmLeds(data, unit);
   const st = dev && dev.state ? dev.state.status : null;
   const h = unit.uSize * U_PX - 4;
-  return <div className={['unit', PASSIVE.includes(unit.type) ? 'passive' : '', unit.type === 'blank' ? 'blank' : '', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
+  return <div data-cord-unit={unit.id} className={['unit', PASSIVE.includes(unit.type) ? 'passive' : '', unit.type === 'blank' ? 'blank' : '', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
     style={{ top: top + 2, height: h, cursor: edit ? 'grab' : 'pointer' }} onClick={onClick} onPointerDown={onPointerDown}>
     <div className="strip" style={{ background: unit.color || '#0a84ff' }} />
     {unit.type !== 'blank' ? <div className="uicon"><Icon name={kind} size={16} color="currentColor" /></div> : null}
@@ -95,8 +95,25 @@ function RackUnit({ unit, dev, edit, onClick, onPointerDown, dragging, swap, top
         + (unit.powerLoad && unit.powerLoad.w ? ` · ${unit.powerLoad.w} Вт` : '')}</div> : null}
     </div>
     {socketLeds(unit, dev) ? <Leds ports={socketLeds(unit, dev)} min={1} round />
-      : <Leds ports={pmPorts || (dev && dev.state && dev.state.ports)} min={pmPorts ? 2 : 4} />}
+      : <Leds ports={cords ? rackCordPorts(rack, data, unit, unitDevIds(unit)[0], pmPorts || (dev && dev.state && dev.state.ports)) : pmPorts || (dev && dev.state && dev.state.ports)} min={cords ? 1 : pmPorts ? 2 : 4} all={cords} />}
   </div>
+}
+
+function RackModeTransition({ show3d, rack, devById, side, onUnit, flat, cords, onCord }) {
+  const view3d = useRef(null), viewFlat = useRef(null);
+  const [height, setHeight] = useState(0);
+  useLayoutEffect(() => {
+    const measure = () => { const el = show3d ? view3d.current : viewFlat.current; if (el) setHeight(el.offsetHeight); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (view3d.current) ro.observe(view3d.current);
+    if (viewFlat.current) ro.observe(viewFlat.current);
+    return () => ro.disconnect();
+  }, [show3d, rack.id, rack.totalU]);
+  return <div className={'rack-transition ' + (show3d ? 'is-3d' : 'is-flat')} style={{ height: height || undefined }}>
+    <div ref={view3d} className="rack-transition-3d" aria-hidden={!show3d}><Rack3D rack={rack} devById={devById} side={side} onUnit={onUnit} flatten={!show3d} cords={cords} onCord={onCord} /></div>
+    <div ref={viewFlat} className="rack-transition-flat" aria-hidden={show3d}>{flat}</div>
+  </div>;
 }
 
 function RackView() {
@@ -105,6 +122,9 @@ function RackView() {
   const [side, setSide] = useState(() => new URLSearchParams(location.search).get('side') === 'back' ? 'back' : 'front');
   const [r3, setR3] = useState(() => { try { return localStorage.getItem('rl_rack3d') !== '0'; } catch (e) { return true; } });
   const show3d = isTestLook() && r3 && !edit;
+  const [cordsOn, setCordsOn] = useState(() => lsGet('rl_rackcords', '0') === '1');
+  const [cordSettings, setCordSettings] = useState(null); const cordSurface = useRef(null);
+  useEffect(() => { if (!edit) setCordSettings(null); }, [edit]);
   const [editing, setEditing] = useState(() => { const id = new URLSearchParams(location.search).get('editunit');   // unit being edited / created
     if (id === 'new' && edit) return { id: null, name: '', type: 'switch', uSize: 1, uStart: 1, side: 'front', color: '#0a84ff', deviceId: null, notes: '' };
     return id && edit ? data.racks.flatMap(r => r.units).find(u => u.id === id) || null : null; });
@@ -181,10 +201,27 @@ function RackView() {
   const dropOk = !!dropPlan;
   const swapWith = dropPlan && Object.keys(dropPlan).length > 1 ? Object.keys(dropPlan).find(id => id !== drag.id) : null;
 
-  const devices = data.devices; const problems = devices.filter(d => ['offline', 'warning'].includes(d.state && d.state.status));
+  const devices = data.devices; const problems = devices.filter(d => !d.healthSkip && ['offline', 'warning'].includes(d.state && d.state.status));
   const allPorts = devices.flatMap(d => (d.state && d.state.ports) || []);
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
   const poe = allPorts.reduce((a, p) => a + (p.poeW || 0), 0);
+
+  const flatRack = <div className="rack-body cord-surface" ref={cordSurface} style={{ '--u': U_PX + 'px' }}>
+    <div className="rack-rail">{Array.from({ length: total }, (_, i) => <div key={i}>{i + 1}</div>)}</div>
+    <div className="rack-slots" ref={slotsRef}>
+      {Array.from({ length: total }, (_, i) => {
+        const n = i + 1; const inDrop = dragUnit && n >= drag.slot && n < drag.slot + dragUnit.uSize;
+        return <div key={n} className={'rack-slot' + (inDrop && dropOk ? ' drop' : '') + (edit && !occ[n] ? ' addable' : '')}
+          onClick={() => edit && !occ[n] && setEditing({ id: null, name: '', type: 'switch', uSize: 1, uStart: n, side, color: '#0a84ff', deviceId: null, notes: '' })} />;
+      })}
+      {units.map(u => <RackUnit key={u.id} unit={u} rack={rack} dev={devById[u.deviceId]} edit={edit} cords={cordsOn && !edit} top={(u.uStart - 1) * U_PX}
+        dragging={drag && drag.id === u.id} swap={swapWith === u.id}
+        onPointerDown={e => startDrag(u, e)}
+        onClick={() => { if (edit) return; const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} />)}
+    </div>
+    <div className="rack-rail">{Array.from({ length: total }, (_, i) => <div key={i}>{i + 1}</div>)}</div>
+    <RackCordOverlay root={cordSurface} rack={rack} data={data} side={side} enabled={cordsOn && !edit} />
+  </div>;
 
   const left = <div>
       {data.racks.length > 1 || edit ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
@@ -199,26 +236,12 @@ function RackView() {
           {edit ? <button className="icon-link" onClick={() => setRackSettings(rack)} title="Настройки шкафа"><Icon name="settings" size={15} /></button> : null}
           {edit ? <button className="icon-link" onClick={() => setMoving(true)} title="Переезд: сделать щитком или комнатой"><Icon name="swap" size={15} /><span className="move-lbl">Переезд</span></button> : null}</div>
           <div className="meta">{total}U · занято {occ.filter(Boolean).length}U · {side === 'front' ? 'вид спереди' : 'вид сзади'}</div></div>
-          <div className="row" style={{ gap: 8 }}>{isTestLook() && !edit ? <Seg value={r3 ? '3d' : 'flat'} onChange={v => { setR3(v === '3d'); try { localStorage.setItem('rl_rack3d', v === '3d' ? '1' : '0'); } catch (e) { } }}
+          <div className="row wrap" style={{ gap: 8 }}>{!edit ? <Btn size="sm" icon="link" kind={cordsOn ? 'primary' : ''} title={cordsOn ? 'Скрыть патч-корды' : 'Показать патч-корды'} onClick={() => { const next = !cordsOn; setCordsOn(next); lsSet('rl_rackcords', next ? '1' : '0'); }}>Патч-корды</Btn> : <Btn size="sm" icon="settings" title="Цвета патч-кордов" onClick={() => setCordSettings({})}>Цвета патч-кордов</Btn>}{isTestLook() && !edit ? <Seg value={r3 ? '3d' : 'flat'} onChange={v => { setR3(v === '3d'); try { localStorage.setItem('rl_rack3d', v === '3d' ? '1' : '0'); } catch (e) { } }}
             options={[{ value: '3d', label: '3D' }, { value: 'flat', label: 'Схема' }]} /> : null}
           <Seg value={side} onChange={setSide} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></div>
         </div>
-        {show3d ? <Rack3D rack={rack} devById={devById} side={side} onUnit={u => { const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} /> :
-        <div className="rack-body" style={{ '--u': U_PX + 'px' }}>
-          <div className="rack-rail">{Array.from({ length: total }, (_, i) => <div key={i}>{i + 1}</div>)}</div>
-          <div className="rack-slots" ref={slotsRef}>
-            {Array.from({ length: total }, (_, i) => {
-              const n = i + 1; const inDrop = dragUnit && n >= drag.slot && n < drag.slot + dragUnit.uSize;
-              return <div key={n} className={'rack-slot' + (inDrop && dropOk ? ' drop' : '') + (edit && !occ[n] ? ' addable' : '')}
-                onClick={() => edit && !occ[n] && setEditing({ id: null, name: '', type: 'switch', uSize: 1, uStart: n, side, color: '#0a84ff', deviceId: null, notes: '' })} />;
-            })}
-            {units.map(u => <RackUnit key={u.id} unit={u} dev={devById[u.deviceId]} edit={edit} top={(u.uStart - 1) * U_PX}
-              dragging={drag && drag.id === u.id} swap={swapWith === u.id}
-              onPointerDown={e => startDrag(u, e)}
-              onClick={() => { if (edit) return; const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} />)}
-          </div>
-          <div className="rack-rail">{Array.from({ length: total }, (_, i) => <div key={i}>{i + 1}</div>)}</div>
-        </div>}
+        {isTestLook() && !edit ? <RackModeTransition show3d={show3d} rack={rack} devById={devById} side={side} flat={flatRack} cords={cordsOn}
+          onUnit={u => { const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} /> : flatRack}
       </div>
       {edit ? <div className="row" style={{ marginTop: 12 }}>
         <Btn kind="primary" icon="plus" onClick={() => { const free = occ.findIndex((x, i) => i > 0 && i <= total && !x);
@@ -235,6 +258,7 @@ function RackView() {
       </>}
     </div>;
   const modals = <>
+    {edit && cordSettings ? <RackCordSettings key={rack.id} rack={rack} onClose={() => setCordSettings(null)} /> : null}
     {editing ? <UnitEditor unit={editing} rack={rack} onClose={() => setEditing(null)} fits={fits} /> : null}
     {rackSettings ? <RackSettings rack={rackSettings} canDelete={data.racks.length > 1} onClose={() => setRackSettings(null)}
       onSelect={setRackId} /> : null}

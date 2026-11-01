@@ -1,7 +1,8 @@
 /* App shell */
 const TABS = [
   { id: 'rack', label: 'Главная', icon: 'home' },          // widgets (92_dashboard.jsx); the id stays for old #rack links
-  { id: 'map', label: 'Карта', icon: 'map' },              // inside: «Карта сети» / «План» switch (#plan opens the plan)
+  { id: 'map', label: 'Карта', icon: 'map' },
+  { id: 'plan', label: 'План', icon: 'plan' },
   { id: 'tools', label: 'Инструменты', icon: 'wrench', admin: true },      // «Устройства» · «Плагины» · «Инструменты» (65_tools.jsx); the old #devices address opens «Устройства» there
   { id: 'events', label: 'События', icon: 'bell' },
   { id: 'settings', label: 'Настройки', icon: 'settings', admin: true },
@@ -25,7 +26,7 @@ const TAB_HINTS = {
     'Подсказки вроде этой выключаются переключателем «Подсказки» в разделе «Основные».'],
 };
 const APP_MODE = window.RL_APP || (window.RL_FRANK ? 'frank' : '');     // /frank, /speed: separate installable apps
-const FRANK = APP_MODE === 'frank', SPEED_APP = APP_MODE === 'speed', TERM_APP = APP_MODE === 'terminal', CARDS_APP = APP_MODE === 'cards';
+const FRANK = APP_MODE === 'frank', SPEED_APP = APP_MODE === 'speed', TERM_APP = APP_MODE === 'terminal', CARDS_APP = APP_MODE === 'cards', PLAN_APP = APP_MODE === 'plan';
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
 
@@ -50,9 +51,8 @@ function useTheme() {
 function App() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
-  const [tab, setTabRaw] = useState(() => { const t = location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'plan' ? 'map' : t === 'devices' ? 'tools' : t; });
-  const [mapView, setMapView] = useState(() => location.hash === '#plan' ? 'plan' : 'map');     // «Карта» opens on the network map
-  const setTab = t => { if (t === 'plan' || t === 'map') { setMapView(t); setTabRaw('map'); } else if (t === 'devices') { setTabRaw('tools'); } else setTabRaw(t); };
+  const [tab, setTabRaw] = useState(() => { const t = PLAN_APP ? 'plan' : location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'devices' ? 'tools' : t; });
+  const setTab = t => { if (PLAN_APP && t!=='plan') { location.assign('/#'+encodeURIComponent(t==='devices'?'tools':t)); return; } setTabRaw(t === 'devices' ? 'tools' : t); };
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
   const [arrange, setArrange] = useState(() => new URLSearchParams(location.search).get('arrange') === '1');     // «Расстановка виджетов» on the home page (switch beside «Редактирование»)
@@ -86,6 +86,10 @@ function App() {
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
   // the very first visit of the administrator: the server says tourDone=false (an installation that already has an administrator never gets it)
   useEffect(() => { if (!APP_MODE && data && data.authed && data.settings && data.settings.tourDone === false) setTour(true); }, [data && data.authed, data && data.settings && data.settings.tourDone]);
+  useEffect(() => {                                       // ui.js of the administrator's own local plugins (rackd/localplug.py), once per page load
+    if (APP_MODE || !data || !data.authed || window.__rlLocalScripts) return; window.__rlLocalScripts = true;
+    api('/api/x/_scripts').then(r => (r.scripts || []).forEach(u => { const s = document.createElement('script'); s.src = u; s.defer = true; document.head.appendChild(s); })).catch(() => { });
+  }, [data && data.authed]);
   useEffect(() => {                                       // ?editdev=<id> opens that device's settings form (needs admin)
     const id = new URLSearchParams(location.search).get('editdev'); const d = id && data && data.devices.find(x => x.id === id);
     if (d) setEditor(d);
@@ -94,12 +98,12 @@ function App() {
   // the tab goes into the address (#devices): on iPhone / iPad (also the home-screen app) the address is rewritten in place — assigning location.hash there made the app
   // load the page anew on every tab press (the journal showed «pagehide → загружена (navigate)» each time)
   useEffect(() => {
-    if (APP_MODE) return; const h = tab === 'map' && mapView === 'plan' ? 'plan' : tab;
+    if (APP_MODE) return; const h = tab;
     if (/iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.standalone) { try { history.replaceState(null, '', '#' + h); } catch (e) { location.hash = h; } } else location.hash = h;
     lsSet('rl_tab', tab); window.scrollTo(0, 0);
-  }, [tab, mapView]);
+  }, [tab]);
   // «Карта» и «План» — рабочая область на весь экран (38_workmenu.jsx): размеры шапки и нижней панели в переменных CSS, у <html> метка data-mapfull
-  const mapFull = !APP_MODE && tab === 'map';
+  const mapFull = PLAN_APP || !APP_MODE && (tab === 'map' || tab === 'plan');
   useLayoutEffect(() => {
     const h = document.documentElement;
     if (mapFull) h.setAttribute('data-mapfull', '1'); else h.removeAttribute('data-mapfull');
@@ -132,7 +136,7 @@ function App() {
     : <div className="dim">Загрузка…</div>}</div>;
   if (data.setupNeeded) return <AuthScreen setup title={data.settings && data.settings.title} onDone={refresh} />;
   if (tg === 'pending' && !data.authed) return <div className="auth"><div className="app-bg" /><div className="dim">Вход через Telegram…</div></div>;
-  if ((data.needLogin && !data.devices) || login || ((FRANK || TERM_APP || CARDS_APP) && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : TERM_APP ? 'Терминал' : CARDS_APP ? 'Сканер' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin} codeLogin={data.loginCodes}
+  if ((data.needLogin && !data.devices) || login || ((FRANK || TERM_APP || CARDS_APP || PLAN_APP) && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : TERM_APP ? 'Терминал' : CARDS_APP ? 'Сканер' : PLAN_APP ? 'План' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin} codeLogin={data.loginCodes}
     onDone={() => { setLogin(false); refresh(); }} />;
 
   const admin = !!data.authed;
@@ -161,19 +165,25 @@ function App() {
     openDevice: (d, t, port) => d && setSheet({ id: d.id, tab: t, port }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
     startTour: () => { lsSet('rl_tour_step', ''); setMode('view'); setTour(true); },       // «Показать обучение» always starts from the beginning
-    askAi: q => setAi({ q, n: Date.now() }), openFrank: () => setAi({ n: Date.now() }), mode, setMode, mapView, setMapView };
+    askAi: q => setAi({ q, n: Date.now() }), openFrank: () => setAi({ n: Date.now() }), mode, setMode };
   if (FRANK) return <AppCtx.Provider value={ctx}><div className="app-bg" /><AiPanel standalone /></AppCtx.Provider>;
   if (SPEED_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><SpeedApp /></AppCtx.Provider>;
   if (TERM_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><TerminalApp /></AppCtx.Provider>;
   if (CARDS_APP) return <AppCtx.Provider value={ctx}><div className="app-bg" /><CardsApp /></AppCtx.Provider>;
   const sheetDev = sheet && data.devices.find(d => d.id === sheet.id);
+  if (PLAN_APP) return <AppCtx.Provider value={ctx}><div className="app-bg"/><PlanStandalone/>
+    {sheetDev ? <DeviceSheet key={sheetDev.id} device={sheetDev} initialTab={sheet.tab} initialPort={sheet.port} onClose={()=>setSheet(null)}/> : null}
+    {editor!==undefined ? <DeviceEditor device={editor&&editor.__preset?null:editor} preset={editor&&editor.__preset} onClose={()=>setEditor(undefined)}/> : null}
+    {ai && admin ? <AiPanel key={ai.n} initial={ai.q} onClose={()=>setAi(null)}/> : null}
+    {speed ? <SpeedTestModal autoRun={speed==='run'} onClose={()=>setSpeed(null)}/> : null}
+  </AppCtx.Provider>;
   const newest = Math.max(0, ...data.devices.map(d => (d.state && d.state.updated) || 0));
   const stale = data.devices.length && (data.now - newest > Math.max(180, (data.settings.poll || 60) * 3));
   const problems = (data.events || []).filter(e => e.t > evSeen && ['offline', 'warning'].includes(e.level)).length;
   const badge = problems > 99 ? '99+' : problems;
   const tabs = TABS.filter(t => !t.admin || admin).map(t => ({ ...t, label: T('tab.' + t.id, t.label) }));      // a custom look may rename the tabs
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
-  const view = cur === 'map' && mapView === 'plan' ? 'plan' : cur;          // what is shown: subtitle and hint follow it
+  const view = cur;          // what is shown: subtitle and hint follow it
   const subtitle = {
     rack: `${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
@@ -204,18 +214,17 @@ function App() {
       </div>
       {/* phones: everything above folds into one «⋯» button with a menu, like iOS */}
       <button type="button" data-tour="hdr-more" className={'hdr-more only-sm' + (edit ? ' editing' : '')} title="Меню" onClick={() => setMenu(true)}><Icon name="more" size={22} stroke={2.6} /></button>
-      {isTestLook() && admin ? <button type="button" className="tl-frank" data-tour="frank-btn" title="Frank — помощник" onClick={() => setAi({ n: Date.now() })}><FrankEye size={34} /></button> : null}
     </header>
     {nav ? <SideNav key={navKey} tabs={tabs} cur={cur} setTab={setTab} problems={problems} admin={admin} edit={edit} mode={mode} setMode={setMode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange}
       theme={theme} setTheme={setTheme} onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} onClose={() => { if (tourNav.current) setNavKey(k => k + 1); else setNav(false); }} title={data.settings.title} stale={stale} live={stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)} /> : null}
     {menu ? <HeaderMenu admin={admin} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
       onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
-    <main className={'page' + (cur === 'map' ? ' page-full' : '')}>
-      {cur === 'map' ? null : <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
+    <main className={'page' + (mapFull ? ' page-full' : '')}>
+      {mapFull ? null : <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
         <div className="grow"><div className="page-title">{tabs.find(t => t.id === cur).label}</div><div className="page-sub" style={{ marginBottom: 0 }}>{subtitle}</div></div>
         {edit ? <span className="badge warning"><Icon name="edit" size={12} />Режим редактирования</span> : null}
       </div>}
-      {cur === 'map' ? null : TAB_HINTS[view] ? (edit && TAB_HINTS[view][1] ? <Hint key={view + '-edit'} id={view + '-edit'}>{TAB_HINTS[view][1]}</Hint>
+      {cur === 'map' || cur === 'plan' ? null : TAB_HINTS[view] ? (edit && TAB_HINTS[view][1] ? <Hint key={view + '-edit'} id={view + '-edit'}>{TAB_HINTS[view][1]}</Hint>
         : <Hint key={view} id={view}>{TAB_HINTS[view][0]}</Hint>) : null}
       {cur === 'rack' ? <Dashboard /> : null}
       {view === 'map' ? <MapView /> : null}

@@ -21,7 +21,7 @@ MAX_CSS = 400 * 1024
 EXT = {'.json', '.css', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff2', '.txt', '.md'}
 RESERVED = {'classic', 'graphite', 'net', 'none', 'default', 'custom', 'auto', 'light', 'dark', 'system'}
 ID_RE = re.compile(r'^[a-z][a-z0-9-]{2,31}$')
-APP_ICON_SLOTS = ('rack', 'frank', 'speed')
+APP_ICON_SLOTS = ('rack', 'frank', 'speed', 'plan')
 
 # CSS variables a look may set (everything else the app colours with is derived from these or reachable by theme.css)
 TOKENS = {
@@ -348,7 +348,7 @@ class Themes:
                 pic(rel, f'appIcons.{k}')
         if m.get('frankAvatar') is not None:
             pic(m['frankAvatar'], 'frankAvatar')
-        for field in ('pwa', 'pwaFrank', 'pwaSpeed'):           # home-screen pictures of Rack Live, of Frank and of the speed test
+        for field in ('pwa', 'pwaFrank', 'pwaSpeed', 'pwaPlan'):  # separate home-screen artwork per application
             pwa = m.get(field) or {}
             if not isinstance(pwa, dict):
                 errors.append(f'{field}: объект {{"favicon": …, "appleTouch": …, "icon192": …, "icon512": …}}')
@@ -559,7 +559,7 @@ class Themes:
                 'strings': {k: v for k, v in (m.get('strings') or {}).items() if k in self.defaults()['strings']},
                 'icons': {k: v for k, v in (m.get('icons') or {}).items() if isinstance(v, str)},
                 'kindColors': {k: v for k, v in (m.get('kindColors') or {}).items() if k in self.defaults()['kinds']},
-                'appIcons': {k: url(v) for k, v in (m.get('appIcons') or {}).items() if k in APP_ICON_SLOTS}, 'frankAvatar': url(m.get('frankAvatar')), 'pwa': pwa, 'pwaFrank': pw(m.get('pwaFrank')), 'pwaSpeed': pw(m.get('pwaSpeed')),
+                'appIcons': {k: url(v) for k, v in (m.get('appIcons') or {}).items() if k in APP_ICON_SLOTS}, 'frankAvatar': url(m.get('frankAvatar')), 'pwa': pwa, 'pwaFrank': pw(m.get('pwaFrank')), 'pwaSpeed': pw(m.get('pwaSpeed')), 'pwaPlan': pw(m.get('pwaPlan')),
                 'tileArt': {k: url(v) for k, v in (m.get('tileArt') or {}).items() if k in (self.defaults().get('widgets') or [k])},
                 'tileColors': {k: v for k, v in (m.get('tileColors') or {}).items() if k in (self.defaults().get('widgets') or [k]) and isinstance(v, str)}, 'rev': self.rev,
                 'installed': (self.status.get(tid) or {}).get('installed')}
@@ -716,7 +716,7 @@ class Themes:
         w('8в. ПЛИТКИ ВИДЖЕТОВ И ЗНАЧКИ «ДОМОЙ» У ВСЕХ ТРЁХ ПРИЛОЖЕНИЙ')
         w('   • Квадратная плитка виджета: фон — --tile-bg (можно градиент), маленький значок в углу — --tile-ic-bg и --tile-ic-fg; классы .wg .wg-in .wg-tile .wg-tile-ic .wg-tile-name .wg-tile-art .wg-tile-v .wg-tile-s .size-S .size-M .size-L.')
         w('     Нарисованную миниатюру (кольцо, батарейка, спидометр, столбики…) можно заменить КАРТИНКОЙ через "tileArt" либо скрыть/заменить средствами CSS; цвет плитки — "tileColors". Виджеты: ' + ', '.join(d.get('widgets') or []) + '.')
-        w('   • Значки для экрана «Домой» задаются отдельно для каждого приложения: "pwa" — Rack Live, "pwaFrank" — Frank, "pwaSpeed" — Тест скорости; у каждого favicon, appleTouch (PNG 180×180), icon192, icon512 (PNG).')
+        w('   • Значки для экрана «Домой» задаются отдельно для каждого приложения: "pwa" — Rack Live, "pwaFrank" — Frank, "pwaSpeed" — Тест скорости, "pwaPlan" — План; у каждого favicon, appleTouch (PNG 180×180), icon192, icon512 (PNG).')
         w('')
         w('8а. ПОДСКАЗКИ И ЛОВУШКИ ДЛЯ АВТОРА')
         w('   • Сначала tokens, потом css. Цвета через переменные работают везде, в том числе внутри шкафа, карты и виджетов, и переживают обновления лучше всего.')

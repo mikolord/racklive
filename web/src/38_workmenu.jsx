@@ -34,9 +34,9 @@ function WorkColors({ value, onChange, autoLabel = 'Авто' }) {
     {WORK_COLORS.map(c => <button key={c} type="button" className={value === c ? 'on' : ''} style={{ background: c }} onClick={() => onChange(c)} aria-label={c} />)}</div>;
 }
 
-/* title — заголовок панели; children — разделы этого окна. Внизу всегда: переключатель «Карта сети / План», «Редактирование», Frank. */
-function WorkMenu({ title, children }) {
-  const { admin, mode, setMode, mapView, setMapView, openFrank, refresh } = useApp();
+/* title — заголовок панели; children — разделы этого окна. «Карта» и «План» открываются отдельно через основную навигацию; здесь редактирование и Frank. */
+function WorkMenu({ title, children, hideEditing = false }) {
+  const { admin, mode, setMode, openFrank, refresh } = useApp();
   const [open, setOpen] = useState(() => new URLSearchParams(location.search).get('wm') === '1');       // ?wm=1 — меню сразу открыто (для проверок)
   const close = () => setOpen(false);
   useEffect(() => { const h = e => e.key === 'Escape' && setOpen(false); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
@@ -48,11 +48,10 @@ function WorkMenu({ title, children }) {
       <div className="wm-panel">
         <div className="wm-head"><b className="grow">{title}</b></div>
         <div className="wm-body">
-          <WorkSec><WorkChoice value={mapView} onChange={setMapView} options={[{ value: 'map', label: 'Карта сети', icon: 'map' }, { value: 'plan', label: 'План', icon: 'plan' }]} /></WorkSec>
           {children}
           <div ref={hostRef} className="wm-slots" />
           {admin ? <WorkSec title="Общее">
-            <WorkSwitch icon="edit" label="Редактирование" on={mode === 'edit'} onChange={v => setMode(v ? 'edit' : 'view')} />
+            {!hideEditing ? <WorkSwitch icon="edit" label="Редактирование" on={mode === 'edit'} onChange={v => setMode(v ? 'edit' : 'view')} /> : null}
             <WorkItem icon="sparkle" label="Frank — помощник" onClick={openFrank} />
             <WorkItem icon="refresh" label="Обновить данные" onClick={refresh} />
           </WorkSec> : null}

@@ -149,6 +149,7 @@ function NotifyCard() {
 /* settings sections, like the Settings app: a list on the left (chips on the phone), one section on the right; state = a short live status */
 const SET_SECTIONS = [
   { id: 'general', label: 'Основные', icon: 'settings', color: '#8e8e93', desc: 'Название, опрос данных, подсказки, VLAN', state: d => d.settings.title },
+  { id: 'plan', label: 'План', icon: 'plan', color: '#0a84ff', desc: 'Вид карты, этажи и покрытие по умолчанию', state: () => 'карта и дома' },
   { id: 'look', label: 'Оформление', icon: 'sun', color: '#af52de', desc: 'Стиль интерфейса, цвет акцента, тема', state: () => skinName() },
   { id: 'notify', label: 'Уведомления', icon: 'bell', color: '#ff3b30', need: 'notify', desc: 'Telegram, почта, webhook — и о чём сообщать',
     state: d => { const ch = [['telegram', 'Telegram'], ['email', 'почта'], ['webhook', 'webhook']].filter(([k]) => (d.notify[k] || {}).enabled).map(x => x[1]);
@@ -172,7 +173,7 @@ function useMedia(q) {
 }
 
 /* the phone list: grouped cells like iOS Settings — a coloured icon, the name, a short status, a chevron */
-const IOS_GROUPS = [['general', 'look', 'notify', 'frank', 'apps', 'network', 'system', 'terminal'], ['access', 'backup'], ['about']];
+const IOS_GROUPS = [['general', 'plan', 'look', 'notify', 'frank', 'apps', 'network', 'system', 'terminal'], ['access', 'backup'], ['about']];
 function IosSettingsList({ secs, data, onPick }) {
   return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
     return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
@@ -182,13 +183,44 @@ function IosSettingsList({ secs, data, onPick }) {
       <Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} /></button>)}</div>; })}</div>;
 }
 
+function PlanSettingsCard() {
+  const { data, refresh } = useApp(); const toast = useToast();
+  const [p, setP] = useState(() => planPreferences(data.settings));
+  const [saving, setSaving] = useState(false);
+  const set = (key, value) => setP(old => ({ ...old, [key]: value }));
+  const save = async () => { setSaving(true); try { await api('/api/settings', { method: 'PUT', body: { planDefaults: p } }); await refresh(); toast('Настройки плана сохранены'); }
+    catch (e) { toast(e.message, true); } finally { setSaving(false); } };
+  return <div className="plan-settings">
+    <Card title="Карта при открытии"><div className="col" style={{ gap: 14 }}>
+      <Field label="Вид карты"><select className="select" aria-label="Вид карты по умолчанию" value={p.mapMode} onChange={e => set('mapMode', e.target.value)}>
+        <option value="scheme">Схема 3D</option><option value="sat">Спутник</option></select></Field>
+      <Field label="Ракурс"><select className="select" aria-label="Ракурс карты по умолчанию" value={p.perspective} onChange={e => set('perspective', e.target.value)}>
+        <option value="angled">Под наклоном · 3D</option><option value="top">Сверху</option></select></Field>
+      <div className="row"><Switch on={p.surroundings3d === true} onChange={v => set('surroundings3d', v)} /><div className="grow"><div>Объёмные здания района</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>Дома, которые вы добавили, остаются объёмными.</div></div></div>
+    </div></Card>
+    <Card title="Дом при открытии"><div className="col" style={{ gap: 14 }}>
+      <Field label="Начальный вид"><select className="select" aria-label="Начальный вид дома" value={p.houseView} onChange={e => set('houseView', e.target.value)}>
+        <option value="first">Первый этаж</option><option value="last">Последний этаж</option><option value="all">Весь дом</option></select></Field>
+      <div className="row"><Switch on={p.lowerFloors !== false} onChange={v => set('lowerFloors', v)} /><div className="grow"><div>Показывать нижние этажи</div><div className="dim3" style={{ fontSize: 12.5 }}>При просмотре выбранного этажа.</div></div></div>
+      <div className="row"><Switch on={p.coverage !== false} onChange={v => set('coverage', v)} /><div className="grow"><div>Показывать покрытие Wi‑Fi</div><div className="dim3" style={{ fontSize: 12.5 }}>Если на этаже есть замеры.</div></div></div>
+    </div></Card>
+    <Card title="Размеры по умолчанию"><div className="col" style={{ gap: 14 }}>
+      <Field label={'Оборудование · ' + Math.round(p.equipmentSize * 100) + '%'}><input type="range" min="60" max="240" step="20" value={Math.round(p.equipmentSize * 100)} aria-label="Размер оборудования по умолчанию" onChange={e => set('equipmentSize', +e.target.value / 100)} /></Field>
+      <Field label={'Отметки замеров · ' + Math.round(p.markerSize * 100) + '%'}><input type="range" min="20" max="100" step="10" value={Math.round(p.markerSize * 100)} aria-label="Размер отметок по умолчанию" onChange={e => set('markerSize', +e.target.value / 100)} /></Field>
+      <div className="dim3" style={{ fontSize: 12.5, lineHeight: 1.45 }}>Если размер уже настроен отдельно в доме, он сохранится. Кнопка «Сброс» в доме возвращает размер по умолчанию.</div>
+      <Btn kind="primary" icon="check" disabled={saving} onClick={save}>{saving ? 'Сохраняю…' : 'Сохранить'}</Btn>
+    </div></Card>
+  </div>;
+}
+
 function SettingsView() {
   const { data, refresh, logout, startTour, admin } = useApp(); const toast = useToast();
   const [s, setS] = useState({ ...data.settings });
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
   const fileRef = useRef(null);
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
-  const save = async () => { try { await api('/api/settings', { method: 'PUT', body: { title: s.title, poll: +s.poll, publicView: s.publicView, showClients: s.showClients, hints: s.hints !== false, vlans: s.vlans } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
+  const save = async () => { try { await api('/api/settings', { method: 'PUT', body: { title: s.title, poll: +s.poll, publicView: s.publicView, showClients: s.showClients, hints: s.hints !== false, vlans: s.vlans, skipRemoteHealth: !!s.skipRemoteHealth } }); toast('Сохранено'); refresh(); } catch (e) { toast(e.message, true); } };
   const [fullBk, setFullBk] = useState(false); const [bkPw, setBkPw] = useState('');
   const downloadFull = async () => {                        // the full backup is a POST with the password typed again; the answer is a file
     try {
@@ -246,6 +278,7 @@ function SettingsView() {
     {phone ? <div className="ios-nav"><button type="button" className="ios-back" onClick={back}><Icon name="chevron" size={20} stroke={2.6} style={{ transform: 'rotate(180deg)' }} />Настройки</button><b className="ios-title">{cur.label}</b><span /></div>
       : <div className="set-head"><b>{cur.label}</b><span>{cur.desc}</span></div>}
     {cur.id === 'look' ? <LookCard /> : null}
+    {cur.id === 'plan' ? <PlanSettingsCard /> : null}
     {cur.id === 'general' ? <>
     <Card title="Общие">
       <div className="col" style={{ gap: 14 }}>
@@ -256,6 +289,8 @@ function SettingsView() {
           <div className="dim3" style={{ fontSize: 12.5 }}>Схему и статусы видно всем, кто откроет адрес. Управление — только после входа.</div></div></div>
         <div className="row"><Switch on={s.showClients !== false} onChange={v => set('showClients', v)} /><div className="grow"><div>Клиенты на карте</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Показывать телефоны, камеры и другие устройства, а не только оборудование</div></div></div>
+        <div className="row"><Switch on={!!s.skipRemoteHealth} onChange={v => set('skipRemoteHealth', v)} /><div className="grow"><div>Не следить за здоровьем удалённых устройств</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Удалённые устройства (площадки, роутеры у клиентов) остаются на карте и в списках, но не учитываются в здоровье сети, доступности, счётчике проблем, журнале и оповещениях. Для одного устройства — в его настройках, «Следить за здоровьем».</div></div></div>
         <div className="row"><Switch on={s.hints !== false} onChange={v => set('hints', v)} /><div className="grow"><div>Подсказки</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Короткие пояснения на каждой вкладке и в карточках — для тех, кто открыл Rack Live впервые. Действует для всех, кто открывает панель.</div>
           {hiddenN ? <button type="button" className="linkbtn" onClick={() => { setHiddenHints([]); setHiddenN(0); toast('Скрытые подсказки снова видны'); }}>

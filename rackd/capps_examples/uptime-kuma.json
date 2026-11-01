@@ -1,0 +1,24 @@
+{
+  "app_api": 1,
+  "id": "uptime-kuma",
+  "title": "Uptime Kuma",
+  "description": "Мониторинг сайтов и служб с красивой панелью и уведомлениями (Telegram и другие). Хорошее первое приложение для проверки.",
+  "version": "1",
+  "home": "https://github.com/louislam/uptime-kuma",
+  "license": "MIT",
+  "author": "Louis Lam",
+  "targets": ["ssh", "synology"],
+  "fields": [{"id": "tz", "label": "Часовой пояс", "type": "text", "default": "Europe/Moscow"}],
+  "services": {
+    "app": {
+      "image": "louislam/uptime-kuma@sha256:70233f4acb5163fd2a59a49909cf01e44415cecff13dba69e3a86647a2919f83",
+      "memory": "512m",
+      "cpus": 1,
+      "ports": [{"container": 3001, "host": 3001, "label": "Веб-интерфейс", "web": true}],
+      "volumes": [{"name": "data", "path": "/app/data"}],
+      "env": {"TZ": "${RL_P_TZ}"},
+      "caps": ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "NET_RAW"]
+    }
+  },
+  "ui": {"mode": "link", "service": "app", "port": 3001, "path": "/", "title": "Открыть Uptime Kuma"}
+}

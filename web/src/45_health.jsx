@@ -24,19 +24,25 @@ function ScoreRing({ score, size = 76 }) {
 }
 
 const CHECK_LOOK = { bad: ['var(--red)', 'alert'], warn: ['var(--orange)', 'alert'], info: ['var(--accent)', 'other'], ok: ['var(--green)', 'check'] };
-function CheckItem({ c, onClick }) {
+function CheckItem({ c, onClick, onSkip }) {
   const [col, icon] = CHECK_LOOK[c.level] || CHECK_LOOK.info;
   const clickable = onClick && (c.deviceId || c.nodeId);
   return <div className={'li check-item' + (clickable ? ' click' : '')} onClick={() => clickable && onClick(c)}>
     <div className="check-ic" style={{ color: col, background: `color-mix(in srgb, ${col} 14%, transparent)` }}><Icon name={icon} size={16} /></div>
     <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 650, fontSize: 14 }}>{c.title}</div>
-      {c.text ? <div className="dim" style={{ fontSize: 12.8, lineHeight: 1.4, marginTop: 2 }}>{c.text}</div> : null}</div>
+      {c.text ? <div className="dim" style={{ fontSize: 12.8, lineHeight: 1.4, marginTop: 2 }}>{c.text}</div> : null}
+      {onSkip && c.deviceId ? <div style={{ marginTop: 6 }}><Btn size="sm" onClick={e => { e.stopPropagation(); onSkip(c); }}>Не следить за этим устройством</Btn></div> : null}</div>
     {clickable ? <Icon name="chevron" size={15} color="var(--text3)" /> : null}</div>;
 }
 
 function HealthBody({ h, onCheck, onNode }) {
   const [types, setTypes] = useState(false);
+  const { data, refresh, admin } = useApp(); const toast = useToast();
   const t = h.type; const st = h.stats;
+  const skip = async c => {            // leave this device out of the health, the availability, the problem counters, the journal and the alerts
+    const d = data.devices.find(x => x.id === c.deviceId); if (!d) return;
+    try { await api('/api/devices/' + c.deviceId, { method: 'PUT', body: { noHealth: true } }); toast(`«${d.name}» больше не учитывается в здоровье сети (вернуть: настройки устройства → «Следить за здоровьем»)`); refresh(); } catch (e) { toast(e.message, true); }
+  };
   return <div className="health">
     <div className="row" style={{ gap: 16, alignItems: 'center' }}>
       <ScoreRing score={h.score} />
@@ -57,7 +63,7 @@ function HealthBody({ h, onCheck, onNode }) {
     <div>
       <div className="row" style={{ marginBottom: 6 }}><div className="card-title grow" style={{ margin: 0 }}>Замечания</div>
         <AskAi label="Разобрать" q="Разбери замечания по здоровью сети: что из этого действительно важно, чем грозит и что сделать — по шагам." /></div>
-      <div className="list">{h.checks.map((c, i) => <CheckItem key={i} c={c} onClick={onCheck} />)}</div>
+      <div className="list">{h.checks.map((c, i) => <CheckItem key={i} c={c} onClick={onCheck} onSkip={admin ? skip : null} />)}</div>
     </div>
 
     {h.spof.length ? <div>

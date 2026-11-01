@@ -12,6 +12,10 @@ const realDriver = g => g.drivers[0];          // the driver names plugins are d
 const TOOLS = [
   { id: 'cameras', title: 'Камеры и видеорегистраторы', icon: 'camera', color: '#ff375f',
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
+  { id: 'apps', title: 'Приложения', icon: 'server', color: '#30b0c7',
+    text: 'Готовые программы в контейнерах на вашем сервере или NAS: контроллер UniFi, мониторинг и другие. Ставятся после проверки, с показом всех прав.' },
+  { id: 'localplug', title: 'Локальные плагины', icon: 'terminal', color: '#ff9f0a',
+    text: 'Ваш собственный код внутри Rack Live: свои страницы, команды и скрипты. Только вручную и только после прочтения кода.' },
   { id: 'sites', title: 'Удалённые площадки и агенты', icon: 'globe2', color: '#5e5ce6',
     text: 'Следить за другой сетью без белого IP и проброса портов: офис, дача, квартира родителей. Там ставится свой Rack Live (сборщик) или маленький агент — данные приходят сюда сами.' },
 ];
@@ -52,7 +56,7 @@ function ToolsView() {
   useEffect(() => { document.documentElement.classList.toggle('set-detail', !!(phone && open)); return () => document.documentElement.classList.remove('set-detail'); }, [phone, open]);
   const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
   const listMode = phone && !open;
-  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
+  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'apps' ? <AppsTool /> : cur.id === 'localplug' ? <LocalPlugTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
   return <div className={'set-layout' + (phone ? ' ios' : '')}>
     {listMode ? <div className="ios-list">{TOOLS_GROUPS.map((g, gi) => { const items = g[0] === 'tools' ? toolRows : g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
       return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" onClick={() => pick(x.id)}>

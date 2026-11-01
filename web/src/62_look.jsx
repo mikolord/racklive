@@ -144,7 +144,7 @@ function LookCard() {
       const d = await (await fetch(`/themes/${t.id}/data.json`, { cache: 'no-cache' })).json();
       if (d.off) { toast('Это оформление отключено: ' + ((t.problems || [])[0] || 'не подходит'), true); return reload(); }
       const pw = o => ({ fav: (o || {}).favicon || '', touch: (o || {}).appleTouch || '', pwa: !!((o || {}).icon192 && (o || {}).icon512) });       // home-screen pictures of each of the three apps
-      lsSet('rl_skin', t.id); lsSet('rl_theme_meta', JSON.stringify({ id: t.id, name: t.name, base: d.base, ...pw(d.pwa), frank: pw(d.pwaFrank), speed: pw(d.pwaSpeed), rev: d.installed || d.rev }));
+      lsSet('rl_skin', t.id); lsSet('rl_theme_meta', JSON.stringify({ id: t.id, name: t.name, base: d.base, ...pw(d.pwa), frank: pw(d.pwaFrank), speed: pw(d.pwaSpeed), plan: pw(d.pwaPlan), rev: d.installed || d.rev }));
       location.reload();
     } catch (e) { toast('Не удалось применить: ' + e.message, true); }
   };

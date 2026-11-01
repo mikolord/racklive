@@ -4,7 +4,7 @@ opens every tab / sheet / editor in a headless browser, failing on any interface
 
     python tools/smoke.py            # needs a Chromium-based browser for the UI part (Edge / Chrome), skipped otherwise
 """
-import gzip, json, os, re, shutil, socket, subprocess, sys, tempfile, time, urllib.request
+import base64, gzip, html, http.server, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BROWSERS = [r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
@@ -16,6 +16,45 @@ def check(name, ok, detail=''):
     print(('  ok   ' if ok else '  FAIL ') + name + (f' — {detail}' if detail and not ok else ''))
     if not ok:
         fails.append(name)
+
+
+def tour_dom(browser, base):
+    """Capture the actual rendered tour, not a virtual-clock snapshot before its first RAF.
+    A pending image holds document load until the iframe reports both UI outcomes;
+    the bounded deadline still fails the original assertion if either never appears.
+    """
+    ready = threading.Event()
+    class Gate(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            if self.path == '/done': ready.set(); body = b'ok'
+            else:
+                ready.wait(12)
+                body = base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
+            self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            try: self.wfile.write(body)
+            except OSError: pass
+    gate = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Gate)
+    threading.Thread(target=gate.serve_forever, daemon=True).start()
+    url = 'http://127.0.0.1:' + str(gate.server_port)
+    path = os.path.join(ROOT, 'web', '_smoke_tour_wait.html')
+    page = '''<!doctype html><style>body{margin:0}iframe{border:0;width:1300px;height:1000px}pre{display:none}</style>
+<pre id="tour-result"></pre><img id="gate" width="1" height="1"><iframe id="tour"></iframe><script>
+document.getElementById('gate').src=__GATE__+'/wait';document.getElementById('tour').src=__FRAME__;
+const start=performance.now();function probe(){let d;try{d=document.getElementById('tour').contentDocument;
+if(d.querySelector('.tour-step')&&d.querySelector('.tl-nav')){finish(d.documentElement.outerHTML);return}}catch(e){}
+if(performance.now()-start>11000){finish(d?d.documentElement.outerHTML:'NOT_READY');return}setTimeout(probe,40)}
+function finish(s){document.getElementById('tour-result').textContent=s;fetch(__GATE__+'/done',{mode:'no-cors'}).catch(()=>{})}probe();</script>'''
+    page = page.replace('__GATE__', json.dumps(url)).replace('__FRAME__', json.dumps(base + '/?skin=test&tour=1&tourstep=1&tourfast=1#rack'))
+    try:
+        with open(path, 'w', encoding='utf-8') as f: f.write(page)
+        result = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,1100', '--dump-dom', base + '/_smoke_tour_wait.html'],
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=25).stdout
+        match = re.search(r'<pre id="tour-result">(.*?)</pre>', result, re.S)
+        return html.unescape(match.group(1)) if match else ''
+    finally:
+        ready.set(); gate.shutdown(); gate.server_close()
+        if os.path.isfile(path): os.remove(path)
 
 
 def main():
@@ -627,7 +666,7 @@ def main():
                                + [{'id': 'ups', 'type': 'ups', 'size': 'M'}, {'id': 'upsS', 'type': 'ups', 'size': 'S'}]}, 'PUT')
         pages = {'Размещение': '#rack', 'Карта': '#map', 'Карта + анализ': '?analysis=1#map', 'План — территория': '#plan',
                  'План — дом': '?building=b1#plan', 'План — дом, правка': '?building=b1&mode=edit#plan', 'Устройства': '#devices',
-                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — камеры': '?tsec=cameras#tools', 'Инструменты — площадки': '?tsec=sites#tools', 'Инструменты — каталог с инструментом': '?tsec=cameras#tools', 'Инструмент сообщества': '?tsec=x-disk-usage#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
+                 'События': '#events', 'Инструменты — плагины': '?tsec=plugins#tools', 'Плагины сообщества': '?tsec=plugins&community=1#tools', 'Инструменты — камеры': '?tsec=cameras#tools', 'Инструменты — приложения': '?tsec=apps#tools', 'Инструменты — площадки': '?tsec=sites#tools', 'Инструменты — каталог с инструментом': '?tsec=cameras#tools', 'Инструмент сообщества': '?tsec=x-disk-usage#tools', 'Устройство площадки': '?device=sdemo1-rt&tab=remote',
                  'Камера — вход': '?tsec=cameras&cam=10.0.7.11&camlogin=admin:demo-pass&camtab=net#tools', 'Настройки': '#settings', 'Щиток': '?place=rack1#rack', 'Правка размещения': '?mode=edit#rack',
                  'Роутер · VPN': f'?device={dev["demo_router"]}&tab=vpn', 'Коммутатор · порт': f'?device={dev["demo_switch"]}&tab=ports&port=12',
                  'ИБП': f'?device={dev["ups"]}', 'NAS · контейнеры': f'?device={dev["demo_nas"]}&tab=services&container=racklive', 'NAS · диски (SMART)': f'?device={dev["demo_nas"]}&tab=smart', 'Настройки · Сеть': '?section=network#settings', 'Настройки · О программе': '?section=about#settings', 'Настройки · Терминал': '?section=terminal#settings', 'События · меню': '#events', 'NAS': f'?device={dev["demo_nas"]}', 'Патч-панель': f'?unit={units["patch"]}#rack',
@@ -905,6 +944,10 @@ def main():
                 check('карточки: своя модель рисуется (надпись, антенны, порты сзади) под зафиксированным углом', 'KEENETIC' in co and 'm3-part' in co and 'm3-back' in co and '170deg' in co and 'data-js-error="' not in co)
                 co = dom('/?section=apps&app=cards&photo=' + rtr['id'] + '#settings', 1300, 900)
                 check('карточки: окно «Вид» — модель, библиотека, инструкция', 'Добавить свою модель' in co and 'Инструкция для нейросети' in co and 'Keenetic Ultra' in co and 'm3-preview' in co and 'data-js-error="' not in co)
+                co = dom('/?section=apps&app=cards&look=store&photo=' + rtr['id'] + '#settings', 1300, 900)
+                check('карточки: вкладка «Из магазина» открывается (поиск, ссылка на редактор, модерация)', 'Из магазина' in co and ('Поиск: производитель или модель' in co or 'Загружаю каталог' in co or 'каталог' in co) and 'data-js-error="' not in co)
+                ms = api('/api/models/store/token')
+                check('магазин моделей: токена нет, наружу он не отдаётся', ms.get('has') is False and 'token' not in ms)
                 # «Порты: отмечу сам»: the model's sockets stay a picture, the ports are marked on its faces by hand
                 g2 = urllib.request.urlopen(base + '/api/models/guide.txt?free=1', timeout=10).read().decode('utf-8')
                 check('карточки: инструкция «порты отмечу сам»', 'ОТМЕТИТ' in g2 and '"n"' not in g2.split('9. ПРИМЕР')[1])
@@ -938,7 +981,7 @@ def main():
                 api('/api/dashboard', {'widgets': [{'id': 'rack', 'type': 'rack', 'size': 'M'}, {'id': 'stats', 'type': 'stats', 'size': 'S'}]}, 'PUT')
                 co = dom('/?skin=test#rack', 1300, 1000)
                 check('оформление Test: шкаф в 3D и «Сводка» лампочкой', 'r3-wrap' in co and co.count('r3-unit') >= 6 and 'plamp' in co and 'data-js-error="' not in co)
-                co = dom('/?skin=test&tour=1&tourstep=1&tourfast=1#rack', 1300, 1000)
+                co = tour_dom(browser, base)
                 check('оформление Test: обучение открывает боковое меню и считает шаги', 'tour-step' in co and 'tl-nav' in co and 'data-js-error="' not in co)
                 sw_id = next(d['id'] for d in api('/api/state')['devices'] if (d['state'].get('ports') or []) and len(d['state']['ports']) > 10)
                 co = dom('/?skin=test&zoomports=1&device=' + sw_id + '#rack', 1100, 900)
@@ -998,7 +1041,7 @@ def main():
                       and 'Туннель на связи' in co and 'data-js-error="' not in co)
                 api('/api/dashboard', {'widgets': prev_w}, 'PUT')
                 ok_ic = True
-                for mf in ('manifest.json', 'frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'cards-manifest.json'):
+                for mf in ('manifest.json', 'frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'cards-manifest.json', 'plan-manifest.json'):
                     mj = json.loads(urllib.request.urlopen(base + '/' + mf + '?skin=test', timeout=10).read())
                     ok_ic = ok_ic and all('/look-test/' in i['src'] and urllib.request.urlopen(base + i['src'], timeout=10).status == 200 for i in mj['icons'])
                 co = dom('/frank?skin=test', 600, 900)

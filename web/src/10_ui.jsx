@@ -1,12 +1,12 @@
 /* UI kit */
-function Btn({ children, kind = '', size = '', icon, busy, onClick, disabled, title, type = 'button', style }) {
+function Btn({ children, kind = '', size = '', icon, busy, onClick, disabled, title, type = 'button', style, className = '' }) {
   const [self, setSelf] = useState(false);
   const click = async (e) => {
     if (!onClick) return;
     const r = onClick(e);
     if (r && r.then) { setSelf(true); try { await r; } finally { setSelf(false); } }
   };
-  const cls = ['btn', kind, size, (busy || self) ? 'busy' : '', !children && icon ? 'icon' : ''].join(' ');
+  const cls = ['btn', kind, size, className, (busy || self) ? 'busy' : '', !children && icon ? 'icon' : ''].join(' ');
   return <button type={type} className={cls} onClick={click} disabled={disabled} title={title} style={style}>
     {icon && !(busy || self) ? <Icon name={icon} size={size === 'sm' ? 15 : 17} /> : null}{children}</button>;
 }

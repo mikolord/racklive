@@ -69,7 +69,7 @@ const TOUR_STEPS = [
   { id: 'settings', t: [gotoTab('settings')], click: true, title: 'Настройки', text: 'Уведомления в Telegram, приложения на телефон, защита входа. Нажмите «Настройки».' },
   { id: 'access', t: ['[data-tour="set-access"]'], click: true, title: 'Защита входа',
     text: 'Загляните в «Доступ» и включите двухфакторную защиту — особенно если Rack Live открыт из интернета. Нажмите «Доступ».' },
-  { id: 'frank', t: ['[data-tour="frank-btn"]', '[data-tour="hdr-more"]'], inert: true, title: 'А это я 👁',
+  { id: 'frank', t: ['[data-tour="frank-btn"]', '[data-tour="hdr-more"]', '.tl-burger'], inert: true, title: 'А это я 👁',
     text: 'Нажмите на мой глаз в любой момент — отвечу на вопрос о вашей сети: «Всё ли в порядке?», «Почему тормозит Wi-Fi?». Нужен ключ ИИ: Настройки → Frank.' },
   { id: 'end', hand: 'thumb', big: true, title: 'Вот и всё!', next: 'Поехали',
     text: 'Начните с «Инструменты → Устройства → Добавить». Если что-то забудете — я в шапке, а обучение можно повторить: Настройки → Основные → «Показать обучение».' },

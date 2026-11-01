@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Модель">
+<link rel="icon" href="/modeler-icon.svg?v=2" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="/modeler-apple-touch-icon.png?v=2">
+<link rel="manifest" href="/modeler-manifest.json">
+<title>Создать модель</title>
+<script>try{var sk=localStorage.getItem('rl_skin')||'test';if(sk==='test'){var lt=function(q,v){var e=document.querySelector(q);if(e)e.setAttribute('href',v)};lt('link[rel="apple-touch-icon"]','/look-test/modeler-180.png?v=2');lt('link[rel~="icon"]','/look-test/modeler.svg?v=2');lt('link[rel="manifest"]','/modeler-manifest-test.json')}}catch(e){}</script>
+<style>
+:root { --bg: #f4f5f7; --card: #fff; --text: #17181a; --text2: #5b6168; --line: #d9dce1; --accent: #2f6fed; --ok: #1f9d55; --bad: #d63a3a; --warn: #b7791f; --port: #2f6fed; --zoom: #e08a00; --chk: #e6e8ec; --chk2: #f7f8fa; }
+@media (prefers-color-scheme: dark) { :root { --bg: #121315; --card: #1b1d20; --text: #eceef1; --text2: #9aa1a9; --line: #2e3136; --accent: #6b9bff; --ok: #3ac779; --bad: #ff6b6b; --warn: #f0b04b; --port: #6b9bff; --zoom: #ffb347; --chk: #2a2d31; --chk2: #202326; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; padding: max(12px, env(safe-area-inset-top)) 16px 40px; }
+main { max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 4px 0 2px; } .sub { color: var(--text2); font-size: 13px; margin: 0 0 12px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.tab { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 7px 13px; font: inherit; font-size: 14px; cursor: pointer; }
+.tab.on { background: var(--text); color: var(--bg); border-color: var(--text); } .tab:disabled { opacity: .45; cursor: default; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.card h2 { font-size: 15px; margin: 0 0 8px; } .card p { margin: 6px 0; } .dim { color: var(--text2); font-size: 13px; }
+button, select, input, textarea { font: inherit; color: var(--text); }
+.btn { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 8px 12px; cursor: pointer; font-size: 14px; }
+.btn.pri { background: var(--accent); border-color: var(--accent); color: #fff; } .btn:disabled { opacity: .45; cursor: default; }
+.btn.bad { color: var(--bad); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+label.f { display: block; margin: 8px 0; font-size: 13px; color: var(--text2); }
+label.f input, label.f select, label.f textarea { display: block; width: 100%; margin-top: 3px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); font-size: 15px; }
+label.f input[type=checkbox] { display: inline-block; width: auto; margin: 0 8px 0 0; vertical-align: -2px; padding: 0; }
+label.f input[type=file] { border: 0; padding: 0; background: none; }
+a.btn { color: var(--text); text-decoration: none; display: inline-block; }
+input[type=range] { width: 100%; }
+.stagewrap { background: repeating-conic-gradient(var(--chk) 0 25%, var(--chk2) 0 50%) 0 0 / 16px 16px; border-radius: 10px; overflow: hidden; position: relative; min-height: 120px; display: flex; justify-content: center; align-items: center; }
+.zoomer { position: relative; display: inline-block; max-width: 100%; transition: transform .7s cubic-bezier(.2,.85,.25,1); touch-action: none; }
+.zoomer canvas { display: block; max-width: 100%; max-height: 62vh; width: auto; height: auto; }
+.ov { position: absolute; inset: 0; touch-action: none; }
+.pt { position: absolute; border: 2px solid var(--port); background: color-mix(in srgb, var(--port) 22%, transparent); border-radius: 3px; }
+.pt.sel { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 28%, transparent); z-index: 2; }
+.pt i { position: absolute; left: 50%; top: -1px; transform: translate(-50%, -100%); font: 600 10px/1 system-ui; font-style: normal; color: #fff; background: var(--port); border-radius: 4px; padding: 2px 4px; white-space: nowrap; pointer-events: none; }
+.pt.sel i { background: var(--warn); }
+.pt b { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border-radius: 50%; background: var(--warn); border: 2px solid #fff; display: none; touch-action: none; }
+.pt.sel b { display: block; }
+.zn { position: absolute; border: 2px dashed var(--zoom); background: color-mix(in srgb, var(--zoom) 14%, transparent); pointer-events: none; }
+.lp { position: fixed; width: 132px; height: 132px; border-radius: 50%; overflow: hidden; z-index: 100; pointer-events: none; border: 3px solid #fff; background: #0c0d0f; box-shadow: 0 10px 28px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.2); display: none; }
+.lp canvas { width: 126px; height: 126px; display: block; }
+.lp-x { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 1.5px solid var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.6); }
+.lp-x::before, .lp-x::after { content: ""; position: absolute; background: var(--accent); }
+.lp-x::before { left: 50%; top: -7px; bottom: -7px; width: 1.5px; margin-left: -.75px; } .lp-x::after { top: 50%; left: -7px; right: -7px; height: 1.5px; margin-top: -.75px; }
+.draft { position: absolute; border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); pointer-events: none; }
+.list { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.li { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14px; } .li:last-child { border: 0; } .li.sel { background: color-mix(in srgb, var(--warn) 18%, transparent); }
+.li b { min-width: 28px; } .li span { color: var(--text2); font-size: 12px; flex: 1; }
+.chk { list-style: none; margin: 6px 0; padding: 0; } .chk li { padding: 3px 0 3px 24px; position: relative; font-size: 14px; } .chk li::before { content: "•"; position: absolute; left: 6px; }
+.chk li.ok::before { content: "✓"; color: var(--ok); } .chk li.bad::before { content: "✗"; color: var(--bad); } .chk li.warn::before { content: "!"; color: var(--warn); }
+pre.ai { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px; font-size: 12.5px; max-height: 220px; overflow: auto; }
+.okmsg { color: var(--ok); font-weight: 600; } .errmsg { color: var(--bad); }
+.hidden { display: none !important; } .note { font-size: 12.5px; color: var(--text2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Создать модель</h1>
+  <p class="sub"><a href="/?section=apps" style="color:var(--accent)">← в Rack Live</a> · Фото устройства, порты, границы приближения — и публикация в магазин моделей. Фото обрабатывается у вас в браузере и уходит только при нажатии «Опубликовать».</p>
+  <div class="tabs" id="tabs"></div>
+  <div class="grid">
+    <div class="card"><div class="stagewrap" id="stagewrap"><div class="zoomer" id="zoomer"><canvas id="cv" width="10" height="10"></canvas><div class="ov" id="ov"></div></div></div>
+      <p class="dim" id="hint" style="margin-bottom:0"></p></div>
+    <div id="side"></div>
+  </div>
+</main>
+<script>
+/* ============ CORE (чистые функции — проверяются в Node: tests/editor_core_test.js) ============ */
+// CORE-START
+const KINDS = ['router', 'switch', 'server', 'nas', 'ap', 'camera', 'nvr', 'ups', 'pc', 'modem', 'other'];
+const KIND_RU = { router: 'Роутер', switch: 'Коммутатор', server: 'Сервер', nas: 'NAS', ap: 'Точка доступа', camera: 'Камера', nvr: 'Регистратор', ups: 'ИБП', pc: 'Компьютер', modem: 'Модем', other: 'Другое' };
+const PORT_KINDS = ['rj45', 'sfp', 'usb', 'power', 'console', 'other'];
+const PORT_RU = { rj45: 'RJ-45', sfp: 'SFP', usb: 'USB', power: 'Питание', console: 'Консоль', other: 'Другое' };
+const LICENSES = { own: 'Моё фото', 'CC0-1.0': 'CC0 (общественное достояние)', 'CC-BY-4.0': 'CC BY 4.0 (нужен автор)', 'CC-BY-SA-4.0': 'CC BY-SA 4.0 (нужен автор)', permission: 'Есть разрешение правообладателя' };
+const LIMITS = { maxBytes: 600 * 1024, minSide: 600, maxSide: 1600, maxSpots: 200 };
+const CYR = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const r4 = v => Math.round(v * 10000) / 10000;
+function slugify(s) { return String(s || '').toLowerCase().replace(/[а-яё]/g, c => CYR[c] ?? '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
+function modelId(vendor, model) { const id = [slugify(vendor), slugify(model)].filter(Boolean).join('-'); return id.length >= 3 ? id : (id + '-model').slice(0, 40); }
+function nextN(spots) { const used = new Set(spots.map(s => s.n)); let n = 1; while (used.has(n)) n++; return n; }
+/* оставляет порты внутри кадра и в допустимых размерах */
+function fitSpot(s) { const w = clamp(s.w, .002, .6), h = clamp(s.h, .002, .6); return { ...s, w: r4(w), h: r4(h), x: r4(clamp(s.x, w / 2, 1 - w / 2)), y: r4(clamp(s.y, h / 2, 1 - h / 2)) }; }
+/* ряд одинаковых портов: копии выбранного вправо с шагом step (доля ширины фото), нумерация продолжается */
+function repeatSpots(spots, base, count, step, gap) {
+  const out = []; let n = nextN(spots.concat(out));
+  for (let i = 1; i <= count; i++) {
+    const s = { ...base, n: 0, x: base.x + step * i, label: '' };
+    if (s.x + s.w / 2 > 1 || spots.length + out.length >= LIMITS.maxSpots) break;
+    s.n = n; out.push(fitSpot(s)); n = nextN(spots.concat(out));
+  }
+  return out;
+}
+/* нумерация: 'rows' — по строкам слева направо; 'cols' — по колонкам, в колонке сверху вниз (нечётные сверху — как на коммутаторах) */
+function renumber(spots, mode) {
+  if (!spots.length) return spots;
+  const hs = spots.map(s => s.h).sort((a, b) => a - b), tol = hs[Math.floor(hs.length / 2)] * .6;
+  const ys = spots.map(s => s.y).sort((a, b) => a - b), rows = []; ys.forEach(y => { if (!rows.length || y - rows[rows.length - 1] > tol) rows.push(y); });
+  const rowOf = s => rows.reduce((b, y, i) => Math.abs(y - s.y) < Math.abs(rows[b] - s.y) ? i : b, 0);
+  const order = spots.map(s => ({ s, r: rowOf(s) })).sort(mode === 'cols' ? (a, b) => a.s.x - b.s.x || a.r - b.r : (a, b) => a.r - b.r || a.s.x - b.s.x);
+  if (mode === 'cols') {                                   // колонки группируем по x, чтобы чуть сдвинутые порты не ломали порядок
+    const w = spots.map(s => s.w).sort((a, b) => a - b)[Math.floor(spots.length / 2)], cols = [];
+    order.sort((a, b) => a.s.x - b.s.x).forEach(o => { const c = cols[cols.length - 1]; if (c && Math.abs(o.s.x - c.x) < w * .6) c.items.push(o); else cols.push({ x: o.s.x, items: [o] }); });
+    let n = 1; const num = new Map(); cols.forEach(c => c.items.sort((a, b) => a.r - b.r).forEach(o => num.set(o.s, n++)));
+    return spots.map(s => ({ ...s, n: num.get(s) }));
+  }
+  const num = new Map(); order.forEach((o, i) => num.set(o.s, i + 1));
+  return spots.map(s => ({ ...s, n: num.get(s) }));
+}
+/* ответ нейросети: JSON с долями в ПРОЦЕНТАХ (0…100). Принимает JSON внутри текста и ```-блока */
+function parseAI(text) {
+  let t = String(text || '').trim(); const m = t.match(/```(?:json)?\s*([\s\S]*?)```/i); if (m) t = m[1];
+  const a = t.indexOf('{'), b = t.lastIndexOf('}'); if (a < 0 || b < a) throw new Error('в ответе нет JSON');
+  let o; try { o = JSON.parse(t.slice(a, b + 1)); } catch (e) { throw new Error('не удалось разобрать JSON: ' + e.message); }
+  const spots = [], seen = new Set();
+  for (const p of (o.spots || o.ports || [])) {
+    const n = parseInt(p.n, 10), v = k => Number(p[k]) / 100;
+    if (!(n >= 1 && n <= 256) || seen.has(n) || [v('x'), v('y'), v('w'), v('h')].some(x => !isFinite(x))) continue;
+    seen.add(n); spots.push(fitSpot({ n, x: v('x'), y: v('y'), w: v('w'), h: v('h'), kind: PORT_KINDS.includes(p.kind) ? p.kind : 'rj45', label: String(p.label || '').slice(0, 24) }));
+  }
+  let zoom = null; const z = o.zoom || o.pzoom;
+  if (z && [z.x, z.y, z.w, z.h].every(x => isFinite(Number(x)))) zoom = fitZoom({ x: z.x / 100, y: z.y / 100, w: z.w / 100, h: z.h / 100 });
+  return { spots, zoom };
+}
+function fitZoom(z) { const w = clamp(z.w, .02, 1), h = clamp(z.h, .02, 1); return { x: r4(clamp(z.x, 0, 1 - w)), y: r4(clamp(z.y, 0, 1 - h)), w: r4(w), h: r4(h) }; }
+/* то же приближение, что в Rack Live (PhotoPorts): масштаб и сдвиг в процентах размера фото */
+function zoomTransform(z) { const Z = clamp(Math.min(1 / z.w, 1 / z.h), 1, 6); return `scale(${Z}) translate(${(.5 - z.x - z.w / 2) * 100}%, ${(.5 - z.y - z.h / 2) * 100}%)`; }
+function buildModel(st) {
+  const id = modelId(st.vendor, st.model), vendor = slugify(st.vendor) || 'other';
+  const m = { format: 'racklive-card', version: 1, id, vendor: st.vendor.trim(), model: st.model.trim(), kind: st.kind };
+  if (st.title.trim()) m.title = st.title.trim();
+  if (st.notes.trim()) m.notes = st.notes.trim();
+  if (st.photoFile) m.photo = { file: st.photoFile, license: st.license, author: st.author.trim(), source: st.source.trim() };
+  if (st.photoFile && st.spots.length) m.spots = st.spots.slice().sort((a, b) => a.n - b.n).map(s => { const o = { n: s.n, x: r4(s.x), y: r4(s.y), w: r4(s.w), h: r4(s.h) }; if (s.kind && s.kind !== 'rj45') o.kind = s.kind; if (s.label) o.label = s.label; return o; });
+  if (st.photoFile && st.zoom) m.pzoom = fitZoom(st.zoom);
+  if (st.model3d) m.model3d = 'model3d.json';
+  return { id, vendor, model: m, dir: `models/${vendor}/${id}` };
+}
+/* проверка того, что можно проверить в браузере (полная — в каталоге, tools/validate.py) → [{level:'ok'|'bad'|'warn', text}] */
+function checkState(st, px) {
+  const r = [], add = (level, text) => r.push({ level, text });
+  if (!st.photoFile && !st.model3d) add('bad', 'Нужно фото устройства или 3D-модель');
+  if (!st.vendor.trim()) add('bad', 'Укажите производителя'); if (!st.model.trim()) add('bad', 'Укажите модель');
+  if (st.vendor.trim() && st.model.trim()) add('ok', 'Название: ' + modelId(st.vendor, st.model));
+  if (st.photoFile) {
+    if (px) {
+      add(px.longSide >= LIMITS.minSide && px.longSide <= LIMITS.maxSide ? 'ok' : 'bad', `Размер фото ${px.w}×${px.h} (длинная сторона ${LIMITS.minSide}–${LIMITS.maxSide})`);
+      add(px.bytes <= LIMITS.maxBytes ? 'ok' : 'bad', `Файл ${Math.round(px.bytes / 1024)} КБ (не больше ${LIMITS.maxBytes / 1024})`);
+      add(px.borderClear >= .97 ? 'ok' : 'bad', `Прозрачный фон: у краёв ${Math.round(px.borderClear * 100)}% (нужно 97%+)`);
+    }
+    if (!LICENSES[st.license]) add('bad', 'Выберите, чьё это фото и по какой лицензии');
+    else if (st.license !== 'own' && !st.source.trim()) add('bad', 'Укажите источник фото (адрес страницы или описание разрешения)');
+    else if (/^CC-BY/.test(st.license) && !st.author.trim()) add('bad', 'Для этой лицензии нужен автор фото');
+    else add('ok', 'Лицензия: ' + LICENSES[st.license]);
+    if (st.source.trim() && st.license !== 'permission' && !/^https:\/\/\S+$/.test(st.source.trim())) add('bad', 'Источник должен начинаться с https://');
+    if (!st.rights) add('bad', 'Подтвердите права на фото (галочка внизу)');
+    add(st.spots.length ? 'ok' : 'warn', st.spots.length ? `Портов отмечено: ${st.spots.length}` : 'Порты не отмечены — модель будет только картинкой');
+    add(st.zoom ? 'ok' : 'warn', st.zoom ? 'Зона приближения задана' : 'Зона приближения не задана — приближаться будет весь блок портов');
+  }
+  return r;
+}
+/* ZIP без сжатия (store) — чтобы не тащить библиотеки */
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files) {   // files: [{name, data: Uint8Array}]
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  const u16 = v => [v & 255, v >> 8 & 255], u32 = v => [v & 255, v >> 8 & 255, v >> 16 & 255, v >>> 24 & 255];
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.data), n = f.data.length;
+    const lh = new Uint8Array([0x50, 0x4b, 3, 4, ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(n), ...u32(n), ...u16(name.length), ...u16(0)]);
+    parts.push(lh, name, f.data);
+    cen.push(new Uint8Array([0x50, 0x4b, 1, 2, ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(n), ...u32(n), ...u16(name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(off)]), name);
+    off += lh.length + name.length + n;
+  }
+  const csize = cen.reduce((a, b) => a + b.length, 0);
+  const end = new Uint8Array([0x50, 0x4b, 5, 6, ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length), ...u32(csize), ...u32(off), ...u16(0)]);
+  const all = [...parts, ...cen, end], out = new Uint8Array(all.reduce((a, b) => a + b.length, 0)); let p = 0; all.forEach(b => { out.set(b, p); p += b.length; });
+  return out;
+}
+const AI_PROMPT = `Ты помогаешь разметить порты на фото сетевого устройства для программы Rack Live.
+К сообщению приложено фото устройства (вид спереди или сзади) на прозрачном или светлом фоне.
+Верни ТОЛЬКО JSON, без пояснений, в таком виде:
+{
+  "spots": [ {"n": 1, "x": 12.5, "y": 40.2, "w": 3.1, "h": 9.0, "kind": "rj45", "label": ""} ],
+  "zoom": {"x": 8.0, "y": 30.0, "w": 60.0, "h": 40.0}
+}
+Правила:
+- Все числа — ПРОЦЕНТЫ от ширины (x, w) и высоты (y, h) всей картинки, от 0 до 100.
+- x, y — центр порта; w, h — его ширина и высота.
+- n — номер порта так, как он напечатан на корпусе. Если номеров не видно — нумеруй слева направо, по строкам.
+- kind: rj45, sfp, usb, power, console или other. label — короткая подпись (WAN, PoE), если есть.
+- Отмечай только настоящие разъёмы для кабелей: не светодиоды, не винты, не решётки.
+- zoom — прямоугольник (x, y — ЛЕВЫЙ ВЕРХНИЙ угол), в который целиком помещаются все порты с небольшим запасом.
+Если не уверен в положении порта — лучше пропусти его, чем ставь наугад.`;
+// CORE-END
+
+/* ============ ПРИЛОЖЕНИЕ ============ */
+const REPO = 'mikolord/racklive-models';
+const $ = id => document.getElementById(id);
+const S = { tab: 0, photo: null, orig: null, bgTol: 40, bgOn: false, crop: true, work: null, photoFile: null, photoBlob: null, px: null,
+  spots: [], zoom: null, sel: null, kind: 'rj45', size: 4, mode: 'draw', vendor: '', model: '', title: '', kind0: 'switch', notes: '', license: 'own', author: '', source: '', rights: false, model3d: null, previewZoom: false, msg: '', busy: false, pubMsg: '', pubOk: false };
+const TABS = ['① Фото', '② Порты', '③ Приближение', '④ Описание', '⑤ Отправка'];
+const cv = $('cv'), ctx = cv.getContext('2d'), ov = $('ov'), zoomer = $('zoomer');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* --- обработка фото --- */
+function loadFile(file) {
+  const url = URL.createObjectURL(file), im = new Image();
+  im.onload = () => {
+    const k = Math.min(1, LIMITS.maxSide / Math.max(im.width, im.height)), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(im.width * k)); c.height = Math.max(1, Math.round(im.height * k));
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    S.orig = c; S.bgOn = !hasAlphaEdges(c); S.spots = []; S.zoom = null; S.sel = null; process(); render();
+  };
+  im.onerror = () => { S.msg = 'Не удалось открыть файл как картинку'; render(); };
+  im.src = url;
+}
+function hasAlphaEdges(c) {          // уже есть прозрачный фон по краям?
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let clear = 0, n = 0;
+  const at = (x, y) => d[(y * c.width + x) * 4 + 3];
+  for (let x = 0; x < c.width; x++) { n += 2; clear += (at(x, 0) <= 8) + (at(x, c.height - 1) <= 8); }
+  for (let y = 0; y < c.height; y++) { n += 2; clear += (at(0, y) <= 8) + (at(c.width - 1, y) <= 8); }
+  return clear / n >= .97;
+}
+function removeBg(src, tol) {        // заливка от краёв цветами углов: всё, что похоже на фон и связано с краем, становится прозрачным
+  const w = src.width, h = src.height, c = document.createElement('canvas'); c.width = w; c.height = h;
+  const cx = c.getContext('2d'); cx.drawImage(src, 0, 0); const img = cx.getImageData(0, 0, w, h), d = img.data;
+  const avg = (x0, y0) => { let r = 0, g = 0, b = 0, n = 0; for (let y = y0; y < y0 + 5; y++) for (let x = x0; x < x0 + 5; x++) { const i = (Math.min(h - 1, y) * w + Math.min(w - 1, x)) * 4; r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; } return [r / n, g / n, b / n]; };
+  const seeds = [avg(0, 0), avg(w - 5, 0), avg(0, h - 5), avg(w - 5, h - 5)];
+  const near = i => { if (d[i + 3] < 8) return true; for (const s of seeds) if (Math.hypot(d[i] - s[0], d[i + 1] - s[1], d[i + 2] - s[2]) <= tol) return true; return false; };
+  const seen = new Uint8Array(w * h), st = [];
+  const push = (x, y) => { const p = y * w + x; if (!seen[p] && near(p * 4)) { seen[p] = 1; st.push(p); } };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); } for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (st.length) { const p = st.pop(), x = p % w, y = (p - x) / w; if (x > 0) push(x - 1, y); if (x < w - 1) push(x + 1, y); if (y > 0) push(x, y - 1); if (y < h - 1) push(x, y + 1); }
+  for (let p = 0; p < w * h; p++) if (seen[p]) d[p * 4 + 3] = 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const p = y * w + x; if (!seen[p] && (seen[p - 1] || seen[p + 1] || seen[p - w] || seen[p + w])) d[p * 4 + 3] = Math.min(d[p * 4 + 3], 170); }   // мягкий край
+  cx.putImageData(img, 0, 0); return c;
+}
+function cropPad(src) {              // обрезать по устройству и оставить прозрачное поле ≈3%
+  const w = src.width, h = src.height, d = src.getContext('2d').getImageData(0, 0, w, h).data; let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return src;
+  const cw = x1 - x0 + 1, ch = y1 - y0 + 1, pad = Math.max(8, Math.round(Math.max(cw, ch) * .03)), c = document.createElement('canvas');
+  c.width = cw + 2 * pad; c.height = ch + 2 * pad; c.getContext('2d').drawImage(src, x0, y0, cw, ch, pad, pad, cw, ch); return c;
+}
+function process() {
+  if (!S.orig) return; let c = S.orig;
+  if (S.bgOn) c = removeBg(c, S.bgTol);
+  if (S.crop) c = cropPad(c);
+  const k = Math.min(1, LIMITS.maxSide / Math.max(c.width, c.height));
+  if (k < 1) { const n = document.createElement('canvas'); n.width = Math.round(c.width * k); n.height = Math.round(c.height * k); n.getContext('2d').drawImage(c, 0, 0, n.width, n.height); c = n; }
+  S.work = c; cv.width = c.width; cv.height = c.height; ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(c, 0, 0);
+  S.photoBlob = null; S.photoFile = null; S.px = null; encodePhoto();
+}
+async function encodePhoto() {       // WebP (если браузер умеет — iPhone Safari не умеет, тогда PNG) в пределах 600 КБ
+  const c = S.work; if (!c) return; let k = 1, blob = null, file = null;
+  const tryEnc = (cc, type, q) => new Promise(res => cc.toBlob(res, type, q));
+  for (let i = 0; i < 8; i++) {
+    let cc = c; if (k < 1) { cc = document.createElement('canvas'); cc.width = Math.round(c.width * k); cc.height = Math.round(c.height * k); cc.getContext('2d').drawImage(c, 0, 0, cc.width, cc.height); }
+    let b = await tryEnc(cc, 'image/webp', i < 3 ? .92 : .8); file = 'photo.webp';
+    if (!b || b.type !== 'image/webp') { b = await tryEnc(cc, 'image/png'); file = 'photo.png'; }
+    blob = b; if (b && b.size <= LIMITS.maxBytes) break; k *= .85;
+  }
+  if (S.work !== c) return;
+  const dec = await createImageBitmap(blob), t = document.createElement('canvas'); t.width = dec.width; t.height = dec.height; t.getContext('2d').drawImage(dec, 0, 0);
+  const d = t.getContext('2d').getImageData(0, 0, t.width, t.height).data; let clear = 0, n = 0;
+  const at = (x, y) => d[(y * t.width + x) * 4 + 3];
+  for (let x = 0; x < t.width; x++) for (const y of [0, 1, t.height - 2, t.height - 1]) { n++; clear += at(x, Math.max(0, y)) <= 8; }
+  for (let y = 0; y < t.height; y++) for (const x of [0, 1, t.width - 2, t.width - 1]) { n++; clear += at(Math.max(0, x), y) <= 8; }
+  S.photoBlob = blob; S.photoFile = file; S.px = { w: t.width, h: t.height, longSide: Math.max(t.width, t.height), bytes: blob.size, borderClear: clear / n };
+  render(true);
+}
+
+/* --- рисование на фото ---
+   Порты — как в Rack Live: коснитесь и ведите палец, над ним появится лупа, метка встанет там, где отпустите.
+   Метку рядом (в пределах ~1 см) можно взять и перетащить. Зона приближения — прямоугольник, как раньше. */
+let drag = null;
+const rel = ev => { const r = ov.getBoundingClientRect(); return { x: clamp((ev.clientX - r.left) / r.width, 0, 1), y: clamp((ev.clientY - r.top) / r.height, 0, 1), r, cx: ev.clientX, cy: ev.clientY }; };
+const spotW = () => S.size / 100;
+const spotH = () => S.size / 100 * (S.work ? S.work.width / S.work.height : 1);
+function hitSpot(p) {                 // ближайшая метка в пределах ~1 см от пальца
+  let best = null, bd = 1e9;
+  for (const s of S.spots) { const d = Math.hypot((s.x - p.x) * p.r.width, (s.y - p.y) * p.r.height), lim = Math.max(30, s.w * p.r.width / 2 + 16); if (d < lim && d < bd) { bd = d; best = s; } }
+  return best;
+}
+/* круглая лупа над пальцем: что под ним, в 2.6 раза крупнее, с прицелом в центре */
+const LP = { Z: 2.6, S: 132, el: null, c: null };
+function loupe(p, ghost) {
+  if (!LP.el) { LP.el = document.createElement('div'); LP.el.className = 'lp'; LP.c = document.createElement('canvas'); LP.c.width = LP.c.height = LP.S * 2; LP.el.appendChild(LP.c); LP.el.appendChild(Object.assign(document.createElement('i'), { className: 'lp-x' })); document.body.appendChild(LP.el); }
+  const Z = LP.Z, W = p.r.width, H = p.r.height, K = 2 * Z, fx = p.x * W, fy = p.y * H, g = LP.c.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#e6e8ec'; g.fillRect(0, 0, LP.S * 2, LP.S * 2); g.fillStyle = '#f7f8fa';
+  for (let i = 0; i < 17; i++) for (let j = 0; j < 17; j++) if ((i + j) & 1) g.fillRect(i * 16, j * 16, 16, 16);
+  g.setTransform(K, 0, 0, K, LP.S - fx * K, LP.S - fy * K); g.drawImage(S.work, 0, 0, W, H);
+  g.lineWidth = 2 / Z;
+  for (const s of S.spots.concat(ghost ? [ghost] : [])) { const x = (s.x - s.w / 2) * W, y = (s.y - s.h / 2) * H, w = s.w * W, h = s.h * H, gh = s === ghost;
+    g.fillStyle = gh ? 'rgba(47,111,237,.3)' : 'rgba(47,111,237,.2)'; g.strokeStyle = S.sel === s.n && !gh ? '#e08a00' : '#2f6fed'; g.setLineDash(gh ? [4 / Z, 3 / Z] : []); g.fillRect(x, y, w, h); g.strokeRect(x, y, w, h); }
+  const R = LP.S / 2; LP.el.style.display = 'block';
+  LP.el.style.left = clamp(p.cx - R, 4, window.innerWidth - LP.S - 4) + 'px'; LP.el.style.top = (p.cy > 210 ? p.cy - 178 : p.cy + 48) + 'px';
+}
+const hideLoupe = () => { if (LP.el) LP.el.style.display = 'none'; };
+function ghostAt(p) { return fitSpot({ n: 0, x: p.x, y: p.y, w: spotW(), h: spotH() }); }
+ov.addEventListener('pointerdown', ev => {
+  if (!S.work || S.tab === 0 || S.tab === 3 || S.tab === 4) return; ev.preventDefault();
+  const p = rel(ev), t = ev.target; try { ov.setPointerCapture(ev.pointerId); } catch (e) { }
+  if (S.tab === 1 && t.dataset.h) { drag = { type: 'resize', n: +t.dataset.h }; return; }
+  if (S.tab === 1) {
+    const hit = hitSpot(p);
+    if (hit) { S.sel = hit.n; drag = { type: 'move', n: hit.n, dx: hit.x - p.x, dy: hit.y - p.y }; render(true); loupe(p); return; }
+    drag = { type: 'new', x1: p.x, y1: p.y }; drawDraft(); loupe(p, ghostAt(p)); return;
+  }
+  drag = { type: 'zoom', x0: p.x, y0: p.y, x1: p.x, y1: p.y }; drawDraft();
+});
+ov.addEventListener('pointermove', ev => {
+  if (!drag) return; const p = rel(ev);
+  if (drag.type === 'move') { const i = S.spots.findIndex(q => q.n === drag.n); S.spots[i] = fitSpot({ ...S.spots[i], x: p.x + drag.dx, y: p.y + drag.dy }); paintOverlay(); loupe(p); return; }
+  if (drag.type === 'resize') { const i = S.spots.findIndex(q => q.n === drag.n), s = S.spots[i]; S.spots[i] = fitSpot({ ...s, w: Math.abs(p.x - s.x) * 2, h: Math.abs(p.y - s.y) * 2 }); paintOverlay(); return; }
+  if (drag.type === 'new') { drag.x1 = p.x; drag.y1 = p.y; drawDraft(); loupe(p, ghostAt(p)); return; }
+  drag.x1 = p.x; drag.y1 = p.y; drawDraft();
+});
+const endDrag = (ev, cancel) => {
+  if (!drag) return; const d = drag; drag = null; $('draft') && $('draft').remove(); hideLoupe();
+  if (d.type === 'new' && !cancel) { if (S.spots.length < LIMITS.maxSpots) { const s = fitSpot({ n: nextN(S.spots), x: d.x1, y: d.y1, w: spotW(), h: spotH(), kind: S.kind, label: '' }); S.spots.push(s); S.sel = s.n; } }
+  else if (d.type === 'zoom' && !cancel) {
+    const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1), w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+    if (w > .004 && h > .004) S.zoom = fitZoom({ x, y, w, h });
+  }
+  render(true);
+};
+ov.addEventListener('pointerup', ev => endDrag(ev)); ov.addEventListener('pointercancel', ev => endDrag(ev, true));
+function drawDraft() { let e = $('draft'); if (!e) { e = document.createElement('div'); e.id = 'draft'; e.className = 'draft'; ov.appendChild(e); }
+  if (drag.type === 'new') { const g = ghostAt({ x: drag.x1, y: drag.y1 }); Object.assign(e.style, { left: (g.x - g.w / 2) * 100 + '%', top: (g.y - g.h / 2) * 100 + '%', width: g.w * 100 + '%', height: g.h * 100 + '%', borderStyle: 'dashed' }); return; }
+  const x = Math.min(drag.x0, drag.x1), y = Math.min(drag.y0, drag.y1); Object.assign(e.style, { left: x * 100 + '%', top: y * 100 + '%', width: Math.abs(drag.x1 - drag.x0) * 100 + '%', height: Math.abs(drag.y1 - drag.y0) * 100 + '%' }); }
+function paintOverlay() {
+  const keep = $('draft'); ov.innerHTML = '';
+  if (S.tab === 1 || S.tab === 2) for (const s of S.spots) {
+    const e = document.createElement('div'); e.className = 'pt' + (S.sel === s.n && S.tab === 1 ? ' sel' : ''); e.dataset.n = s.n;
+    Object.assign(e.style, { left: (s.x - s.w / 2) * 100 + '%', top: (s.y - s.h / 2) * 100 + '%', width: s.w * 100 + '%', height: s.h * 100 + '%', pointerEvents: S.tab === 1 ? 'auto' : 'none' });
+    e.innerHTML = `<i>${s.n}</i>` + (S.tab === 1 ? `<b data-h="${s.n}"></b>` : ''); ov.appendChild(e);
+  }
+  if (S.zoom && (S.tab === 2 || S.tab === 3) && !S.previewZoom) { const z = S.zoom, e = document.createElement('div'); e.className = 'zn'; Object.assign(e.style, { left: z.x * 100 + '%', top: z.y * 100 + '%', width: z.w * 100 + '%', height: z.h * 100 + '%' }); ov.appendChild(e); }
+  if (keep) ov.appendChild(keep);
+  zoomer.style.transform = S.previewZoom && S.zoom ? zoomTransform(S.zoom) : 'none';
+  ov.style.cursor = S.work && (S.tab === 1 || S.tab === 2) ? 'crosshair' : 'default';
+}
+
+/* --- панели --- */
+const f = (label, inner) => `<label class="f">${label}${inner}</label>`;
+const opts = (obj, cur) => Object.entries(obj).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
+function panel() {
+  const t = S.tab;
+  if (t === 0) return `<div class="card"><h2>Фото устройства</h2>
+    <p class="dim">Вид спереди или сзади, где видны порты. Лучше своё фото. Чужое можно, если у вас есть право его использовать (см. «Описание»).</p>
+    <div class="row"><input type="file" id="file" accept="image/*"></div>
+    ${S.work ? `<label class="f"><span><input type="checkbox" id="bgOn" ${S.bgOn ? 'checked' : ''}> Убрать фон (заливка от краёв)</span></label>
+      <label class="f ${S.bgOn ? '' : 'hidden'}">Насколько сильно (чем больше, тем больше уйдёт похожего по цвету) <input type="range" id="tol" min="5" max="120" value="${S.bgTol}"></label>
+      <label class="f"><span><input type="checkbox" id="crop" ${S.crop ? 'checked' : ''}> Обрезать по устройству и оставить прозрачное поле</span></label>
+      <p class="note">Размер сжимается сам: до ${LIMITS.maxSide} px и до ${LIMITS.maxBytes / 1024} КБ. Данные съёмки (EXIF, геопозиция) при этом удаляются.</p>
+      <p class="note">Если после изменений порты уже были отмечены, они сбросятся — отметьте их заново.</p>
+      <div class="row"><button class="btn pri" data-go="1">Дальше: порты →</button></div>` : ''}
+    ${S.msg ? `<p style="color:var(--bad)">${esc(S.msg)}</p>` : ''}</div>`;
+  if (t === 1) return `<div class="card"><h2>Порты</h2>
+    <p class="dim">Коснитесь фото там, где порт, и ведите палец: над ним появится лупа, метка встанет там, где отпустите. Готовую метку можно взять пальцем рядом с ней и перетащить; касание выбирает её номер.</p>
+    <label class="f">Размер меток (все сразу): <b id="pszv">${S.size}</b> % ширины <input type="range" id="psz" min="1.5" max="12" step="0.25" value="${S.size}"></label>
+    <div class="row"><select id="pk">${opts(PORT_RU, S.kind)}</select><button class="btn" id="ai">Разметить с помощью ИИ…</button></div>
+    ${selPanel()}
+    <div class="row"><button class="btn" id="rn1">Нумерация по строкам</button><button class="btn" id="rn2">Нумерация по колонкам</button></div>
+    <p class="note">«По колонкам» — как на большинстве коммутаторов: в колонке сверху нечётный, снизу чётный.</p>
+    <div class="list">${S.spots.slice().sort((a, b) => a.n - b.n).map(s => `<div class="li${S.sel === s.n ? ' sel' : ''}" data-pick="${s.n}"><b>${s.n}</b><span>${PORT_RU[s.kind] || ''}${s.label ? ' · ' + esc(s.label) : ''}</span></div>`).join('') || '<div class="li"><span>Пока нет ни одного порта</span></div>'}</div>
+    <div id="aibox" class="hidden"></div>
+    <div class="row"><button class="btn" data-go="0">← Фото</button><button class="btn pri" data-go="2">Дальше: приближение →</button></div></div>`;
+  if (t === 2) return `<div class="card"><h2>Границы приближения</h2>
+    <p class="dim">Обведите прямоугольник, на который должна приближаться камера по кнопке «Порты крупно». Обычно это весь блок портов с небольшим запасом.</p>
+    <div class="row"><button class="btn" id="pv">${S.previewZoom ? 'Отдалить' : 'Показать, как приблизится'}</button><button class="btn" id="zauto">Взять по портам</button><button class="btn bad" id="zdel">Сбросить</button></div>
+    <p class="note">${S.zoom ? 'Зона задана.' : 'Зона не задана: Rack Live приблизит весь блок портов сам.'}</p>
+    <div class="row"><button class="btn" data-go="1">← Порты</button><button class="btn pri" data-go="3">Дальше: описание →</button></div></div>`;
+  if (t === 3) return `<div class="card"><h2>Описание</h2>
+    ${f('Производитель', `<input id="vendor" value="${esc(S.vendor)}" maxlength="40" placeholder="TP-Link">`)}
+    ${f('Модель', `<input id="model" value="${esc(S.model)}" maxlength="60" placeholder="T2600G-28MPS">`)}
+    ${f('Тип', `<select id="kind0">${opts(KIND_RU, S.kind0)}</select>`)}
+    ${f('Название в каталоге (необязательно)', `<input id="title" value="${esc(S.title)}" maxlength="100" placeholder="TP-Link T2600G-28MPS v4">`)}
+    ${f('Заметка (необязательно): ревизия, особенности', `<input id="notes" value="${esc(S.notes)}" maxlength="300">`)}
+    ${S.work ? `<h2 style="margin-top:14px">Права на фото</h2>
+    ${f('Чьё это фото', `<select id="lic">${opts(LICENSES, S.license)}</select>`)}
+    ${S.license !== 'own' ? f('Автор' + (/^CC-BY/.test(S.license) ? ' (обязательно)' : ''), `<input id="author" value="${esc(S.author)}" maxlength="80">`) : ''}
+    ${S.license !== 'own' ? f(S.license === 'permission' ? 'Откуда разрешение' : 'Адрес страницы с фото (https://…)', `<input id="source" value="${esc(S.source)}" maxlength="300">`) : ''}
+    <p class="note">Фото с сайтов магазинов и производителей обычно защищены авторским правом. Берите свои фото, фото со свободной лицензией или с разрешением.</p>` : ''}
+    <h2 style="margin-top:14px">3D-модель (необязательно)</h2>
+    <p class="note">Файл формата racklive-model, который делает «Сканер» в Rack Live. Проверяется по тем же правилам, что и в приложении.</p>
+    <div class="row"><input type="file" id="f3d" accept=".json,application/json">${S.model3d ? '<span class="dim">✓ загружена</span><button class="btn bad" id="del3d">Убрать</button>' : ''}</div>
+    <div class="row"><button class="btn" data-go="2">← Приближение</button><button class="btn pri" data-go="4">Дальше: отправка →</button></div></div>`;
+  const res = checkState(S, S.px), bad = res.some(r => r.level === 'bad');
+  return `<div class="card"><h2>Проверка и отправка</h2>
+    <ul class="chk">${res.map(r => `<li class="${r.level}">${esc(r.text)}</li>`).join('')}</ul>
+    ${S.work ? `<label class="f"><span><input type="checkbox" id="rights" ${S.rights ? 'checked' : ''}> Это моё фото, или у меня есть право его использовать и публиковать под указанной лицензией</span></label>` : ''}
+    <div class="row"><button class="btn pri" id="pub" ${bad || S.busy ? 'disabled' : ''}>${S.busy ? 'Публикую…' : 'Опубликовать в магазин'}</button><button class="btn" id="dl" ${bad ? 'disabled' : ''}>Скачать .zip</button></div>
+    ${S.pubMsg ? `<p class="${S.pubOk ? 'okmsg' : 'errmsg'}">${esc(S.pubMsg)}</p>` : ''}
+    <p class="note">Модель сразу попадёт в общий каталог (нужен токен GitHub: Rack Live → Магазин → Модерация). В списке магазина она появится через минуту-две.</p>
+    <div class="row"><button class="btn" data-go="3">← Описание</button></div></div>`;
+}
+function selPanel() {
+  const s = S.spots.find(q => q.n === S.sel); if (!s) return '<p class="note">Выберите порт в списке или на фото, чтобы изменить его.</p>';
+  return `<div class="card" style="margin:8px 0;padding:10px"><div class="row" style="margin:0"><b>Порт ${s.n}</b>
+    <input id="sn" type="number" min="1" max="256" value="${s.n}" style="width:70px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
+    <select id="sk">${opts(PORT_RU, s.kind)}</select><input id="sl" placeholder="подпись (WAN…)" maxlength="24" value="${esc(s.label || '')}" style="flex:1;min-width:90px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
+    <button class="btn bad" id="sd">Удалить</button></div>
+    <div class="row" style="margin-bottom:0">Ряд: <input id="rc" type="number" min="1" max="48" value="7" style="width:60px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg)"> копий вправо с шагом
+    <input id="rs" type="number" min="0.5" max="40" step="0.1" value="${(s.w * 115).toFixed(1)}" style="width:70px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg)"> % <button class="btn" id="rep">Размножить</button></div></div>`;
+}
+const b64 = blob => new Promise(res => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
+async function publish() {
+  S.busy = true; S.pubMsg = ''; render(true);
+  try {
+    const b = buildModel(S), m = b.model;
+    const body = { vendor: S.vendor.trim(), model: S.model.trim(), kind: S.kind0, title: S.title.trim(), notes: S.notes.trim(), vendor_dir: b.vendor, id: b.id,
+      license: S.license, author: S.author.trim(), source: S.source.trim(), spots: m.spots || [], pzoom: m.pzoom || null, model3d: S.model3d || null };
+    if (S.photoBlob) body.photo = await b64(S.photoBlob);
+    const r = await fetch('/api/models/store/publish', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 401) throw new Error('Нужно войти в Rack Live: откройте его в этом же браузере, войдите и вернитесь сюда.');
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok) throw new Error(j.error || 'не получилось опубликовать (ответ ' + r.status + ')');
+    S.pubOk = true; S.pubMsg = 'Опубликовано: ' + j.id + '. В магазине появится через минуту-две.';
+  } catch (e) { S.pubOk = false; S.pubMsg = e.message; }
+  S.busy = false; render(true);
+}
+
+/* --- сборка и события --- */
+function render(keepFocus) {
+  $('tabs').innerHTML = TABS.map((n, i) => `<button class="tab${i === S.tab ? ' on' : ''}" data-t="${i}" ${i > 0 && !S.work ? 'disabled' : ''}>${n}</button>`).join('');
+  const act = keepFocus && document.activeElement && document.activeElement.id; const val = act && document.activeElement.value;
+  $('side').innerHTML = panel(); paintOverlay();
+  $('hint').textContent = !S.work ? 'Загрузите фото, чтобы начать.' : S.tab === 2 ? 'Обведите прямоугольник приближения.' : S.tab === 1 ? 'Коснитесь порта и ведите палец — метка встанет там, где отпустите.' : '';
+  if (act && $(act) && 'value' in $(act) && $(act).type !== 'file') { $(act).focus(); try { $(act).setSelectionRange(val.length, val.length); } catch (e) { } }
+}
+document.addEventListener('click', ev => {
+  const t = ev.target.closest('[data-t],[data-go],[data-pick],button,a'); if (!t) return;
+  if (t.dataset.t != null) { S.tab = +t.dataset.t; S.previewZoom = false; return render(); }
+  if (t.dataset.go != null) { S.tab = +t.dataset.go; S.previewZoom = false; return render(); }
+  if (t.dataset.pick != null) { S.sel = +t.dataset.pick; return render(); }
+  const id = t.id;
+  if (id === 'sd') { S.spots = S.spots.filter(q => q.n !== S.sel); S.sel = null; render(); }
+  else if (id === 'rn1' || id === 'rn2') { const old = S.spots.find(q => q.n === S.sel); S.spots = renumber(S.spots, id === 'rn1' ? 'rows' : 'cols'); S.sel = old ? S.spots[S.spots.findIndex(q => q.x === old.x && q.y === old.y)].n : null; render(); }
+  else if (id === 'rep') { const s = S.spots.find(q => q.n === S.sel); if (s) { S.spots.push(...repeatSpots(S.spots, s, clamp(+$('rc').value | 0, 1, 48), clamp(+$('rs').value || s.w * 115, .5, 40) / 100)); render(); } }
+  else if (id === 'pv') { S.previewZoom = !S.previewZoom; render(); }
+  else if (id === 'zauto') { if (S.spots.length) { const x0 = Math.min(...S.spots.map(s => s.x - s.w / 2)), y0 = Math.min(...S.spots.map(s => s.y - s.h / 2)), x1 = Math.max(...S.spots.map(s => s.x + s.w / 2)), y1 = Math.max(...S.spots.map(s => s.y + s.h / 2)), m = .03; S.zoom = fitZoom({ x: x0 - m, y: y0 - m, w: x1 - x0 + 2 * m, h: y1 - y0 + 2 * m }); render(); } }
+  else if (id === 'zdel') { S.zoom = null; S.previewZoom = false; render(); }
+  else if (id === 'del3d') { S.model3d = null; render(); }
+  else if (id === 'ai') aiPanel();
+  else if (id === 'aicopy') { navigator.clipboard.writeText(AI_PROMPT).then(() => { t.textContent = 'Скопировано ✓'; }, () => { $('aiprompt').select && $('aiprompt').select(); }); }
+  else if (id === 'aiapply') { try { const r = parseAI($('aitext').value); S.spots = r.spots; if (r.zoom) S.zoom = r.zoom; S.sel = null; $('aimsg').textContent = `Добавлено портов: ${r.spots.length}. Проверьте и поправьте рамки.`; render(); } catch (e) { $('aimsg').textContent = e.message; } }
+  else if (id === 'dl') download();
+  else if (id === 'pub') publish();
+});
+document.addEventListener('input', ev => {
+  const t = ev.target, id = t.id;
+  if (id === 'file' && t.files[0]) { S.msg = ''; loadFile(t.files[0]); }
+  else if (id === 'bgOn') { S.bgOn = t.checked; S.spots = []; S.zoom = null; process(); render(); }
+  else if (id === 'crop') { S.crop = t.checked; S.spots = []; S.zoom = null; process(); render(); }
+  else if (id === 'tol') { S.bgTol = +t.value; clearTimeout(S._tt); S._tt = setTimeout(() => { S.spots = []; S.zoom = null; process(); }, 150); }
+  else if (id === 'pk') S.kind = t.value;
+  else if (id === 'psz') { S.size = +t.value; $('pszv').textContent = S.size; const k = S.work.width / S.work.height; S.spots = S.spots.map(s => fitSpot({ ...s, w: S.size / 100, h: S.size / 100 * k })); paintOverlay(); }
+  else if (id === 'sk') { const s = S.spots.find(q => q.n === S.sel); if (s) { s.kind = t.value; render(true); } }
+  else if (id === 'sl') { const s = S.spots.find(q => q.n === S.sel); if (s) s.label = t.value; }
+  else if (id === 'sn') { const s = S.spots.find(q => q.n === S.sel), n = +t.value | 0; if (s && n >= 1 && n <= 256 && !S.spots.some(q => q.n === n)) { s.n = n; S.sel = n; } }
+  else if (['vendor', 'model', 'title', 'notes', 'author', 'source'].includes(id)) S[id] = t.value;
+  else if (id === 'kind0') S.kind0 = t.value; else if (id === 'lic') { S.license = t.value; render(); }
+  else if (id === 'rights') S.rights = t.checked;
+  else if (id === 'f3d' && t.files[0]) { t.files[0].text().then(tx => { try { const o = JSON.parse(tx); if (o.format !== 'racklive-model') throw 0; if (tx.length > 300000) throw 0; S.model3d = tx; } catch (e) { S.msg = 'Это не файл racklive-model или он слишком большой'; } render(); }); }
+  if (S.tab === 4) { clearTimeout(S._ck); S._ck = setTimeout(() => render(true), 0); }
+});
+function aiPanel() {
+  const b = $('aibox'); b.classList.toggle('hidden'); if (b.dataset.on) return; b.dataset.on = 1;
+  b.innerHTML = `<div class="card" style="margin:8px 0"><h2>Разметка с помощью ИИ</h2><ol class="note"><li>Скопируйте инструкцию.</li><li>Отправьте её вместе с фото в любой ИИ-чат (Claude, ChatGPT, Gemini…).</li><li>Вставьте ответ сюда и нажмите «Применить».</li></ol>
+  <div class="row"><button class="btn" id="aicopy">Скопировать инструкцию</button></div><textarea id="aiprompt" class="hidden"></textarea>
+  <label class="f">Ответ ИИ<textarea id="aitext" rows="5" placeholder='{"spots": [...], "zoom": {...}}'></textarea></label>
+  <div class="row"><button class="btn pri" id="aiapply">Применить</button></div><p class="note" id="aimsg">ИИ ошибается в положении портов — после применения проверьте рамки и поправьте.</p></div>`;
+}
+async function download() {
+  const b = buildModel(S), files = [{ name: `${b.dir}/model.json`, data: new TextEncoder().encode(JSON.stringify(b.model, null, 1)) }];
+  if (S.photoBlob) files.push({ name: `${b.dir}/${S.photoFile}`, data: new Uint8Array(await S.photoBlob.arrayBuffer()) });
+  if (S.model3d) files.push({ name: `${b.dir}/model3d.json`, data: new TextEncoder().encode(S.model3d) });
+  const url = URL.createObjectURL(new Blob([makeZip(files)], { type: 'application/zip' })), a = document.createElement('a');
+  a.href = url; a.download = b.id + '.zip'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+window.__ed = { S, process, render, loadFile, buildModel, checkState };       // для автотестов
+render();
+</script>
+</body>
+</html>

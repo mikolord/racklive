@@ -59,7 +59,7 @@ def bust_cache():
     srv = open(os.path.join(ROOT, 'rackd', 'server.py'), encoding='utf-8').read()
     ver = re.search(r"VERSION = '([^']+)'", srv).group(1)
     changed = []
-    for name in ('index.html', 'frank.html', 'speed.html', 'terminal.html', 'cards.html'):
+    for name in ('index.html', 'frank.html', 'speed.html', 'terminal.html', 'cards.html', 'plan.html'):
         p = os.path.join(WEB, name)
         html = open(p, encoding='utf-8').read()
         new = re.sub(r'(href="/?styles\.css)(\?v=[^"]*)?"', rf'\1?v={ver}"', html)

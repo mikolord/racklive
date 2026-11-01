@@ -1,0 +1,17 @@
+{
+  "id": "/modeler",
+  "name": "Создать модель",
+  "short_name": "Модель",
+  "description": "Фото устройства, порты и границы приближения — и публикация в магазин моделей Rack Live",
+  "start_url": "/modeler",
+  "scope": "/modeler",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    { "src": "/look-test/modeler.svg?v=2", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/look-test/modeler-192.png?v=2", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/look-test/modeler-512.png?v=2", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/look-test/modeler-512.png?v=2", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -459,10 +459,10 @@ function ModelPane({ item }) {
 }
 
 function AppearanceModal({ item, onClose }) {
-  const [tab, setTab] = useState(() => new URLSearchParams(location.search).get('look') === 'photo' ? 'photo' : 'model');
+  const [tab, setTab] = useState(() => { const l = new URLSearchParams(location.search).get('look'); return l === 'photo' ? 'photo' : l === 'store' ? 'store' : 'model'; });
   return <Modal title={'Вид · ' + item.name} onClose={onClose} wide>
-    <Seg value={tab} onChange={setTab} options={[{ value: 'model', label: '3D-модель' }, { value: 'photo', label: 'Фото' }]} />
-    <div style={{ marginTop: 12 }}>{tab === 'model' ? <ModelPane item={item} /> : <PhotoEditor item={item} onClose={onClose} pane />}</div>
+    <Seg value={tab} onChange={setTab} options={[{ value: 'model', label: '3D-модель' }, { value: 'photo', label: 'Фото' }, { value: 'store', label: 'Из магазина' }]} />
+    <div style={{ marginTop: 12 }}>{tab === 'model' ? <ModelPane item={item} /> : tab === 'store' ? <StorePane item={item} onClose={onClose} /> : <PhotoEditor item={item} onClose={onClose} pane />}</div>
     <div className="dim3" style={{ fontSize: 12, marginTop: 12 }}>Если загружено фото, карточка показывает его; иначе — выбранную 3D-модель.</div>
   </Modal>;
 }
@@ -474,11 +474,12 @@ function PhotoPorts({ url, spots, sel, onPick, zoom }) {
   const Z = zz ? clampN(Math.min(1 / zz.w, 1 / zz.h), 1, 6) : 1;
   return <div className={'ph-stage' + (zoomed ? ' zoomed' : '')}>
     {zz ? <div className="m3-tools"><button type="button" className={'m3-tool zoom' + (zoomed ? ' pri' : '')} onClick={() => setZoomed(!zoomed)}><Icon name={zoomed ? 'x' : 'search'} size={15} />{zoomed ? 'Отдалить' : 'Порты крупно'}</button></div> : null}
-    <div className="ph-wrap" style={{ transform: zoomed && zz ? `scale(${Z}) translate(${(.5 - zz.x - zz.w / 2) * 100}%, ${(.5 - zz.y - zz.h / 2) * 100}%)` : 'none' }}>
+    <div className="ph-zoom" style={{ transform: zoomed && zz ? `scale(${Z}) translate(${(.5 - zz.x - zz.w / 2) * 100}%, ${(.5 - zz.y - zz.h / 2) * 100}%)` : 'none' }}>
+    <div className="ph-wrap">
     <img src={url} alt="" draggable="false" />
     {spots.map(s => <button key={s.n + ':' + s.x} type="button" className={'ph-spot' + (sel === s.n ? ' sel' : '')} aria-label={'Порт ' + s.n} onClick={() => onPick(s.n)}
       style={{ left: (s.x - s.w / 2) * 100 + '%', top: (s.y - s.h / 2) * 100 + '%', width: s.w * 100 + '%', height: s.h * 100 + '%' }} />)}
-  </div></div>;
+  </div></div></div>;
 }
 
 /* cable length from the last saved cable test (port.cable) — nothing is measured here */

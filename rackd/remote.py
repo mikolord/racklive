@@ -125,7 +125,8 @@ def apply_script(ip, hub_pub, ep_ip, port, domain, allowed, alt=''):
               "uci set firewall.rl_wgping.proto=icmp; uci set firewall.rl_wgping.icmp_type=echo-request; uci set firewall.rl_wgping.target=ACCEPT",
               'uci commit firewall',
               "cat > /usr/bin/rl-wg-watch <<'RLWATCH'", WATCH.rstrip('\n'), 'RLWATCH', 'chmod 755 /usr/bin/rl-wg-watch',
-              "sed -i '/rl-wg-watch/d' /etc/crontabs/root 2>/dev/null; echo '* * * * * /usr/bin/rl-wg-watch' >> /etc/crontabs/root",
+              # a fresh OpenWrt has no root crontab: under «set -e» sed on a missing file killed the whole script with code 1 before the tunnel came up
+              "mkdir -p /etc/crontabs; touch /etc/crontabs/root; sed -i '/rl-wg-watch/d' /etc/crontabs/root; echo '* * * * * /usr/bin/rl-wg-watch' >> /etc/crontabs/root",
               '/etc/init.d/cron enable >/dev/null 2>&1 || true', '/etc/init.d/cron restart >/dev/null 2>&1 || true',
               'set +e', 'date +%s > /tmp/rl-wg-up', '/etc/init.d/network reload', 'sleep 3', 'ifup rl_wg', 'sleep 2',
               # WireGuard was just installed: the network service learns a new connection type only when it starts — restart it once (Wi-Fi blinks for a few seconds)

@@ -73,9 +73,15 @@ def who(devices, states, ip):
             if c.get('ip') != ip:
                 continue
             info.update({k: c.get(k) for k in ('name', 'mac', 'segment', 'rssi', 'rate', 'band') if c.get(k) not in (None, '')})
+            info['routerId'] = did
             ap = c.get('ap')
             if ap:
                 info['wifi'] = True
+                info['apId'] = f'{did}:{ap}'
+                observed = st.get('updated')
+                age = max(0, time.time() - observed) if isinstance(observed, (int, float)) and observed > 0 else None
+                info.update(signalObservedAt=observed, signalAge=round(age, 1) if age is not None else None,
+                            signalFresh=age is not None and age <= 20 and c.get('online') is not False and st.get('status') != 'offline')
                 router = (by_id.get(did) or {}).get('name') or 'Роутер'
                 info['apName'] = router if ap == 'self' else next((ch.get('name') for ch in st.get('children') or [] if ch.get('key') == ap), ap)
             break
