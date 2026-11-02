@@ -9,7 +9,7 @@ RUN apk add --no-cache chromium font-noto
 RUN apk add --no-cache chromium-chromedriver
 # Speedtest CLI by Ookla for the scheduled internet speed test (optional: without it Rack Live measures via Cloudflare)
 RUN case "$(uname -m)" in x86_64) a=x86_64;; aarch64) a=aarch64;; armv7l) a=armhf;; *) a="";; esac; \
-    [ -z "$a" ] || wget -qO- "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$a.tgz" | tar xz -C /usr/local/bin speedtest || true
+    [ -z "$a" ] || wget -T 20 -qO- "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$a.tgz" | tar xz -C /usr/local/bin speedtest || true
 WORKDIR /app
 COPY rackd ./rackd
 COPY web/index.html web/theme-defaults.json web/styles.css web/app.js web/agent.py web/icon.svg web/icon-graphite.svg web/icon-net.svg web/icon-512.png web/icon-192.png web/apple-touch-icon.png web/manifest.json web/frank.html web/frank-manifest.json web/frank-icon.svg web/frank-icon-graphite.svg web/frank-icon-net.svg web/frank-icon-512.png web/frank-icon-192.png web/frank-apple-touch-icon.png web/speed.html web/speed-manifest.json web/speed-icon.svg web/speed-icon-graphite.svg web/speed-icon-net.svg web/speed-icon-512.png web/speed-icon-192.png web/speed-apple-touch-icon.png web/scan.html web/cards.html web/cards-manifest.json web/cards-icon.svg web/cards-icon-512.png web/cards-icon-192.png web/cards-apple-touch-icon.png web/terminal.html web/terminal-manifest.json web/terminal-icon.svg web/terminal-icon-512.png web/terminal-icon-192.png web/terminal-apple-touch-icon.png web/modeler.html web/modeler-manifest.json web/modeler-manifest-test.json web/modeler-icon.svg web/modeler-icon-512.png web/modeler-icon-192.png web/modeler-apple-touch-icon.png ./web/

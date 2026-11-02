@@ -1044,7 +1044,7 @@ def main():
                 for mf in ('manifest.json', 'frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'cards-manifest.json', 'plan-manifest.json'):
                     mj = json.loads(urllib.request.urlopen(base + '/' + mf + '?skin=test', timeout=10).read())
                     own = mf not in ('manifest.json', 'cards-manifest.json')           # since 2.42.34 Rack Live and the Scanner keep their original icons in every look; the other apps follow the look
-                    ok_ic = ok_ic and all((('/look-test/' in i['src']) == own) and urllib.request.urlopen(base + i['src'], timeout=10).status == 200 for i in mj['icons'])
+                    ok_ic = ok_ic and all((('/look-test/' in i['src']) == own) and urllib.request.urlopen(base + '/' + i['src'].lstrip('/'), timeout=10).status == 200 for i in mj['icons'])
                 co = dom('/frank?skin=test', 600, 900)
                 check('оформление Test: свои значки приложений (манифесты, «Домой», вкладка)', ok_ic and '/look-test/frank-180.png' in co and 'frank-manifest.json?skin=test' in co)
                 co = dom('/?skin=test&section=apps#settings', 1300, 900)

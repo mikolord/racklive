@@ -75,6 +75,7 @@ function RackUnit({ unit, dev, rack, edit, onClick, onPointerDown, dragging, swa
     return <div data-cord-unit={unit.id} className={['unit', 'shelf-multi', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
       style={{ top: top + 2, height: h, cursor: edit ? 'grab' : 'pointer' }} onClick={edit ? onClick : undefined} onPointerDown={onPointerDown}>
       <div className="strip" style={{ background: unit.color || '#0a84ff' }} />
+      {edit ? <div className="unit-grip" title="Потяните, чтобы переместить">⠿</div> : null}
       {many.map(id => { const d = data.devices.find(x => x.id === id); if (!d) return null; const st = (d.state || {}).status;
         return <div key={id} data-cord-device={id} className="shelf-cell" onClick={e => { if (edit) return; e.stopPropagation(); openDevice(d); }}>
           <Icon name={d.kind} size={14} color="currentColor" />{st ? <span className={'dot ' + st} /> : null}<span className="ellipsis">{d.name}</span>{cords ? <Leds ports={rackCordPorts(rack, data, unit, id, (d.state || {}).ports)} min={1} all /> : null}</div>; })}
@@ -88,6 +89,7 @@ function RackUnit({ unit, dev, rack, edit, onClick, onPointerDown, dragging, swa
   return <div data-cord-unit={unit.id} className={['unit', PASSIVE.includes(unit.type) ? 'passive' : '', unit.type === 'blank' ? 'blank' : '', dragging ? 'dragging' : '', swap ? 'swap' : ''].join(' ')}
     style={{ top: top + 2, height: h, cursor: edit ? 'grab' : 'pointer' }} onClick={onClick} onPointerDown={onPointerDown}>
     <div className="strip" style={{ background: unit.color || '#0a84ff' }} />
+    {edit ? <div className="unit-grip" title="Потяните, чтобы переместить">⠿</div> : null}
     {unit.type !== 'blank' ? <div className="uicon"><Icon name={kind} size={16} color="currentColor" /></div> : null}
     <div className="grow" style={{ minWidth: 0 }}>
       <div className="row" style={{ gap: 7 }}>{st ? <span className={'dot ' + st} /> : null}<span className="uname ellipsis">{unit.name}</span></div>
@@ -157,20 +159,32 @@ function RackView({ placeId, embedded } = {}) {          // embedded: one place 
 
   const startDrag = (u, e) => {
     if (!edit) return;
+    // finger: grab only by the handle on the right (the rest of the row still scrolls the page)
+    if (e.pointerType === 'touch' && !(e.target.closest && e.target.closest('.unit-grip'))) return;
     e.preventDefault();
-    const rect = slotsRef.current.getBoundingClientRect();
-    const offset = Math.floor((e.clientY - rect.top) / U_PX) + 1 - u.uStart;
-    let moved = false;
-    const move = ev => { moved = true; const slot = Math.floor((ev.clientY - rect.top) / U_PX) + 1 - offset; setDrag({ id: u.id, slot }); };
-    const up = ev => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-      const slot = Math.floor((ev.clientY - rect.top) / U_PX) + 1 - offset;
+    const slotAt = y => Math.floor((y - slotsRef.current.getBoundingClientRect().top) / U_PX) + 1 - offset;
+    const offset = Math.floor((e.clientY - slotsRef.current.getBoundingClientRect().top) / U_PX) + 1 - u.uStart;
+    let moved = false, y = e.clientY, raf = 0;
+    const sy = e.clientY;
+    const tick = () => {                       // near the screen edge: scroll the page so a tall rack can be crossed in one drag
+      const edgeZone = 80, h = window.innerHeight;
+      const dy = y < edgeZone ? -Math.ceil((edgeZone - y) / 5) : y > h - edgeZone ? Math.ceil((y - (h - edgeZone)) / 5) : 0;
+      if (moved && dy) { window.scrollBy(0, dy); setDrag({ id: u.id, slot: slotAt(y) }); }
+      raf = requestAnimationFrame(tick);
+    };
+    const move = ev => { y = ev.clientY; if (!moved && Math.abs(y - sy) < 6) return; moved = true; setDrag({ id: u.id, slot: slotAt(y) }); };
+    const end = ev => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+      const slot = slotAt(ev.type === 'pointercancel' ? y : ev.clientY);
       setDrag(null);
+      if (ev.type === 'pointercancel') return;
       if (!moved) { setEditing(u); return; }
       const plan = planMove(u, slot);
       if (plan) saveRack({ ...rack, units: rack.units.map(x => plan[x.id] ? { ...x, uStart: plan[x.id] } : x) });
     };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+    raf = requestAnimationFrame(tick);
   };
   // move into free space, or swap with the one unit sitting where it is dropped → {unitId: newStart}
   const planMove = (u, slot) => {

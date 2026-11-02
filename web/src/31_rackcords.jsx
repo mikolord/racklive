@@ -47,30 +47,41 @@ function roundedCord(points, radius = 8) {
   }
   return path + `L${p[p.length - 1][0]},${p[p.length - 1][1]}`;
 }
-function cordRoute(a, b, organizers, lane, k = 1) {
+function cordRoute(a, b, organizers, lane, k = 1, slot = 0) {
   const lo = Math.min(a.y, b.y), hi = Math.max(a.y, b.y);
-  const between = organizers.filter(o => o.y > lo + 2 * k && o.y < hi - 2 * k);
   if (organizers.length) {
-    const candidates = between.length ? between : organizers;
-    const near = p => candidates.reduce((best, o) => Math.abs(o.y - p.y) < Math.abs(best.y - p.y) ? o : best);
-    const oa = near(a), ob = near(b);
+    // Like a real rack: each end drops into the organizer next to its port (above or below),
+    // runs inside it to the side, and organizers are joined by one continuous run down the
+    // vertical cable channel beside the rails. Nothing is left floating on its own.
+    const near = p => organizers.reduce((best, o) => Math.abs(o.y - p.y) < Math.abs(best.y - p.y) ? o : best);
+    let oa = near(a), ob = near(b);
+    // same organizer reachable by both ends without a long detour → keep the cord inside it
+    const shared = organizers.filter(o => o.y > lo - 80 * k && o.y < hi + 80 * k && Math.abs(o.y - a.y) <= 80 * k && Math.abs(o.y - b.y) <= 80 * k);
+    if (oa !== ob && shared.length) oa = ob = shared.reduce((best, o) => Math.abs(o.y - (a.y + b.y) / 2) < Math.abs(best.y - (a.y + b.y) / 2) ? o : best);
+    const right = lane > (oa.x + oa.width / 2);
+    const sideX = o => right ? o.x + o.width : o.x;
+    const runY = o => o.y + (slot % 5 - 2) * 1.6 * k;           // parallel cords don't sit on one line
     const into = (p, o) => {
-      // Terminate at the organizer's lip: its whole face stays above the cable,
-      // including the transparent click target, without covering the panel itself.
-      const edgeY = o.top == null ? o.y : p.y < o.y ? o.top : o.top + o.height;
-      const edgeX = o.x == null ? p.x : lane > o.x + o.width / 2 ? o.x + o.width : o.x;
-      const direction = Math.sign(edgeY - p.y), span = Math.abs(edgeY - p.y);
-      if (Math.abs(p.y - o.y) <= 80 * k) {
-        const bow = Math.sign(lane - p.x) * Math.min(8 * k, span * .2);
-        const x = o.x == null ? p.x + bow : Math.max(o.x + 2 * k, Math.min(o.x + o.width - 2 * k, p.x + bow));
-        return `M${p.x},${p.y}C${p.x},${p.y + direction * span * .4} ${x},${edgeY - direction * span * .3} ${x},${edgeY}`;
+      const far = Math.abs(p.y - o.y) > 80 * k;
+      if (far) {                                                  // no organizer close by: straight down/up the channel
+        const lead = Math.sign(o.y - p.y) * 14 * k;
+        return { path: [[p.x, p.y], [p.x, p.y + lead], [lane, p.y + lead]], viaLane: true };
       }
-      const lead = Math.sign(o.y - p.y) * 24 * k;
-      return roundedCord([[p.x, p.y], [p.x, p.y + lead], [lane, p.y + lead], [lane, o.y], [edgeX, o.y]], 22 * k);
+      // Drop into the organizer's lip: its face stays above the cable, so the cord disappears into it.
+      const edgeY = p.y < o.y ? o.top : o.top + o.height;
+      const direction = Math.sign(edgeY - p.y) || 1, span = Math.abs(edgeY - p.y);
+      const bow = Math.sign(lane - p.x) * Math.min(8 * k, span * .2);
+      const x = Math.max(o.x + 2 * k, Math.min(o.x + o.width - 2 * k, p.x + bow));
+      return { d: `M${p.x},${p.y}C${p.x},${p.y + direction * span * .4} ${x},${edgeY - direction * span * .3} ${x},${edgeY}`, viaLane: false };
     };
-    const paths = [into(a, oa), into(b, ob)];
-    if (oa !== ob) paths.push(roundedCord([[lane, oa.y], [lane, ob.y]], 22 * k));
-    return paths.filter(Boolean);
+    const ea = into(a, oa), eb = into(b, ob), paths = [];
+    if (ea.d) paths.push(ea.d); if (eb.d) paths.push(eb.d);
+    if (oa === ob && !ea.viaLane && !eb.viaLane) return paths;      // both ends in one organizer: hidden inside it
+    // the visible run: (organizer side | far port) → channel → (organizer side | far port)
+    const startPts = ea.viaLane ? ea.path : [[sideX(oa), runY(oa)], [lane, runY(oa)]];
+    const endPts = eb.viaLane ? [...eb.path].reverse() : [[lane, runY(ob)], [sideX(ob), runY(ob)]];
+    paths.push(roundedCord([...startPts, ...endPts], 10 * k));
+    return paths;
   }
   const direction = b.y >= a.y ? 1 : -1, turn = Math.min(24 * k, Math.abs(b.y - a.y) / 3 || 24 * k);
   return [roundedCord([[a.x, a.y], [a.x, a.y + direction * turn], [lane, a.y + direction * turn], [lane, b.y - direction * turn], [b.x, b.y - direction * turn], [b.x, b.y]], 22 * k)];
@@ -119,8 +130,10 @@ function RackCordOverlay({ root, rack, data, side, enabled, width, height, scale
   return <svg className="rack-cords" viewBox={`0 0 ${w} ${h}`} width={w} height={h} aria-label="Патч-корды шкафа">
     {cords.map((c, i) => {
       const a = layout.points[cordEndKey(c.a)], b = layout.points[cordEndKey(c.b)]; if (!a || !b) return null;
-      const lane = cordLane(w, i, (a.x + b.x) / 2 > w / 2, scale);
-      const paths = cordRoute(a, b, organizers, lane, scale), title = cordEndLabel(c.a, rack, data) + ' ↔ ' + cordEndLabel(c.b, rack, data);
+      const right = (a.x + b.x) / 2 > w / 2, o0 = organizers[0];
+      // with organizers the channel hugs their side (inside the rails), otherwise the old outer lane
+      const lane = o0 ? (right ? o0.x + o0.width + (5 + i % 5 * 2.2) * scale : o0.x - (5 + i % 5 * 2.2) * scale) : cordLane(w, i, right, scale);
+      const paths = cordRoute(a, b, organizers, lane, scale, i), title = cordEndLabel(c.a, rack, data) + ' ↔ ' + cordEndLabel(c.b, rack, data);
       return <g key={c.key} className="rack-cord" style={{ '--cord': c.color }}>
         <title>{title}</title>
         {paths.map((d, j) => <g key={j}><path d={d} className="cord-shadow" strokeWidth={6 * scale} /><path d={d} className="cord-body" strokeWidth={3.8 * scale} /><path d={d} className="cord-light" strokeWidth={.9 * scale} />
