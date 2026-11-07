@@ -131,7 +131,7 @@ function TerminalApp() {
       <b>Терминал</b>
       <div className="grow" />
       {devs.length ? <select className="input" style={{ maxWidth: 240 }} value={dev ? dev.id : ''} onChange={e => pick(e.target.value)}>
-        {devs.map(d => <option key={d.id} value={d.id}>{d.name} · {d.user}@{d.host}</option>)}</select> : null}
+        {devs.map(d => <option key={d.id} value={d.id}>{nameNoFlag(d.name)} · {d.user}@{d.host}</option>)}</select> : null}
       {dev ? <Btn size="sm" onClick={() => openInTermius(dev, () => { })}>Termius</Btn> : null}
       <Btn size="sm" onClick={logout}>Выйти</Btn>
     </div>
@@ -140,7 +140,7 @@ function TerminalApp() {
       : !info.supported ? <div className="cam-warn">{info.why || 'Терминал на этом сервере недоступен: он работает на Linux, Synology, OpenWrt и Entware (не на Windows и не в демо).'}</div>
       : !dev ? <div className="cam-warn">Нет устройств, к которым можно открыть терминал. Добавьте в Rack Live сервер, NAS Synology, OpenWrt или компьютер Windows с SSH и сохранённым логином.</div>
       : on ? <TerminalView key={dev.id + ':' + k} extra={'&device=' + encodeURIComponent(dev.id)} onClose={() => setOn(false)} />
-        : <div className="row" style={{ gap: 8, marginTop: 10 }}><Btn kind="primary" icon="terminal" onClick={() => setOn(true)}>Подключиться к «{dev.name}»</Btn></div>}
+        : <div className="row" style={{ gap: 8, marginTop: 10 }}><Btn kind="primary" icon="terminal" onClick={() => setOn(true)}>Подключиться к «{nameNoFlag(dev.name)}»</Btn></div>}
   </div>;
 }
 

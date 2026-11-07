@@ -41,6 +41,10 @@ function useTheme() {
         if (pref === 'auto') { m.setAttribute('media', m === document.querySelectorAll('meta[name=theme-color]')[0] ? '(prefers-color-scheme: light)' : '(prefers-color-scheme: dark)');
           m.setAttribute('content', m.getAttribute('media').includes('light') ? '#f2f2f7' : '#000000'); }
         else { m.removeAttribute('media'); m.setAttribute('content', t === 'dark' ? '#000000' : '#f2f2f7'); }
+        if (FRANK) {                                      // /frank paints the whole screen with --bg of the current look: the status bar must be exactly that, not a fixed black
+          const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+          if (bg) { m.removeAttribute('media'); m.setAttribute('content', bg); }
+        }
       });
     };
     apply(); mq.addEventListener('change', apply); return () => mq.removeEventListener('change', apply);
@@ -187,7 +191,7 @@ function App() {
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
   const view = cur;          // what is shown: subtitle and hint follow it
   const subtitle = {
-    rack: `${data.devices.filter(d => (d.state || {}).status === 'online').length} из ${data.devices.length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,
+    rack: `${data.devices.filter(d => !d.healthSkip && (d.state || {}).status === 'online').length} из ${data.devices.filter(d => !d.healthSkip).length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,       // «без слежки» не считаются
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
     plan: 'План помещений: дома, этажи, двор — где физически стоит оборудование',
     events: 'Сбои, восстановления и действия администратора',

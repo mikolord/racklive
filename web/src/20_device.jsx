@@ -20,9 +20,9 @@ function useAction() {
 function DeviceHead({ device, drv }) {
   const st = device.state || {}; const s = st.summary || {};
   return <div className="row" style={{ gap: 12 }}>
-    <KindIcon kind={device.kind || drv?.kind} size={46} round={13} />
+    <KindIcon kind={device.kind || drv?.kind} name={device.name} size={46} round={13} />
     <div className="grow">
-      <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -.4 }} className="ellipsis">{device.name}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -.4 }} className="ellipsis">{nameNoFlag(device.name, device.kind || drv?.kind)}</div>
       <div className="row wrap" style={{ gap: 6, marginTop: 3 }}>
         <StatusBadge status={st.status} />
         {device.location === 'remote' ? <span className="badge info"><Icon name="globe" size={12} />Удалённое</span> : null}
@@ -232,8 +232,8 @@ function UpsCard({ ups }) {
     <div className="list">{ups.connected.map((c, i) => { const d = data.devices.find(x => x.id === c.id);
       return <React.Fragment key={c.id || c.unit || 'r' + i}><div className="li" style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && openDevice(d)}>
         {c.outlet ? <span className="pt-out">{c.outlet}</span> : null}
-        <KindIcon kind={c.kind || 'other'} size={30} round={8} />
-        <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{c.status ? <span className={'dot ' + c.status} /> : null}<b style={{ fontSize: 14 }} className="ellipsis">{c.name}</b></div>
+        <KindIcon kind={c.kind || 'other'} name={c.name} size={30} round={8} />
+        <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{c.status ? <span className={'dot ' + c.status} /> : null}<b style={{ fontSize: 14 }} className="ellipsis">{nameNoFlag(c.name)}</b></div>
           <div className="dim3" style={{ fontSize: 12, color: c.missing ? 'var(--orange)' : undefined }}>{c.src}</div></div>
         <b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
         {c.children && c.children.length ? <PowerTree items={c.children} depth={1} /> : null}</React.Fragment>; })}
@@ -311,9 +311,13 @@ function DeviceVisual({ device, sel, onSel, compact }) {
   const pick = n => onSel && onSel(n);
   const body = purl ? <PhotoPorts url={purl} spots={ent.spots || []} sel={sel} onPick={pick} zoom={ent.pzoom} />
     : own || auto ? <Model3D model={own ? own.model : auto} ports={ports} sel={sel} onPick={pick} view={ent.view} manual={!!own && ent.portsMode === 'manual'} marks={ent.mports} zoom={ent.zoom} /> : null;
-  if (!body && !admin) return null;
-  return <div className={'vt-inline' + (body ? '' : ' empty')}>
-    {body || <div className="dim" style={{ padding: '16px 18px', fontSize: 13 }}>Нет фото и 3D-модели — карточка показывает значок.</div>}
+  if (!body) {                                          // no photo and no 3D model: no empty panel, only a button to add one (admin)
+    if (!admin || !item) return null;
+    return <div className="vt-add"><button type="button" className="m3-tool" onClick={() => setLook(true)}><Icon name="plus" size={14} />Добавить вид</button>
+      {look ? <AppearanceModal item={item} onClose={() => setLook(false)} /> : null}</div>;
+  }
+  return <div className="vt-inline">
+    {body}
     {admin && item ? <button type="button" className="m3-tool vt-look" onClick={() => setLook(true)}><Icon name="box" size={14} />Вид</button> : null}
     {look ? <AppearanceModal item={item} onClose={() => setLook(false)} /> : null}
   </div>;
@@ -373,8 +377,8 @@ function PortsTab({ device, drv, initialPort }) {
       {(p.peers || []).length ? <div style={{ marginTop: 12 }}>
         <div className="card-title" style={{ marginBottom: 4 }}>Подключено ({p.peers.length})</div>
         <div className="list">{p.peers.slice(0, 40).map(x => <div className="li" key={x.mac}>
-          <KindIcon kind={x.kind || 'other'} size={30} round={8} />
-          <div className="grow"><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{x.name || 'Неизвестное устройство'}</div>
+          <KindIcon kind={x.kind || 'other'} name={x.name} size={30} round={8} />
+          <div className="grow"><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(x.name) || 'Неизвестное устройство'}</div>
             <div className="dim mono" style={{ fontSize: 12 }}>{[x.ip, x.mac].filter(Boolean).join(' · ')}</div></div>
           {x.vlan ? <span className="badge" style={{ color: vlanColor(x.vlan, vlans) }}>{vlanName(x.vlan, vlans)}</span> : null}
         </div>)}</div></div> : null}
@@ -404,8 +408,8 @@ function ChildrenTab({ device, drv }) {
   const { admin } = useApp(); const runAction = useAction();
   const act = (drv?.actions || []).find(a => a.scope === 'child');
   return <div className="col" style={{ gap: 10 }}>{device.state.children.map(c => <Card key={c.key}>
-    <div className="row"><KindIcon kind="ap" size={40} /><div className="grow">
-      <div style={{ fontWeight: 700 }}>{c.name}</div><div className="dim mono" style={{ fontSize: 12.5 }}>{c.model} · {c.ip}</div></div>
+    <div className="row"><KindIcon kind="ap" name={c.name} size={40} /><div className="grow">
+      <div style={{ fontWeight: 700 }}>{nameNoFlag(c.name)}</div><div className="dim mono" style={{ fontSize: 12.5 }}>{c.model} · {c.ip}</div></div>
       <StatusBadge status={c.status} /></div>
     <div className="stats" style={{ marginTop: 12 }}><Stat k="Клиенты" v={c.clients} /><Stat k="Аптайм" v={fmt.uptime(c.uptime)} />
       <Stat k="Uplink" v={c.uplink ? fmt.speedShort(+c.uplink) : '—'} level={+c.uplink && +c.uplink < 1000 ? 'warn' : ''} /><Stat k="Прошивка" v={c.fw} /></div>
@@ -429,8 +433,8 @@ function ClientsTab({ clients, children, device, drv }) {
       {segs.map(s => <button key={s} className={'chip' + (seg === s ? ' on' : '')} onClick={() => setSeg(s)}>{s} · {clients.filter(c => (c.segment || '—') === s).length}</button>)}</div>
     {canEdit ? <div className="dim3" style={{ fontSize: 12.5 }}>Нажмите на устройство — имя, постоянный адрес, скорость и политика на роутере.</div> : null}
     <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{list.map(c => <div className="li" key={c.mac} style={canEdit ? { cursor: 'pointer' } : null} onClick={() => canEdit && setEdit(c.mac)}>
-      <KindIcon kind={c.kind} size={34} round={9} />
-      <div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{c.name || c.mac}</div>
+      <KindIcon kind={c.kind} name={c.name} size={34} round={9} />
+      <div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(c.name) || c.mac}</div>
         <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{c.ip} · {c.mac}</div>
         {c.limit || c.policy || c.access === 'deny' || (c.registered === false) ? <div className="row wrap" style={{ gap: 4, marginTop: 2 }}>
           {c.registered === false ? <span className="role-badge none">не зарегистрировано</span> : null}

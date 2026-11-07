@@ -10,7 +10,7 @@ function StatsWidget() {
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
   const poe = devices.flatMap(d => (d.state && d.state.ports) || []).reduce((a, p) => a + (p.poeW || 0), 0);
   return <div className="stats">
-    <Stat k="Устройства" v={`${devices.filter(d => d.state && d.state.status === 'online').length}/${devices.length}`} />
+    <Stat k="Устройства" v={`${devices.filter(d => !d.healthSkip && d.state && d.state.status === 'online').length}/${devices.filter(d => !d.healthSkip).length}`} />
     <Stat k="Проблемы" v={problems.length} level={problems.length ? 'warn' : ''} />
     <Stat k="Клиенты" v={clients} />
     <Stat k="PoE" v={poe ? poe.toFixed(1) : 0} unit="Вт" />
@@ -97,15 +97,15 @@ function UpsWidget() {
   return <div className="upsw-list">{list.map(d => { const u = d.state.ups; const tone = upsTone(u);
     const feeds = [...u.connected].sort((a, b) => b.w - a.w); const shown = feeds.slice(0, 4);
     return <div key={d.id} className={'card upsw ups-' + tone} onClick={() => openDevice(d)}>
-      <div className="row" style={{ gap: 8 }}><KindIcon kind="ups" size={28} round={8} /><b className="ellipsis grow" style={{ fontSize: 15 }}>{d.name}</b>
+      <div className="row" style={{ gap: 8 }}><KindIcon kind="ups" name={nameNoFlag(d.name)} size={28} round={8} /><b className="ellipsis grow" style={{ fontSize: 15 }}>{nameNoFlag(d.name)}</b>
         <span className={'badge ' + (tone === 'green' ? 'online' : tone === 'red' ? 'offline' : 'warning')}>{u.onBattery ? 'От батареи' : u.estimated ? 'Расчёт' : 'От сети'}</span></div>
       <div className="upsw-main"><BatteryArt u={u} />
         <div style={{ minWidth: 0 }}><div className="ups-big">{u.runtimeEstimated ? '≈ ' : ''}{fmtMinShort(u.runtimeMin)}</div>
           <div className="dim" style={{ fontSize: 12.5 }}>хватит при отключении света{u.charge != null ? ` · заряд ${Math.round(u.charge)}%` : ''}</div></div></div>
       <div className="dim3" style={{ fontSize: 11.5, margin: '2px 0 4px' }}>Нагрузка {u.loadW} Вт{u.nominalW ? ` из ${Math.round(u.nominalW)} Вт · ${u.loadPct}%` : ''}</div>
       {u.loadPct != null ? <Bar value={u.loadPct} warnAt={70} badAt={85} /> : null}
-      {shown.length ? <div className="upsw-feeds">{shown.map((c, i) => <span key={i} className="upsw-chip" title={c.name}>
-        <Icon name={c.kind === 'pdu' ? 'bolt' : c.kind || 'other'} size={13} /><span className="ellipsis">{c.name}</span><b>{c.w} Вт</b></span>)}
+      {shown.length ? <div className="upsw-feeds">{shown.map((c, i) => <span key={i} className="upsw-chip" title={nameNoFlag(c.name)}>
+        <Icon name={c.kind === 'pdu' ? 'bolt' : c.kind || 'other'} size={13} /><span className="ellipsis">{nameNoFlag(c.name)}</span><b>{c.w} Вт</b></span>)}
         {feeds.length > shown.length ? <span className="upsw-chip more">+{feeds.length - shown.length}</span> : null}</div> : <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Что подключено — не указано: откройте ИБП и заполните</div>}
       {u.supply ? <div className="dim3" style={{ fontSize: 11.5, marginTop: 8 }}>Питается от: {u.supply.name}{u.supply.outlet ? `, розетка ${u.supply.outlet}` : ''}</div> : null}
     </div>; })}</div>;
@@ -122,7 +122,7 @@ const WIDGETS = {
   rack: { title: 'Шкафы и места', icon: 'rack', color: '#5e5ce6', size: 'M', sizes: ['S', 'M'], once: true, desc: 'Серверный шкаф, щитки и комнаты с оборудованием; квадратом — кнопка, открывает сам шкаф',
     flat: true, render: () => <RackView />, tile: d => ({ v: (d.racks || []).length || '', s: 'шкафы и места' }) },
   stats: { title: 'Сводка', icon: 'pulse', color: '#0a84ff', size: 'M', sizes: ALL, once: true, desc: 'Устройства в сети, проблемы, клиенты, PoE', render: () => <StatsWidget />,
-    tile: d => ({ v: `${d.devices.filter(x => (x.state || {}).status === 'online').length}/${d.devices.length}`, s: 'устройств в сети' }) },
+    tile: d => ({ v: `${d.devices.filter(x => !x.healthSkip && (x.state || {}).status === 'online').length}/${d.devices.filter(x => !x.healthSkip).length}`, s: 'устройств в сети' }) },
   state: { title: 'Состояние сети', icon: 'shield', color: '#30d158', size: 'M', sizes: ALL, once: true, desc: 'Здоровье и безопасность сети', render: () => <StateCard />,
     tile: d => ({ v: `${d.health ? d.health.score : '—'} · ${d.security ? d.security.score : '—'}`, s: 'здоровье · защита', bad: d.security && d.security.counts.bad }) },
   internet: { title: 'Интернет', icon: 'globe', color: '#64d2ff', size: 'M', sizes: ALL, once: true, desc: 'Скорость интернета по расписанию', render: () => <InternetCard />,
@@ -476,17 +476,17 @@ function MiniRack() {        // «Контроллер»: the same outline rack 
 function MiniKinds({ devices }) {       // device icons, each tinted by its status
   const more = devices.length > 6; const list = devices.slice(0, more ? 5 : 6);     // two rows of three
   return <div className="mini-kinds">{list.map(d => { const c = ST_COLOR((d.state || {}).status);
-    return <span key={d.id} style={{ background: `color-mix(in srgb, ${c} 22%, transparent)`, color: c }} title={d.name}><Icon name={d.kind} size={18} stroke={2.2} /></span>; })}
+    return <span key={d.id} style={{ background: `color-mix(in srgb, ${c} 22%, transparent)`, color: c }} title={nameNoFlag(d.name)}><Icon name={d.kind} size={18} stroke={2.2} /></span>; })}
     {more ? <span className="more">+{devices.length - 5}</span> : null}</div>;
 }
 
 function MiniDots({ devices }) {
-  return <div className="mini-dots">{devices.slice(0, 24).map(d => <i key={d.id} style={{ background: ST_COLOR((d.state || {}).status) }} title={d.name} />)}</div>;
+  return <div className="mini-dots">{devices.slice(0, 24).map(d => <i key={d.id} style={{ background: ST_COLOR((d.state || {}).status) }} title={nameNoFlag(d.name)} />)}</div>;
 }
 
 const TILE_ART = {
-  stats: d => { const on = d.devices.filter(x => (x.state || {}).status === 'online').length;
-    return <MiniRing value={on} max={d.devices.length} color={on === d.devices.length ? 'var(--green)' : 'var(--orange)'} label={`${on}/${d.devices.length}`} />; },
+  stats: d => { const w = d.devices.filter(x => !x.healthSkip), on = w.filter(x => (x.state || {}).status === 'online').length;          // «без слежки» не считаются
+    return <MiniRing value={on} max={w.length} color={on === w.length ? 'var(--green)' : 'var(--orange)'} label={`${on}/${w.length}`} />; },
   problems: d => { const t = probTone(d);         // drawn in currentColor = the state colour (soft gradient behind, see .tone-*)
     return t === 'green' ? <svg viewBox="0 0 100 100" className="mini-svg"><circle cx="50" cy="50" r="40" fill="currentColor" opacity=".16" />
         <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" strokeWidth="5" />
@@ -512,7 +512,7 @@ const TILE_ART = {
   plan: d => <MiniPlan data={d} />,
   devices: d => <MiniKinds devices={d.devices} />,
   events: d => <div className="mini-events">{(d.events || []).slice(0, 3).map((e, i) => <div key={i}><i style={{ background: e.level === 'info' ? 'var(--accent)' : ST_COLOR(e.level) }} />
-    <span className="ellipsis">{e.name}: {e.text}</span></div>)}</div>,
+    <span className="ellipsis">{nameNoFlag(e.name)}: {e.text}</span></div>)}</div>,
   frank: () => <div className="mini-frank"><FrankEye size={120} round={0} /></div>,
   advice: d => <div className="mini-events">{((d.advice || {}).items || []).slice(0, 3).map((x, i) => <div key={i}><i style={{ background: (ADVICE_KIND[x.kind] || ADVICE_KIND.idea)[1] }} />
     <span className="ellipsis">{x.title}</span></div>)}</div>,

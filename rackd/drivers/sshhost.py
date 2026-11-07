@@ -598,12 +598,17 @@ done; wait; echo @@end'''
             raise DriverError('укажите домен')
         if meta['needsDomain'] and not domain:
             raise DriverError(f"для {meta['title']} нужен домен")
-        inbounds = bool(params.get('inbounds')) and bool(domain)
+        inbounds = bool(params.get('inbounds')) and (bool(domain) or pid == '3xui')     # 3x-ui without a domain: one XHTTP+TLS user on the IP certificate
         st = vps.parse_status(self._run(cfg, vps.STATUS, 40))
         if st.get('uid') != '0':
             raise DriverError('нужен вход под root')
         if st.get('rw' if pid == '3xui' else 'xui'):
             raise DriverError('на сервере уже стоит другая панель — сначала удалите её')
+        if inbounds and not domain:
+            if not st.get('ip'):
+                raise DriverError('не удалось определить внешний IP сервера — без него не создать ссылку пользователя')
+            if st['ports'].get(vps.XHTTP_PORT):
+                raise DriverError(f"порт {vps.XHTTP_PORT} уже занят ({st['ports'][vps.XHTTP_PORT]}) — освободите его или снимите «Создать пользователя»")
         if domain:
             progress(f'Проверка DNS: {domain} → {st.get("ip")}')
             recs = {l[4:].strip() for l in self._run(cfg, vps.dns_script(domain), 20).splitlines() if l.startswith('@@a ')}
@@ -617,10 +622,15 @@ done; wait; echo @@end'''
             body = stage('Установка 3x-ui', vps.xui_install(domain, user, pw, port, path), 1200)
             url = f'https://{domain}/{path}/' if domain else next((l[6:].strip().strip("'\"") for l in body.splitlines() if l.startswith('@@url ')),
                                                                      f"https://{st.get('ip')}:{port}/{path}/")
-            if inbounds:
+            if inbounds and domain:
                 body = stage('Инбаунды VLESS TCP + XHTTP и тестовый пользователь', vps.xui_inbounds(domain, user, pw, port, path, '/' + vps.rnd(12).lower()), 300)
                 links = [json.loads(l[7:]) for l in body.splitlines() if l.startswith('@@link ')]
+            elif inbounds:
+                body = stage('Инбаунд VLESS XHTTP TLS и пользователь', vps.xui_inbound_ip(st['ip'], user, pw, port, path, vps.xhttp_path()), 300)
+                links = [json.loads(l[7:]) for l in body.splitlines() if l.startswith('@@link ')]
             info = {'url': url, 'user': user, 'password': pw, 'domain': domain or None, 'links': links, 't': int(time.time())}
+            if any(l.get('selfSigned') for l in links):
+                info['note'] = 'Let\'s Encrypt не выдал сертификат на IP (обычно занят порт 80), поэтому у инбаунда самоподписанный: в клиенте должна быть включена опция «Разрешить небезопасные» (в ссылке она уже указана).'
         else:
             admin, pw, key = 'rl' + vps.rnd(8, 'abcdefghijkmnpqrstuvwxyz23456789'), vps.strong_password(32), vps.rnd(24)
             stage('Docker и панель Remnawave (скачивание образов — несколько минут)', vps.rw_install(domain, key), 1800)

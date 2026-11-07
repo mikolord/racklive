@@ -15,12 +15,44 @@ function PluginsTab({ device }) {
   return <>
     <Hint id="plugins">Дополнения, которые ставятся прямо на это устройство. Rack Live сам проверяет, что уже есть, и подсказывает, чего не хватает.
       Перед любым изменением спросит подтверждение и покажет журнал установки.</Hint>
+    {st.entwareAccess && st.entwareAccess.entware ? <EntwareAccess a={st.entwareAccess} device={device} reload={load} /> : null}
     {st.plugins.map(p => <PluginCard key={p.id} p={p} st={st} device={device} open={open === p.id} toggle={() => setOpen(open === p.id ? null : p.id)}
       reload={load} openPlugin={setOpen} />)}
   </>;
 }
 
+/* One place for the Entware login of a router: the status of every plugin and every install use it */
+function EntwareAccess({ a, device, reload }) {
+  const toast = useToast();
+  const [edit, setEdit] = useState(false);
+  const [cred, setCred] = useState({ host: a.host || '', port: a.port || 222, user: a.user || 'root', password: '' });
+  const [busy, setBusy] = useState(false);
+  const save = async () => { setBusy(true);
+    try { const r = await api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'awgmanager', op: 'ssh', ...cred } });
+      toast(r.message); setCred(c => ({ ...c, password: '' })); setEdit(false); reload(); }
+    catch (e) { toast(e.message, true); } finally { setBusy(false); } };
+  if (a.ok && !edit) return <div className="card row wrap" style={{ gap: 8 }}><Icon name="check" size={16} />
+    <span className="grow">Доступ к Entware: <span className="mono">{a.user}@{a.host || a.defaultHost}:{a.port}</span></span>
+    <Btn size="sm" onClick={() => setEdit(true)}>Изменить</Btn></div>;
+  return <div className="card awg-form">
+    <div className="card-title">Доступ к Entware по SSH</div>
+    <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>Без него Rack Live не видит, что установлено в Entware, и не может ставить плагины. Укажите один раз: доступ нужен всем плагинам этого роутера.
+      Пароль хранится на сервере Rack Live и в браузер не передаётся.</div>
+    {a.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{a.error}</div> : null}
+    <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+      <div className="grow" style={{ minWidth: 170 }}><Field label="Адрес"><input className="input" value={cred.host} placeholder={a.defaultHost} onChange={e => setCred({ ...cred, host: e.target.value })} /></Field></div>
+      <div style={{ width: 90 }}><Field label="Порт"><input className="input" value={cred.port} onChange={e => setCred({ ...cred, port: e.target.value })} /></Field></div>
+      <div style={{ width: 120 }}><Field label="Логин"><input className="input" value={cred.user} onChange={e => setCred({ ...cred, user: e.target.value })} /></Field></div>
+      <div className="grow" style={{ minWidth: 150 }}><Field label="Пароль"><input className="input" type="password" value={cred.password} placeholder={a.set ? '•••••••• (сохранён)' : ''} onChange={e => setCred({ ...cred, password: e.target.value })} autoComplete="off" /></Field></div>
+    </div>
+    <div className="row wrap"><Btn kind="primary" busy={busy} disabled={!cred.password && !a.set} onClick={save}>Проверить и сохранить</Btn>
+      {a.ok ? <Btn onClick={() => setEdit(false)}>Отмена</Btn> : null}</div>
+  </div>;
+}
+
 function PluginBadge({ p }) {
+  if (p.installed === null && p.ssh && !p.ssh.ok) return <span className="badge warning">{p.detected ? 'похоже, установлено' : 'нет доступа к Entware'}</span>;
+  if (p.kind === 'snapshot') return (p.mine || []).length ? <span className="badge online"><Icon name="check" size={12} />слепков: {p.mine.length}, последний {snapDate(p.mine[0].t)}</span> : null;
   if (p.installed) return <span className="badge online"><Icon name="check" size={12} />{p.id === 'awg' ? 'подключено' : 'установлено'}</span>;
   if (p.soon) return <span className="badge">скоро</span>;
   if (p.kind === 'guide') return <span className="badge warning">не установлено</span>;
@@ -46,6 +78,7 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.id === 'entware' ? <EntwareGuide p={p} reload={reload} /> : null}
       {p.id === 'awg' ? <AwgPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
       {p.kind === 'installer' ? <InstallerPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
+      {p.kind === 'vless' ? <VlessPlugin p={p} device={device} reload={reload} openPlugin={openPlugin} /> : null}
       {p.kind === 'modem' ? <ModemPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'meshnode' ? <MeshNodePlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'portal' ? <PortalPlugin p={p} device={device} reload={reload} /> : null}
@@ -54,6 +87,7 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.kind === 'agents' ? <AgentsPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'collector' ? <CollectorPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'community' ? <CommunityPlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'snapshot' ? <SnapshotPlugin p={p} device={device} reload={reload} /> : null}
     </div> : null}
   </div>;
 }
@@ -171,13 +205,10 @@ function AwgPlugin({ p, device, reload, openPlugin }) {
 function InstallerPlugin({ p, device, reload, openPlugin }) {
   const toast = useToast(); const confirm = useConfirm(); const { refresh } = useApp();
   const ssh = p.ssh || {};
-  const [cred, setCred] = useState({ port: ssh.port || 222, user: ssh.user || 'root', password: '' });
   const [busy, setBusy] = useState('');
   const [result, setResult] = useState(null);
   const [opts, setOpts] = useState(() => Object.fromEntries((p.options || []).map(o => [o.id, o.on])));
   const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: p.id, ...opts, ...body } });
-  const saveSsh = async () => { setBusy('ssh');
-    try { const r = await call({ op: 'ssh', ...cred }); toast(r.message); setCred(c => ({ ...c, password: '' })); reload(); } catch (e) { toast(e.message, true); } finally { setBusy(''); } };
   const run = async op => {
     const text = op === 'remove' ? `Удалить ${p.title} с роутера? Его настройки будут удалены.`
       : `Rack Live скачает официальный установщик ${p.title} (автор — ${p.author}) и запустит его в Entware. Это займёт 1–5 минут, интернет не прервётся. Продолжить?`;
@@ -193,19 +224,7 @@ function InstallerPlugin({ p, device, reload, openPlugin }) {
     <Checks checks={p.checks || []} />
     {!required.find(c => /Entware/.test(c.label)) || required.find(c => /Entware/.test(c.label)).ok ? null
       : <div className="dim" style={{ fontSize: 13 }}>Сначала установите Entware — <button type="button" className="linkbtn" onClick={() => openPlugin('entware')}>инструкция</button></div>}
-    {!ssh.ok ? <div className="awg-form">
-      <div className="card-title">Доступ к Entware по SSH</div>
-      <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>Установка идёт командами внутри Entware. Укажите пароль root, который вы задали после установки Entware
-        (по умолчанию <code>keenetic</code>). Пароль хранится на сервере Rack Live и в браузер не передаётся.</div>
-      {ssh.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{ssh.error}</div> : null}
-      <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
-        <div style={{ width: 90 }}><Field label="Порт"><input className="input" value={cred.port} onChange={e => setCred({ ...cred, port: e.target.value })} /></Field></div>
-        <div style={{ width: 120 }}><Field label="Логин"><input className="input" value={cred.user} onChange={e => setCred({ ...cred, user: e.target.value })} /></Field></div>
-        <div className="grow" style={{ minWidth: 150 }}><Field label="Пароль"><input className="input" type="password" value={cred.password} placeholder={ssh.set ? '•••••••• (сохранён)' : ''}
-          onChange={e => setCred({ ...cred, password: e.target.value })} autoComplete="off" /></Field></div>
-      </div>
-      <Btn kind="primary" busy={busy === 'ssh'} disabled={!cred.password && !ssh.set} onClick={saveSsh}>Проверить и сохранить</Btn>
-    </div> : null}
+    {!ssh.ok ? <div className="dim" style={{ fontSize: 13 }}>Укажите доступ к Entware вверху этой страницы (по умолчанию порт 222, логин root, пароль <code>keenetic</code>, если его не меняли).</div> : null}
     {p.installed ? <div className="plugin-result">
       <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="check" size={18} />
         <div className="grow"><b>{p.title}{p.version ? ' ' + p.version : ''} установлен.</b> Панель: <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a>
@@ -221,6 +240,80 @@ function InstallerPlugin({ p, device, reload, openPlugin }) {
     </div>
     {!ready && !p.installed ? <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка станет активной, когда все пункты выше будут отмечены зелёным.</div> : null}
     {result ? <PluginResult r={result} openPlugin={openPlugin} /> : null}
+  </>;
+}
+
+/* VLESS on a Keenetic from a pasted link (rackd/keenetic_vless.py): XKeen or AWG Manager. The link is not stored: after a change it is pasted again. */
+function VlessPlugin({ p, device, reload, openPlugin }) {
+  const toast = useToast(); const confirm = useConfirm(); const { refresh } = useApp();
+  const ssh = p.ssh || {}; const isX = p.id === 'xkeen';
+  const [link, setLink] = useState('');
+  const [prev, setPrev] = useState(null);                     // {host, port, net, security, name} or {error}
+  const [busy, setBusy] = useState('');
+  const [job, setJob] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const [result, setResult] = useState(null);
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: p.id, ...body } });
+  const preview = async v => { setLink(v); setResult(null); if (!v.trim()) return setPrev(null);
+    try { setPrev((await call({ op: 'preview', link: v })).preview); } catch (e) { setPrev({ error: e.message }); } };
+  const startJob = async (op, extra) => { setResult(null);
+    try { const r = await call({ op, ...extra }); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000 }); } catch (e) { toast(e.message, true); } };
+  useEffect(() => {
+    if (!job || job.done) return;
+    const t = setInterval(async () => { setNow(Date.now());
+      try { const j = await call({ op: 'job', job: job.id }); setJob(x => ({ ...x, ...j }));
+        if (j.done) { toast(j.error ? 'Не получилось: ' + j.error : (j.result && j.result.message) || 'Готово', !!j.error);
+          setResult(j.error ? { error: j.error, kept: true } : { ...j.result, up: true, kept: true }); if (!j.error) { setLink(''); setPrev(null); } reload(); refresh(); } } catch (e) { }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [job && job.id, job && job.done]);
+  const setup = async () => {
+    const text = isX ? `${p.installed ? 'Заменить ключ XKeen' : 'Установить XKeen с Xray'}? Сервер: ${prev.host}:${prev.port}. Rack Live создаст пустую политику xkeen, проверит ключ отдельным Xray и только потом запустит XKeen. `
+        + 'Через сервер пойдут только устройства, которых вы сами добавите в эту политику. Остальная сеть не затрагивается. Займёт до 10 минут.'
+      : `Добавить подключение ${prev.host}:${prev.port} в AWG Manager? Трафик сам в него не пойдёт. Если нужно, AWG Manager установит sing-box.`;
+    if (await confirm(text, { title: p.title, ok: p.installed && isX ? 'Заменить' : 'Продолжить' })) startJob('vless_setup', { link });
+  };
+  const control = async op => { setBusy(op); setResult(null);
+    try { const r = await call({ op }); toast(r.message); reload(); } catch (e) { toast(e.message, true); } finally { setBusy(''); } };
+  const removeX = async () => { if (await confirm('Удалить XKeen, Xray, все их настройки и политику xkeen? Устройства из политики вернутся к обычному интернету.', { title: p.title, ok: 'Удалить', danger: true })) startJob('vless_remove'); };
+  const removeT = async t => { if (await confirm(`Удалить подключение ${t.name}?`, { title: p.title, ok: 'Удалить', danger: true })) startJob('vless_remove', { tag: t.tag }); };
+  const running = job && !job.done;
+  const required = (p.checks || []).filter(c => !c.optional);
+  const ready = required.every(c => c.ok);
+  const needAwg = !isX && ssh.ok && (p.checks || []).some(c => /AWG Manager/.test(c.label) && !c.ok);
+  return <>
+    <Checks checks={p.checks || []} />
+    <div className="err-note" style={{ marginTop: 0 }}><b>Новый плагин.</b> На настоящем роутере целиком ещё не проверен: первый раз пробуйте там, где есть запасной доступ.</div>
+    {!(p.checks || []).find(c => /Entware установлен/.test(c.label))?.ok ? <div className="dim" style={{ fontSize: 13 }}>Сначала установите Entware — <button type="button" className="linkbtn" onClick={() => openPlugin('entware')}>инструкция</button></div> : null}
+    {needAwg ? <div className="dim" style={{ fontSize: 13 }}>Сначала установите AWG Manager — <button type="button" className="linkbtn" onClick={() => openPlugin('awgmanager')}>открыть плагин</button></div> : null}
+    {!ssh.ok ? <div className="dim" style={{ fontSize: 13 }}>{isX && p.detected ? `Похоже, XKeen уже стоит (${p.detected}). ` : ''}Чтобы проверить и настроить, укажите доступ к Entware вверху этой страницы (по умолчанию порт 222, логин root, пароль <code>keenetic</code>, если его не меняли).</div> : null}
+    {isX && p.installed && ssh.ok && p.mihomo ? <div className="err-note" style={{ marginTop: 0 }}>Этот XKeen работает на ядре Mihomo. Запуск и остановка доступны, а замена ключа нет: плагин настраивает только Xray.</div> : null}
+    {isX && p.installed && ssh.ok && !p.mihomo && p.configured && !p.mine ? <div className="err-note" style={{ marginTop: 0 }}>XKeen настроен не через Rack Live. Замена ключа перепишет <code>04_outbounds.json</code> и <code>05_routing.json</code>, копии останутся рядом с окончанием <code>.rl-bak</code>.</div> : null}
+    {isX && p.installed ? <div className="plugin-result"><div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="check" size={18} />
+      <div className="grow"><b>XKeen{p.version ? ' ' + p.version : ''} {p.running ? 'работает' : 'остановлен'}</b>{p.core ? <span className="dim"> · Xray {p.core}</span> : null}
+        <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45 }}>{p.policy ? (p.policy.hosts ? `В политике xkeen устройств: ${p.policy.hosts}.` : 'В политике xkeen пока нет устройств — через сервер никто не идёт. Добавьте их в настройках роутера.')
+          : 'Политики xkeen нет: при запуске XKeen перехватит всех. Нажмите «Настроить», Rack Live создаст её.'}</div></div></div></div> : null}
+    {!isX && (p.tunnels || []).length ? <div className="col" style={{ gap: 6 }}><div className="card-title">Подключения sing-box</div>
+      {p.tunnels.map(t => <div key={t.tag} className="row" style={{ gap: 8 }}><span className="grow ellipsis">{t.name}{t.type ? <span className="dim"> · {t.type}</span> : null}</span>
+        <Btn size="sm" kind="danger" icon="trash" disabled={running} onClick={() => removeT(t)} title="Удалить" /></div>)}</div> : null}
+    <div className="awg-form">
+      <Field label={isX && p.installed ? 'Новый ключ' : 'Ключ'} hint="Ссылка vless:// из панели или подписки. Rack Live её не хранит и не пишет в журнал.">
+        <textarea className="input mono" rows={3} value={link} placeholder="vless://…" style={{ fontSize: 12 }} autoComplete="off" spellCheck={false} onChange={e => preview(e.target.value)} /></Field>
+      {prev ? prev.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{prev.error}</div>
+        : <div className="check ok"><span className="check-ico"><Icon name="check" size={13} stroke={2.4} /></span>{prev.name ? prev.name + ' · ' : ''}{prev.host}:{prev.port} · {prev.net} · {prev.security}</div> : null}
+      <Btn kind="primary" icon="download" busy={running} disabled={!ready || running || !prev || !!prev.error || (isX && p.mihomo)} onClick={setup} style={{ padding: 12 }}>
+        {running ? 'Настраиваю…' : isX ? (p.installed ? 'Заменить ключ' : 'Установить и подключить') : 'Добавить подключение'}</Btn>
+      {!ready && !running ? <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка станет активной, когда все пункты выше будут отмечены зелёным.</div> : null}
+    </div>
+    {running ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
+      <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.max(0, Math.round(now / 1000 - job.t))} с · окно можно закрыть, настройка продолжится на сервере Rack Live</div></div></div> : null}
+    {result ? <PluginResult r={result} openPlugin={openPlugin} /> : null}
+    <div className="row wrap">
+      {isX && p.installed && ssh.ok ? (p.running ? <Btn icon="x" busy={busy === 'stop'} disabled={running || !!busy} onClick={() => control('stop')}>Остановить</Btn>
+        : <Btn icon="refresh" busy={busy === 'start'} disabled={running || !!busy || !p.configured} onClick={() => control('start')}>Запустить</Btn>) : null}
+      {isX && p.installed && ssh.ok ? <Btn kind="danger" icon="trash" disabled={running || !!busy} onClick={removeX}>Удалить XKeen</Btn> : null}
+      {p.home ? <a className="btn" href={p.home} target="_blank" rel="noreferrer"><Icon name="link" size={16} />О проекте</a> : null}
+    </div>
   </>;
 }
 
@@ -417,7 +510,7 @@ function PanelInfo({ info, title }) {
       <div className="copy-row"><span className="dim">Панель</span><a className="grow ellipsis" href={info.url} target="_blank" rel="noreferrer">{info.url}</a></div>
       <CopyRow k="Логин" v={info.user} /><CopyRow k="Пароль" v={info.password} />
       {info.note ? <div className="dim3" style={{ fontSize: 12.5 }}>{info.note}</div> : null}
-      {(info.links || []).length ? <><div className="card-title" style={{ marginTop: 6 }}>Тестовый пользователь</div>
+      {(info.links || []).length ? <><div className="card-title" style={{ marginTop: 6 }}>{info.domain ? 'Тестовый пользователь' : 'Готовый пользователь'}</div>
         {info.links.map((l, i) => <CopyRow key={i} k={l.name} v={l.url} />)}
         <div className="dim3" style={{ fontSize: 12.5 }}>Вставьте ссылку в клиент (v2rayN, Hiddify, Streisand, v2RayTun) — подключение должно заработать сразу.</div></> : null}
     </div></div>;
@@ -428,6 +521,7 @@ function PanelPlugin({ p, device, reload }) {
   const [withDomain, setWithDomain] = useState(!!p.needsDomain);
   const [domain, setDomain] = useState('');
   const [inbounds, setInbounds] = useState(true);
+  const canInbounds = withDomain || p.id === '3xui';          // 3x-ui without a domain: one XHTTP+TLS user on the IP certificate
   const [dns, setDns] = useState(null);                       // {match, records, ip, domain}
   const [waiting, setWaiting] = useState(false);
   const [job, setJob] = useState(null);                       // {id, stage, done, error, result, t}
@@ -435,7 +529,7 @@ function PanelPlugin({ p, device, reload }) {
   const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: p.id, ...body } });
   const checkDns = async () => { try { const r = await call({ op: 'dns', domain, ip: p.ip }); setDns(r); return r; } catch (e) { setDns({ error: e.message }); return null; } };
   const startJob = async op => {
-    try { const r = await call({ op, withDomain, domain, inbounds: withDomain && inbounds }); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000 }); }
+    try { const r = await call({ op, withDomain, domain, inbounds: canInbounds && inbounds }); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000 }); }
     catch (e) { toast(e.message, true); }
   };
   useEffect(() => {                                            // poll the background job
@@ -455,7 +549,7 @@ function PanelPlugin({ p, device, reload }) {
   }, [waiting]);
   const install = async () => {
     const what = `Установить ${p.title}${withDomain ? ` на ${domain}` : ''}? Будут поставлены ${withDomain ? 'nginx с сайтом-заглушкой, сертификат Let\'s Encrypt с автопродлением, ' : ''}`
-      + `${p.title}${withDomain && inbounds ? `, инбаунды VLESS TCP (${8443}) и XHTTP (${2053}) и тестовый пользователь` : ''}. Займёт ${p.id === 'remnawave' ? '5–15' : '2–5'} минут.`
+      + `${p.title}${withDomain && inbounds ? `, инбаунды VLESS TCP (${8443}) и XHTTP (${2053}) и тестовый пользователь` : canInbounds && inbounds ? `, инбаунд VLESS XHTTP TLS (${2053}) и готовый пользователь` : ''}. Займёт ${p.id === 'remnawave' ? '5–15' : '2–5'} минут.`
       + (withDomain ? ' Если домен ещё не указывает на сервер, Rack Live дождётся этого и начнёт сам.' : '');
     if (!(await confirm(what, { title: p.title, ok: 'Установить' }))) return;
     if (withDomain) {
@@ -489,9 +583,10 @@ function PanelPlugin({ p, device, reload }) {
           {' '}У регистратора домена (reg.ru, Cloudflare…) создайте <b>A-запись</b>: имя <code>{dns.domain}</code>, значение <code>{dns.ip}</code>. Обычно начинает работать через 5–30 минут.</div> : null}
       {waiting ? <div className="row" style={{ gap: 8, fontSize: 13.5 }}><span className="spin-dot" /><span className="grow">Жду, когда {dns && dns.domain} начнёт указывать на {p.ip} — проверяю каждые 20 секунд, установка начнётся сама. Можно закрыть окно и вернуться позже.</span>
         <Btn size="sm" onClick={() => setWaiting(false)}>Отмена</Btn></div> : null}
-      <div className="row" style={{ alignItems: 'flex-start', opacity: withDomain ? 1 : .55 }}><Switch on={withDomain && inbounds} onChange={setInbounds} disabled={!withDomain} />
-        <div className="grow"><div>Создать инбаунды VLESS TCP + XHTTP и тестового пользователя</div>
+      <div className="row" style={{ alignItems: 'flex-start', opacity: canInbounds ? 1 : .55 }}><Switch on={canInbounds && inbounds} onChange={setInbounds} disabled={!canInbounds} />
+        <div className="grow"><div>{withDomain || !canInbounds ? 'Создать инбаунды VLESS TCP + XHTTP и тестового пользователя' : 'Создать пользователя VLESS XHTTP TLS'}</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>{withDomain ? 'VLESS TCP+TLS на порту 8443 и VLESS XHTTP+TLS на порту 2053 на сертификате домена; ссылки тестового пользователя покажу здесь.'
+            : canInbounds ? 'VLESS XHTTP+TLS на порту 2053 на сертификате IP-адреса сервера; ссылку готового пользователя покажу здесь.'
             : 'Нужен домен: инбаунды используют его сертификат.'}</div></div></div>
       <Btn kind="primary" icon="download" busy={running} disabled={!ready || running || waiting} onClick={install} style={{ padding: 12 }}>
         {running ? 'Устанавливаю…' : waiting ? 'Жду DNS…' : 'Установить ' + p.title}</Btn>
@@ -506,6 +601,86 @@ function PanelPlugin({ p, device, reload }) {
       {p.installed ? <Btn kind="danger" icon="trash" disabled={running} onClick={remove}>Удалить {p.title}</Btn> : null}
       {p.home ? <a className="btn" href={p.home} target="_blank" rel="noreferrer"><Icon name="link" size={16} />О проекте</a> : null}
     </div>
+  </>;
+}
+
+/* «Слепок сервера» (rackd/snapshots.py): a whole VPS copied to Rack Live, and laid onto another VPS */
+const snapSize = n => { n = +n || 0; const u = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return (i < 2 ? Math.round(n) : n.toFixed(1)).toString().replace('.', ',') + ' ' + u[i]; };
+const snapDate = t => new Date(t * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+function SnapshotPlugin({ p, device, reload }) {
+  const toast = useToast(); const confirm = useConfirm(); const { refresh } = useApp();
+  const [stopDocker, setStopDocker] = useState(true);
+  const [pick, setPick] = useState('');
+  const [job, setJob] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'snapshot', ...body } });
+  const start = async body => {
+    try { const r = await call(body); setJob({ id: r.job, stage: 'Запуск…', done: false, t: Date.now() / 1000, op: body.op }); }
+    catch (e) { toast(e.message, true); }
+  };
+  useEffect(() => {
+    if (!job || job.done) return;
+    const t = setInterval(async () => { setNow(Date.now());
+      try { const j = await call({ op: 'job', job: job.id }); setJob(x => ({ ...x, ...j }));
+        if (j.done) { toast(j.error ? 'Не получилось: ' + j.error : (j.result && j.result.message) || 'Готово', !!j.error); reload(); refresh(); } } catch (e) { }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [job && job.id, job && job.done]);
+  const srv = p.server || {};
+  const required = (p.checks || []).filter(c => !c.optional);
+  const ready = required.every(c => c.ok);
+  const running = (job && !job.done) || !!p.busy;
+  const take = async () => {
+    if (!(await confirm(`Снять полный слепок «${nameNoFlag(device.name)}»? Rack Live скопирует по SSH все файлы сервера (система, программы, настройки, Docker с данными, базы, сайты, сертификаты) — на сервере занято ${snapSize(srv.used)}.`
+      + (srv.docker && stopDocker ? ` На время копирования остановятся запущенные контейнеры (${srv.docker}) — их сервисы будут недоступны, потом они запустятся сами.` : '')
+      + ' Копирование может занять от нескольких минут до часа — зависит от объёма и скорости канала.', { title: 'Слепок сервера', ok: 'Снять слепок' }))) return;
+    start({ op: 'take', stopDocker });
+  };
+  const restore = async () => {
+    const m = (p.all || []).find(x => x.id === pick); if (!m) return;
+    const self = m.device === device.id;
+    if (!(await confirm(`${self ? 'Вернуть этот сервер к слепку' : 'Перенести слепок «' + m.deviceName + '» на этот сервер'} от ${snapDate(m.t)}?\n\n`
+      + `Все файлы «${nameNoFlag(device.name)}» будут ЗАМЕНЕНЫ файлами из слепка: программы, настройки, данные, пользователи и пароли станут как на ${self ? 'момент слепка' : 'старом сервере'}. `
+      + 'Своими останутся только загрузчик, ядро, диски и сетевые настройки этого сервера — чтобы он поднялся у своего хостера. '
+      + `Потом сервер перезагрузится. Вернуть то, что сейчас на нём, будет нельзя${self ? '' : ' — если там есть что-то нужное, сначала снимите с него слепок'}.`,
+      { title: 'Восстановление из слепка', ok: self ? 'Вернуть к слепку' : 'Перенести сюда', danger: true }))) return;
+    start({ op: 'restore', snapshot: m.id });
+  };
+  const del = async m => {
+    if (!(await confirm(`Удалить слепок «${m.deviceName}» от ${snapDate(m.t)} (${snapSize(m.size)})? Восстановить из него будет уже нельзя.`, { title: 'Слепок сервера', ok: 'Удалить', danger: true }))) return;
+    try { await call({ op: 'delete', snapshot: m.id }); toast('Слепок удалён'); reload(); } catch (e) { toast(e.message, true); }
+  };
+  const fits = (p.all || []).filter(m => m.compatible);
+  const other = (p.all || []).filter(m => !m.compatible);
+  return <>
+    <Checks checks={p.checks || []} />
+    <div className="card-title" style={{ marginTop: 4 }}>Слепки этого сервера</div>
+    {!(p.mine || []).length ? <div className="dim3" style={{ fontSize: 13 }}>Пока нет. Слепок хранится на Rack Live (на вашем главном сервере), а не на самом VPS — его не потерять вместе с VPS.</div>
+      : <div className="col" style={{ gap: 6 }}>{p.mine.map(m => <div key={m.id} className="copy-row">
+        <Icon name="download" size={15} /><span className="grow">{snapDate(m.t)} · {snapSize(m.size)}<span className="dim3"> · {m.os}{m.stoppedContainers ? ` · контейнеры останавливались (${m.stoppedContainers})` : ''}</span></span>
+        <Btn size="sm" kind="danger" icon="trash" disabled={running} onClick={() => del(m)}>Удалить</Btn></div>)}</div>}
+    <div className="awg-form">
+      {srv.docker ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={stopDocker} onChange={setStopDocker} />
+        <div className="grow"><div>Остановить контейнеры на время копирования ({srv.docker})</div>
+          <div className="dim3" style={{ fontSize: 12.5 }}>Надёжнее для баз данных (Remnawave, сайты): они скопируются целыми. Сервисы будут недоступны, пока идёт копирование, потом запустятся сами.</div></div></div> : null}
+      <Btn kind="primary" icon="download" busy={running && job && job.op === 'take'} disabled={!ready || running} onClick={take} style={{ padding: 12 }}>
+        {running && job && job.op === 'take' ? 'Снимаю слепок…' : 'Снять слепок'}</Btn>
+    </div>
+    <div className="card-title" style={{ marginTop: 10 }}>Восстановить на этот сервер</div>
+    {!(p.all || []).length ? <div className="dim3" style={{ fontSize: 13 }}>Сначала снимите слепок со старого сервера, затем откройте здесь новый VPS (с той же системой) и выберите слепок.</div> : <>
+      <div className="dim3" style={{ fontSize: 12.5, lineHeight: 1.5 }}>Новый VPS должен быть с той же системой той же версии ({srv.os || 'как у старого'}) и с местом на диске не меньше, чем было занято на старом.
+        Вход на сервер после переноса — как на старом (Rack Live обновит его сам), IP — новый: домены нужно будет перенаправить.</div>
+      <select className="input" value={pick} onChange={e => setPick(e.target.value)} disabled={running}>
+        <option value="">— выберите слепок —</option>
+        {fits.map(m => <option key={m.id} value={m.id}>{m.deviceName} · {snapDate(m.t)} · {snapSize(m.size)}{m.device === device.id ? ' (этот сервер)' : ''}</option>)}
+        {other.length ? <optgroup label="Не подходят этому серверу">{other.map(m => <option key={m.id} value={m.id} disabled>{m.deviceName} · {snapDate(m.t)} — {m.why}</option>)}</optgroup> : null}
+      </select>
+      <Btn kind="danger" icon="refresh" busy={running && job && job.op === 'restore'} disabled={!pick || running || !ready} onClick={restore} style={{ padding: 12 }}>
+        {running && job && job.op === 'restore' ? 'Восстанавливаю…' : 'Восстановить сюда'}</Btn></>}
+    {job && !job.done ? <div className="job"><span className="spin-dot" /><div className="grow"><b>{job.stage}</b>
+      <div className="dim3" style={{ fontSize: 12 }}>идёт {Math.round(Math.max(0, now / 1000 - job.t) / 60)} мин · окно можно закрыть, работа продолжится на сервере Rack Live</div></div></div>
+      : p.busy && !job ? <div className="job"><span className="spin-dot" /><div className="grow"><b>С этим сервером уже идёт {p.busy}</b></div></div> : null}
+    {job && job.done ? <PluginResult r={job.error ? { error: job.error, kept: true, log: [] } : { message: job.result && job.result.message, kept: true, up: true, log: [] }} /> : null}
   </>;
 }
 
@@ -567,7 +742,7 @@ function CollectorPlugin({ p, device, reload }) {
   const running = job && !job.done;
   const install = async () => {
     const local = report && /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(server.trim());
-    if (!(await confirm(`Поставить ${p.rcos ? 'ReckController OS' : 'Rack Live'} на «${device.name}»? Rack Live по SSH сначала проверит связь, потом установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели по домашней сети и создаст службу racklive на порту ${port}.`
+    if (!(await confirm(`Поставить ${p.rcos ? 'ReckController OS' : 'Rack Live'} на «${nameNoFlag(device.name)}»? Rack Live по SSH сначала проверит связь, потом установит пакеты (python3, ssh, ping, curl), скачает себя с этой панели по домашней сети и создаст службу racklive на порту ${port}.`
       + (report ? ` Данные будут приходить сюда (${server.trim()}) как площадка «${name.trim()}».` : ' Данные сюда не присылаются — машина работает сама по себе (включить можно потом на её панели).')
       + (p.rcos ? ` Дополнительно: часовой пояс ${tz || 'без изменений'}, драйверы Wi-Fi и NetworkManager${ap ? `, Wi-Fi-точка «${apSsid}» с постоянным адресом` : ''}; включится режим разработчика на самой машине. Кабельная сеть и этот сеанс не затрагиваются.` : '')
       + ` Займёт ${p.rcos ? '3–8' : '1–4'} минут.`
@@ -575,7 +750,7 @@ function CollectorPlugin({ p, device, reload }) {
     start('install', { name: name.trim(), server: report ? server.trim() : '', port: +port, level, insecure: report && insecure, ...(p.rcos ? { tz: tz.trim(), ap, ssid: apSsid.trim(), apPassword: apPw } : {}) });
   };
   const remove = async () => {
-    if (!(await confirm(`Удалить ${p.rcos ? 'ReckController OS (вместе с Wi-Fi-точкой)' : 'сборщик'} с «${device.name}»? Служба и программа будут удалены с сервера, данные останутся в /var/lib/racklive.${dropSite && p.info ? ` Площадка «${p.info.siteName}» и её устройства исчезнут с этой панели.` : ''}`,
+    if (!(await confirm(`Удалить ${p.rcos ? 'ReckController OS (вместе с Wi-Fi-точкой)' : 'сборщик'} с «${nameNoFlag(device.name)}»? Служба и программа будут удалены с сервера, данные останутся в /var/lib/racklive.${dropSite && p.info ? ` Площадка «${p.info.siteName}» и её устройства исчезнут с этой панели.` : ''}`,
       { title: p.title, ok: 'Удалить', danger: true }))) return;
     start('remove', { removeSite: dropSite });
   };
@@ -695,7 +870,7 @@ function AgentsPlugin({ p, device, reload }) {
       <input className="input" type="password" value={keys[id]} autoComplete="off" onChange={e => setKeys({ ...keys, [id]: e.target.value })} /></Field>)}
     <div className="row wrap" style={{ marginTop: 8 }}>
       <Btn kind="primary" icon="download" busy={running} disabled={running || (!sel.size && !claudeOn)} onClick={async () => {
-        if (sel.size && !(await confirm(`Установить на «${device.name}»: ${[...sel].map(id => p.agents.find(a => a.id === id).title).join(', ')}? Rack Live по SSH поставит программы${claudeOn ? ', настроит автозапуск и команду racklive-agent' : ''}. Займёт несколько минут.`, { title: 'ИИ-агенты', ok: 'Установить' }))) return;
+        if (sel.size && !(await confirm(`Установить на «${nameNoFlag(device.name)}»: ${[...sel].map(id => p.agents.find(a => a.id === id).title).join(', ')}? Rack Live по SSH поставит программы${claudeOn ? ', настроит автозапуск и команду racklive-agent' : ''}. Займёт несколько минут.`, { title: 'ИИ-агенты', ok: 'Установить' }))) return;
         start('install'); }}>{running ? 'Работаю…' : sel.size ? 'Установить' : 'Сохранить настройки'}</Btn>
       {needSetup ? <Btn icon="terminal" disabled={running} onClick={() => setTerm('&run=agent-setup')}>Войти и запустить</Btn> : null}
       {needSetup && sshTarget(device) ? <Btn disabled={running} onClick={() => { copyText('racklive-agent setup'); toast('Команда «racklive-agent setup» скопирована — вставьте её в Termius после входа'); openInTermius(sshTarget(device), () => { }); }}>Войти через Termius</Btn> : null}

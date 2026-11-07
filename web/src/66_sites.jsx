@@ -130,9 +130,9 @@ function RemoteTab({ device }) {
       <b style={{ minWidth: 26 }}>{p.n}</b><span className={'badge ' + (p.link ? 'online' : '')}>{p.link ? (p.speed ? p.speed + ' Мбит/с' : 'есть линк') : 'нет линка'}</span>
       <span className="grow dim ellipsis">{p.label || ''}{(p.peers || []).length ? ' · ' + (p.peers[0].name || p.peers[0].mac) : ''}</span></div>)}</div></Card> : null}
     {clients.length ? <Card title={`Клиенты · ${(st.clients || []).length}`}><div className="list">{clients.map((c, i) => <div className="li" key={i} style={{ fontSize: 13 }}>
-      <KindIcon kind={c.kind || 'other'} size={26} round={8} /><div className="grow" style={{ minWidth: 0 }}><div className="ellipsis">{c.name || c.hostname || c.mac}</div>
+      <KindIcon kind={c.kind || 'other'} name={c.name} size={26} round={8} /><div className="grow" style={{ minWidth: 0 }}><div className="ellipsis">{nameNoFlag(c.name) || c.hostname || c.mac}</div>
         <div className="dim3 mono ellipsis" style={{ fontSize: 11.5 }}>{[c.ip, c.mac, c.segment].filter(Boolean).join(' · ')}</div></div></div>)}</div></Card> : null}
-    {term ? <Modal title={`Терминал · ${device.name} (${device.siteName})`} wide onClose={() => setTerm(false)} icon={<Icon name="terminal" size={20} color="var(--accent)" />}>
+    {term ? <Modal title={`Терминал · ${nameNoFlag(device.name)} (${device.siteName})`} wide onClose={() => setTerm(false)} icon={<Icon name="terminal" size={20} color="var(--accent)" />}>
       <TerminalView extra={`&site=${encodeURIComponent(device.siteId)}&device=${encodeURIComponent(device.siteKey)}`} onClose={() => setTerm(false)} /></Modal> : null}
   </>;
 }

@@ -10,6 +10,10 @@ const PLUGIN_GROUPS = [
 const groupOfDriver = d => PLUGIN_GROUPS.find(g => g.drivers.includes(d));
 const realDriver = g => g.drivers[0];          // the driver names plugins are declared for (rackd/plugins.py, vps.py)
 const TOOLS = [
+  { id: 'doctor', title: 'Сетевой доктор', icon: 'shield', color: '#32ade6',
+    text: 'Проверка безопасности выбранного устройства: открытые порты, вход по SSH, fail2ban, файрвол, обновления. Скажет, что поправить.' },
+  { id: 'vpncheck', title: 'Проверка VPN', icon: 'globe2', color: '#bf5af2',
+    text: 'Работает ли VPN или прокси отсюда прямо сейчас: задержка, скорость, тип подключения, CDN и что в настройках его выдаёт.' },
   { id: 'cameras', title: 'Камеры и видеорегистраторы', icon: 'camera', color: '#ff375f',
     text: 'Сам найдёт камеры в вашей сети, отличит камеру от регистратора, поможет сменить пароли и адреса — хоть всем сразу — и покажет кадр.' },
   { id: 'apps', title: 'Приложения', icon: 'server', color: '#30b0c7',
@@ -58,7 +62,7 @@ function ToolsView() {
   useEffect(() => { document.documentElement.classList.toggle('set-detail', !!(phone && open)); return () => document.documentElement.classList.remove('set-detail'); }, [phone, open]);
   const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
   const listMode = phone && !open;
-  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'apps' ? <AppsTool /> : cur.id === 'learn' ? <LearnTool /> : cur.id === 'localplug' ? <LocalPlugTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
+  const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'doctor' ? <DoctorTool /> : cur.id === 'vpncheck' ? <VpnCheckTool /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'apps' ? <AppsTool /> : cur.id === 'learn' ? <LearnTool /> : cur.id === 'localplug' ? <LocalPlugTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
   return <div className={'set-layout' + (phone ? ' ios' : '')}>
     {listMode ? <div className="ios-list">{TOOLS_GROUPS.map((g, gi) => { const items = g[0] === 'tools' ? toolRows : g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
       return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" onClick={() => pick(x.id)}>
@@ -304,8 +308,8 @@ function PluginTargets({ p, g, devs, openOn }) {
     {devs.length ? <>
       <div className="dim3" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.3px', margin: '2px 0 2px' }}>На каком устройстве</div>
       {devs.map(d => <button type="button" key={d.id} className="plug-row" onClick={() => openOn(d)}>
-        <KindIcon kind={d.kind || 'router'} size={30} round={9} />
-        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b className="ellipsis" style={{ display: 'block' }}>{d.name}</b><small>{addrOf(d) || g.title}</small></span>
+        <KindIcon kind={d.kind || 'router'} name={d.name} size={30} round={9} />
+        <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}><b className="ellipsis" style={{ display: 'block' }}>{nameNoFlag(d.name, d.kind || 'router')}</b><small>{addrOf(d) || g.title}</small></span>
         <Icon name="chevron" size={14} /></button>)}
     </> : <div className="dim" style={{ fontSize: 13, padding: '2px 0 6px' }}>Устройств типа «{g.title}» в Rack Live пока нет. Найдите роутер в сети или добавьте вручную.</div>}
     <div className="row wrap" style={{ marginTop: 8 }}>

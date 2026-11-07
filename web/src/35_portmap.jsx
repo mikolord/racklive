@@ -29,7 +29,7 @@ function linkedPort(data, m) {
   const d = data.devices.find(x => x.id === m.dev); if (!d) return { missing: true };
   const p = ((d.state || {}).ports || []).find(x => String(x.n) === String(m.port));
   const peers = p ? (p.peers || []).map(x => x.name || x.mac).filter(Boolean) : [];
-  return { d, p, peers, text: `${d.name}${m.port ? ', порт ' + m.port : ''}` };
+  return { d, p, peers, text: `${nameNoFlag(d.name)}${m.port ? ', порт ' + m.port : ''}` };
 }
 /* ports of other units wired INTO port n of this unit (e.g. ONT PON → cross fibre 1) */
 function incoming(data, unitId, n) {
@@ -131,7 +131,7 @@ function LinkTarget({ m, onDev, onPort, selfId }) {             // device or ano
       return { v: i + 1, t: (unit.type === 'modem' ? portName(unit, i + 1) : i + 1) + (pp.color ? ' · ' + pp.color : '') + (pp.label ? ' · ' + pp.label.slice(0, 12) : '') }; }) : [];
   return <><td><select className="select pm-sel" value={m.dev || ''} onChange={e => onDev(e.target.value)}>
       <option value="">—</option>
-      {devs.length ? <optgroup label="Устройства">{devs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</optgroup> : null}
+      {devs.length ? <optgroup label="Устройства">{devs.map(d => <option key={d.id} value={d.id}>{nameNoFlag(d.name)}</option>)}</optgroup> : null}
       {units.length ? <optgroup label="Кроссы, патч-панели, ONT">{units.map(u => <option key={u.id} value={'u:' + u.id}>{u.name} ({u.rackName})</option>)}</optgroup> : null}
     </select></td>
     <td>{ports.length ? <select className="select pm-sel" style={{ width: 110 }} value={m.port || ''} onChange={e => onPort(e.target.value)}>

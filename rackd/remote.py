@@ -9,9 +9,11 @@ The tunnel carries management ONLY:
   · from the tunnel only SSH, the web interface and ping reach the router itself;
   · on the hub the router is allowed exactly one address (/32), so it cannot use the owner's internet either.
 The router dials out and keeps the tunnel up (keepalive 25 s), so the remote place needs no white address and no port forwarding."""
-import ipaddress, re, socket, time
+import ipaddress, re, socket, threading, time
 
 from . import plugins
+
+HUBS_WAIT = 20        # seconds the plugin card waits for the Keenetic routers it can use as a hub
 
 STATUS = r'''command -v wg >/dev/null 2>&1 && echo "@@wg 1"
 echo "@@rel $(. /etc/openwrt_release 2>/dev/null; echo $DISTRIB_RELEASE)"
@@ -201,11 +203,13 @@ def source_ip(toward):
 
 
 def allowed_for(net, src, extra=()):
-    """what the router routes into the tunnel: the hub's network, this machine (if it is outside it), and addresses the owner added himself"""
+    """what the router may answer through the tunnel: the hub's network, the home network of this machine (so the owner's computer opens the router's web
+    interface too, not just Rack Live), and addresses the owner added himself. These routes live only in the tunnel's own table: its clients still have no way in."""
     n = ipaddress.ip_network(net, strict=False)
     out = [str(n)]
     if src and ipaddress.ip_address(src) not in n:
-        out.append(src + '/32')
+        a = ipaddress.ip_address(src)
+        out.append(str(ipaddress.ip_network(src + '/24', strict=False)) if a.is_private else src + '/32')
     for x in extra:
         x = str(x).strip()
         if not x:
@@ -232,16 +236,25 @@ def slug(name):
 def hubs(app):
     """every WireGuard server Rack Live can use as a hub: Keenetic devices with a WireGuard server"""
     from .drivers import REGISTRY
-    out = []
-    for k in app.store.cfg['devices']:
-        if k.get('driver') != 'keenetic' or not k.get('enabled', True):
-            continue
+    routers = [k for k in app.store.cfg['devices'] if k.get('driver') == 'keenetic' and k.get('enabled', True)]
+    found = {}
+
+    def ask(k):
         try:
-            for h in REGISTRY['keenetic'].wg_hubs(k):
-                out.append(dict(h, id=f"{k['id']}:{h['iface']}", device=k['id'], deviceName=k.get('name') or 'Keenetic', kind='keenetic', used=len(h['used']),
-                                peers=len(h['peers']), reach=h['domain'] or h['wan']))
+            found[k['id']] = [dict(h, id=f"{k['id']}:{h['iface']}", device=k['id'], deviceName=k.get('name') or 'Keenetic', kind='keenetic', used=len(h['used']),
+                                   peers=len(h['peers']), reach=h['domain'] or h['wan']) for h in REGISTRY['keenetic'].wg_hubs(k)]
         except Exception as e:
-            out.append({'id': f"{k['id']}:", 'device': k['id'], 'deviceName': k.get('name') or 'Keenetic', 'kind': 'keenetic', 'error': str(e)[:160]})
+            found[k['id']] = [{'id': f"{k['id']}:", 'device': k['id'], 'deviceName': k.get('name') or 'Keenetic', 'kind': 'keenetic', 'error': str(e)[:160]}]
+    # together and with a limit: a slow or silent router is one line in the card, it must not leave every OpenWrt's plugins loading forever
+    ts = [threading.Thread(target=ask, args=(k,), daemon=True) for k in routers]
+    for t in ts:
+        t.start()
+    end = time.time() + HUBS_WAIT
+    for t in ts:
+        t.join(max(0, end - time.time()))
+    out = []
+    for k in routers:
+        out += found.get(k['id']) or [{'id': f"{k['id']}:", 'device': k['id'], 'deviceName': k.get('name') or 'Keenetic', 'kind': 'keenetic', 'error': 'роутер не ответил вовремя, откройте вкладку ещё раз'}]
     return out
 
 
@@ -271,8 +284,8 @@ def connect(app, d, drv, body, prog):
     if not h.get('up'):
         raise DriverError(f"WireGuard-сервер «{h['name']}» выключен — включите его на роутере")
     old = d.get('remote') or {}
-    prog('Ставлю WireGuard на роутер и создаю ключи…')
-    out = drv._ssh(d, PREPARE, 300)
+    prog('Ставлю WireGuard на роутер и создаю ключи, на медленном интернете это до 15 минут…')
+    out = drv._ssh(d, PREPARE, 900)             # eight package lists at 40 s each were seen on a real router: 5 minutes is not enough
     fail = re.search(r'@@fail (.+)', out)
     if fail:
         raise DriverError(fail.group(1))

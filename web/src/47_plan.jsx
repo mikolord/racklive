@@ -609,7 +609,7 @@ function NodeBind({ node, data, onPick, onClose }) {
         <Icon name="rack" size={16} /><span className="grow" style={{ marginLeft: 8 }}>{r.name}</span>{cur.kind === 'place' && cur.id === r.id ? <Icon name="check" size={15} /> : null}</div>)}</div></> : null}
     {devs.length ? <><div className="dim" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>Устройства и серверы</div>
       <div className="list">{devs.slice(0, 80).map(d => <div key={d.id} className="li" style={{ cursor: 'pointer' }} onClick={() => onPick({ kind: 'device', id: d.id })}>
-        <Icon name={d.kind} size={16} /><span className="grow" style={{ marginLeft: 8 }}>{d.name}</span>{cur.kind === 'device' && cur.id === d.id ? <Icon name="check" size={15} /> : null}</div>)}</div></> : null}
+        <Icon name={d.kind} size={16} /><span className="grow" style={{ marginLeft: 8 }}>{nameNoFlag(d.name)}</span>{cur.kind === 'device' && cur.id === d.id ? <Icon name="check" size={15} /> : null}</div>)}</div></> : null}
     {!racks.length && !devs.length ? <div className="dim" style={{ marginTop: 10 }}>Ничего не нашлось.</div> : null}
   </Modal>;
 }
@@ -951,7 +951,7 @@ function BuildingPlan({ building, plan, back }) {
       if (it.kind === 'place') openPlace(it.ref);
       else if (!d._topology) openDevice(d, undefined, undefined, true);
       else if (d._node?.childOf) { const parent = data.devices.find(x => x.id === d._node.childOf); if (parent) openDevice(parent, undefined, undefined, true); }
-      else toast(`${d.name}${d.host ? ' · ' + d.host : ''}`);
+      else toast(`${nameNoFlag(d.name)}${d.host ? ' · ' + d.host : ''}`);
     } finally { deviceConfirmOpen.current = false; }
   };
   const resizeRoom = (room, edge, e) => {

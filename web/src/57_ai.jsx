@@ -228,6 +228,17 @@ function FrankMenu({ onClose }) {
   </div>;
 }
 
+/* messages written while Frank was busy: they leave one by one; each can be taken back */
+function QueueList({ items, onDrop }) {
+  if (!items.length) return null;
+  return <div className="ai-queue" style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 12px' }}>
+    <div className="dim3" style={{ fontSize: 11.5 }}>В очереди ({items.length}) — уйдут по одному, когда Frank закончит</div>
+    {items.map((it, i) => <div key={i} className="row" style={{ gap: 6, fontSize: 13 }}>
+      <span className="dim3">{i + 1}.</span><span className="grow ellipsis">{it.text}</span>
+      <button type="button" className="btn sm icon" title="Убрать из очереди" onClick={() => onDrop(i)}><Icon name="x" size={13} /></button></div>)}
+  </div>;
+}
+
 const CUR_KEY = 'rl_ai_cur';                                   // the open conversation, per browser
 const dayLabel = t => { const d = new Date(t * 1000), now = new Date(), y = new Date(now - 864e5);
   const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -259,11 +270,21 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   const dropAtt = i => setAtt(a => a.filter((x, k) => { if (k === i && x.local) URL.revokeObjectURL(x.local); return k !== i; }));
   const onPaste = e => { const fs = e.clipboardData && e.clipboardData.files; if (fs && fs.length) { e.preventDefault(); addFiles(fs); } };      // a screenshot pasted with Ctrl+V
-  const alive = useRef(true), listRef = useRef(null), asked = useRef(false), cur = useRef(cid), polling = useRef(null);
+  const alive = useRef(true), listRef = useRef(null), asked = useRef(false), cur = useRef(cid), polling = useRef(null), dockRef = useRef(null);
+  const [dockH, setDockH] = useState(124);                  // the input capsule floats over the messages: they get as much room under them as it takes now
+  const [queue, setQueue] = useState([]);                   // what the person wrote while Frank was busy: goes out one by one, as each answer ends
+  const queueRef = useRef([]), drain = useRef(null);
+  const setQ2 = f => { queueRef.current = f(queueRef.current); setQueue(queueRef.current); };
   cur.current = cid;
   useEffect(() => () => { alive.current = false; }, []);
   useEffect(() => { lsSet(CUR_KEY, cid || ''); }, [cid]);
-  useEffect(() => { const el = listRef.current; if (el && view === 'chat') el.scrollTop = el.scrollHeight; }, [msgs, busy, view]);
+  useEffect(() => { const el = listRef.current; if (el && view === 'chat') el.scrollTop = el.scrollHeight; }, [msgs, busy, view, dockH]);
+  useEffect(() => {
+    const el = dockRef.current; if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setDockH(Math.ceil(el.getBoundingClientRect().height)));
+    ro.observe(el); setDockH(Math.ceil(el.getBoundingClientRect().height));
+    return () => ro.disconnect();
+  }, [ai.ready, view, standalone]);
   useEffect(() => { if (!onClose) return; const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, [onClose]);
 
   // follow a running answer; when done, reload the chat (the server already saved the answer)
@@ -279,10 +300,13 @@ function AiPanel({ initial, onClose, standalone }) {
     } catch (e) { }
     if (polling.current === job) polling.current = null;
     if (alive.current && cur.current === chatId) {
-      setBusy(null);
+      await open(chatId, true);                              // the answer and its cards (confirm / refuse buttons) are saved on the server: take them
+      if (alive.current && cur.current === chatId) setBusy(null);
+      if (alive.current && cur.current === chatId && drain.current) drain.current();
     }
   };
   const open = async (id, quiet) => {
+    if (!quiet) setQ2(() => []);
     setView('chat'); setCid(id); if (!quiet) { setBusy(null); setLoading(true); }
     if (!id) { setMsgs([]); setCtx(null); setLoading(false); return null; }
     try {
@@ -299,13 +323,31 @@ function AiPanel({ initial, onClose, standalone }) {
     text = (text || '').trim();
     const cmd = (text.match(AI_CMD_RE) || [])[1];            // a command is not a question: no bubble, the result comes back as a note in the chat
     const files = cmd ? [] : att.filter(f => f.id);
-    if ((!text && !files.length) || busy || !ai.ready) return;
+    if ((!text && !files.length) || !ai.ready) return;
     if (att.some(f => f.busy)) { toast('Подождите, файл ещё загружается', true); return; }
+    if (busy) {                                              // Frank is working: the question waits in the queue and goes out when he finishes
+      if (cmd) { toast('Команды работают, когда Frank свободен', true); return; }
+      if (queueRef.current.length >= 10) { toast('В очереди уже 10 сообщений', true); return; }
+      setQ2(x => [...x, { text, files: files.map(f => ({ id: f.id, name: f.name, kind: f.kind, size: f.size })) }]);
+      att.forEach(f => f.local && URL.revokeObjectURL(f.local)); setAtt([]); setQ('');
+      return;
+    }
+    await sendNow(text, files);
+  };
+  const stop = async () => {
+    const job = polling.current; if (!job) return;
+    setBusy(b => b && { ...b, stage: 'Останавливаю…' });
+    try { await api('/api/ai/stop', { method: 'POST', body: { job } }); } catch (e) { toast(e.message, true); }
+  };
+  drain.current = () => { const nx = queueRef.current[0]; if (!nx) return; setQ2(x => x.slice(1)); sendNow(nx.text, nx.files); };
+  const sendNow = async (text, files) => {
+    const cmd = (text.match(AI_CMD_RE) || [])[1];
     const id = cur.current;
     if (cmd && /^(clear|new)$/i.test(cmd)) { setMsgs([]); setCtx(null); }
     else if (!cmd) setMsgs(m => [...m, { role: 'user', text: text || (files.every(f => f.kind === 'image') ? 'Посмотри фото.' : 'Посмотри файл.'), t: Date.now() / 1000, files: files.map(f => ({ id: f.id, name: f.name, kind: f.kind, size: f.size })) }]);
     if (!cmd) { att.forEach(f => f.local && URL.revokeObjectURL(f.local)); setAtt([]); }
-    setQ(''); setBusy({ stage: cmd ? (/compact/i.test(cmd) ? 'Сжимаю разговор…' : '…') : 'Думаю…', tools: [], t0: Date.now() });
+    if (text === q.trim()) setQ('');
+    setBusy({ stage: cmd ? (/compact/i.test(cmd) ? 'Сжимаю разговор…' : '…') : 'Думаю…', tools: [], t0: Date.now() });
     try {
       const r = await api('/api/ai/ask', { method: 'POST', body: { chat: id, text, files: files.map(f => f.id) } });
       if (!alive.current) return;
@@ -313,6 +355,7 @@ function AiPanel({ initial, onClose, standalone }) {
       follow(r.job, r.chat);
     } catch (e) {
       setBusy(null); setMsgs(m => [...m, { role: 'assistant', text: e.message, err: true }]);
+      if (queueRef.current.length) setTimeout(() => drain.current && drain.current(), 300);      // do not leave the rest of the queue hanging
     }
   };
   useEffect(() => {
@@ -374,7 +417,7 @@ function AiPanel({ initial, onClose, standalone }) {
             <button type="button" className="btn sm icon" title="Удалить разговор" onClick={e => { e.stopPropagation(); del(c); }}><Icon name="trash" size={15} /></button>
           </div>)}</div>}
         {chats && chats.length ? <div className="dim3" style={{ fontSize: 12, textAlign: 'center', marginTop: 8 }}>Разговоры хранятся в Rack Live, пока вы их не удалите — видны с любого устройства.</div> : null}
-      </div> : <div className="ai-list" ref={listRef}>
+      </div> : <div className="ai-list" ref={listRef} style={{ '--fr-dock-h': dockH + 'px' }}>
         {standalone ? <InstallBanner app="frank" name="Frank" /> : null}
         {!ai.ready ? <div className="ai-empty">
           <FrankEye size={68} />
@@ -404,31 +447,35 @@ function AiPanel({ initial, onClose, standalone }) {
           {busy.tools.length ? <div className="ai-tools">{[...new Set(busy.tools)].map(t => <span key={t}><Icon name="check" size={11} />{t}</span>)}</div> : null}</div></div> : null}
       </div>}
       {menu ? <FrankMenu onClose={() => setMenu(false)} /> : null}
-      {ai.ready && view === 'chat' && standalone ? <div className="fr-dock">
+      {ai.ready && view === 'chat' && standalone ? <div className="fr-dock" ref={dockRef}>
         {quick ? <div className="fr-quick">{AI_SUGGEST.map(s => <button key={s} type="button" onClick={() => { setQuick(false); send(s); }}>{s}</button>)}</div> : null}
         <CmdHint q={q} onPick={c => setQ(c + ' ')} />
         <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} />
         <AttachChips files={att} onRemove={dropAtt} />
-        <textarea rows={1} value={q} placeholder={busy ? busy.stage : 'Спросите Frank о сети или введите /'} onChange={e => setQ(e.target.value)} onKeyDown={key}
-          disabled={!!busy} onFocus={() => setQuick(false)} onPaste={onPaste} />
+        <QueueList items={queue} onDrop={i => setQ2(x => x.filter((_, k) => k !== i))} />
+        <textarea rows={1} value={q} placeholder={busy ? 'Frank работает — напишите, встанет в очередь' : 'Спросите Frank о сети или введите /'} onChange={e => setQ(e.target.value)} onKeyDown={key}
+          onFocus={() => setQuick(false)} onPaste={onPaste} />
         <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
         <div className="fr-dock-row">
           <button type="button" className={'fr-dbtn' + (quick ? ' on' : '')} title="Быстрые вопросы" onClick={() => setQuick(!quick)} disabled={!!busy}><Icon name="plus" size={22} stroke={2} /></button>
-          <button type="button" className="fr-dbtn" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()} disabled={!!busy}><Icon name="clip" size={20} stroke={2} /></button>
+          <button type="button" className="fr-dbtn" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()}><Icon name="clip" size={20} stroke={2} /></button>
           <div className="fr-model"><b>{ai.title.split(' ')[0]}</b><span>{ai.effModel}</span></div>
           <div className="grow" />
-          <button type="button" className={'fr-send' + ((q.trim() || att.length) && !busy ? ' on' : '')} disabled={(!q.trim() && !att.length) || !!busy} onClick={() => send(q)} title="Отправить">
-            {busy ? <span className="spin-dot" /> : <Icon name="arrowUp" size={21} stroke={2.4} />}</button>
+          {busy && !(q.trim() || att.length) ? <button type="button" className="fr-send on stop" onClick={stop} title="Остановить Frank"><Icon name="x" size={21} stroke={2.4} /></button>
+            : <button type="button" className={'fr-send' + ((q.trim() || att.length) ? ' on' : '')} disabled={!q.trim() && !att.length} onClick={() => send(q)} title={busy ? 'Поставить в очередь' : 'Отправить'}>
+              <Icon name={busy ? 'plus' : 'arrowUp'} size={21} stroke={2.4} /></button>}
         </div>
       </div> : null}
       {ai.ready && view === 'chat' && !standalone ? <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} /> : null}
       {ai.ready && view === 'chat' && !standalone ? <CmdHint q={q} onPick={c => setQ(c + ' ')} /> : null}
       {ai.ready && view === 'chat' && !standalone ? <AttachChips files={att} onRemove={dropAtt} /> : null}
+      {ai.ready && view === 'chat' && !standalone ? <QueueList items={queue} onDrop={i => setQ2(x => x.filter((_, k) => k !== i))} /> : null}
       {ai.ready && view === 'chat' && !standalone ? <div className="ai-foot">
         <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
-        <Btn icon="clip" title="Прикрепить фото или файл" disabled={!!busy} onClick={() => fileRef.current && fileRef.current.click()} />
-        <textarea className="input" rows={1} value={q} placeholder="Спросить Frank… (или /)" onChange={e => setQ(e.target.value)} onKeyDown={key} onPaste={onPaste} disabled={!!busy} />
-        <Btn kind="primary" icon="send" busy={!!busy} disabled={!q.trim() && !att.length} onClick={() => send(q)} />
+        <Btn icon="clip" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()} />
+        <textarea className="input" rows={1} value={q} placeholder={busy ? 'Frank работает — напишите, встанет в очередь' : 'Спросить Frank… (или /)'} onChange={e => setQ(e.target.value)} onKeyDown={key} onPaste={onPaste} />
+        {busy && !(q.trim() || att.length) ? <Btn kind="danger" icon="x" title="Остановить Frank" onClick={stop}>Стоп</Btn>
+          : <Btn kind="primary" icon={busy ? 'plus' : 'send'} title={busy ? 'Поставить в очередь' : 'Отправить'} disabled={!q.trim() && !att.length} onClick={() => send(q)} />}
       </div> : null}
       {ai.ready && view === 'chat' && !standalone ? <div className="ai-note">Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div> : null}
     </div>

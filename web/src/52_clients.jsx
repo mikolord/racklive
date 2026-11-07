@@ -102,9 +102,9 @@ function ClientEditor({ mac, onClose, initialName }) {
   const [busy, setBusy] = useState(false); const [done, setDone] = useState(null);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
   if (!found) return <Modal title="Клиент" onClose={onClose}><div className="dim">Устройство {mac} сейчас не подключено — настройки можно поменять, когда оно появится в сети.</div></Modal>;
-  if (!drv || !drv.clientMgmt) return <Modal title={c.name || mac} onClose={onClose}><div className="dim">Роутер «{router.name}» не умеет настраивать клиентов из Rack Live.</div></Modal>;
+  if (!drv || !drv.clientMgmt) return <Modal title={nameNoFlag(c.name) || mac} onClose={onClose}><div className="dim">Роутер «{router.name}» не умеет настраивать клиентов из Rack Live.</div></Modal>;
   const mg = (router.state || {}).clientMgmt; const caps = (router.state || {}).clientCaps || { limit: true, policy: true, deny: true };
-  if (mg && !mg.ok) return <Modal title={c.name || c.mac} onClose={onClose} icon={<KindIcon kind={c.kind} size={30} />}>
+  if (mg && !mg.ok) return <Modal title={nameNoFlag(c.name) || c.mac} onClose={onClose} icon={<KindIcon kind={c.kind} name={c.name} size={30} />}>
     <div className="dim mono" style={{ fontSize: 12.5 }}>{c.ip} · {c.mac} · {router.name}</div>
     <div className="warn-box"><Icon name="lock" size={16} /><div><b>Настройки клиентов на «{router.name}» отключены.</b> {mg.reason[0].toUpperCase() + mg.reason.slice(1)}.
       Имя, постоянный адрес и доступ этого устройства настраиваются в самом роутере.</div></div>
@@ -132,7 +132,7 @@ function ClientEditor({ mac, onClose, initialName }) {
     finally { setBusy(false); }
   };
   const registeredSoon = c.registered || f.name.trim();
-  return <Modal title={c.name || c.mac} onClose={onClose} icon={<KindIcon kind={c.kind} size={30} />}
+  return <Modal title={nameNoFlag(c.name) || c.mac} onClose={onClose} icon={<KindIcon kind={c.kind} name={c.name} size={30} />}
     footer={<><Btn icon="refresh" busy={polling} onClick={repoll} title="Ещё раз прочитать данные с роутера">Обновить</Btn><div className="grow" />
       <Btn onClick={onClose}>Закрыть</Btn><Btn kind="primary" busy={busy} disabled={!!ipBad} onClick={save}>Сохранить на роутере</Btn></>}>
     <div className="dim mono" style={{ fontSize: 12.5 }}>{c.ip} · {c.mac} · {net ? net.name : c.segment}{c.registered ? ' · зарегистрировано' : ' · не зарегистрировано'}</div>

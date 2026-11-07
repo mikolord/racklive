@@ -64,8 +64,8 @@ function DevicesView() {
         {sites.length ? <div className="card-title" style={{ margin: '4px 2px 10px' }}><Icon name="globe" size={14} />{site || 'Локальная сеть'}</div> : null}
         <div className="grid cards">{items.map(d => { const st = d.state || {}; const s = st.summary || {};
           return <div key={d.id} className="card dev-card fade-in" onClick={() => openDevice(d)}>
-            <div className="row"><KindIcon kind={d.kind} size={42} round={12} />
-              <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 15.5 }} className="ellipsis">{d.name}</div>
+            <div className="row"><KindIcon kind={d.kind} name={d.name} size={42} round={12} />
+              <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 15.5 }} className="ellipsis">{nameNoFlag(d.name, d.kind)}</div>
                 <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{drvTitle(d.driver)}{s.ip ? ' · ' + s.ip : ''}</div></div>
               <StatusBadge status={st.status} /></div>
             <div className="dim ellipsis" style={{ fontSize: 13, marginTop: 10, minHeight: 18 }}>{deviceLine(d) || (s.model || '')}</div>
@@ -83,7 +83,7 @@ const DEVICE_CATALOG = [
     { driver: 'keenetic', title: 'Keenetic / Netcraze', proof: 'проверено на живом роутере',
       text: 'Самая полная поддержка: порты и VLAN, клиенты по сетям, mesh-точки, VPN, настройка клиентов, перезагрузка, плагины.',
       steps: ['Адрес — IP роутера в вашей сети (обычно 192.168.1.1).', 'Логин и пароль — те же, что для входа в веб-интерфейс. Лучше завести отдельного пользователя: Управление → Пользователи и доступ.',
-        'Роутер не у вас дома: нужен прямой доступ к его веб-интерфейсу (белый IP или домен с прямым доступом). Облачный KeenDNS не подходит — он пускает только браузер.'] },
+        'Роутер не у вас дома: укажите белый IP (при необходимости с портом: IP:ПОРТ) и пароль от веб-интерфейса — SSH не нужен, прошивка 5.2 тоже подходит. На самом роутере веб-интерфейс должен быть открыт из интернета (Управление → Пользователи и доступ). Облачный KeenDNS не подходит — он пускает только браузер.'] },
     { driver: 'openwrt', title: 'OpenWrt', proof: 'проверено на живом роутере',
       text: 'Порты (с настоящими номерами гнёзд), интерфейсы, DHCP-клиенты, USB-модем, плагины Forkop и Podkop.',
       steps: ['Свежая OpenWrt открывается по адресу 192.168.1.1, логин root, пароля нет. Пароль лучше сразу задать (LuCI: Система → Администрирование) — без пароля Rack Live тоже войдёт, но так в роутер может зайти любой.',
@@ -195,7 +195,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
     if (fl.type === 'device') return <Field key={fl.name} label={fl.label} hint={fl.hint}>
       <select className="select" value={f[fl.name] || ''} onChange={e => set(fl.name, e.target.value)}>
         <option value="">— выберите —</option>
-        {data.devices.filter(d => !device || d.id !== device.id).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>;
+        {data.devices.filter(d => !device || d.id !== device.id).map(d => <option key={d.id} value={d.id}>{nameNoFlag(d.name)}</option>)}</select></Field>;
     if (fl.type === 'textarea') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}>
       <textarea className="textarea mono" style={{ fontSize: 12, minHeight: 90 }} value={f[fl.name] || ''} placeholder={ph} onChange={e => set(fl.name, e.target.value)} autoComplete="off" spellCheck={false} /></Field></div>;
     if (fl.type === 'loads') return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={fl.label} hint={fl.hint}>
@@ -209,7 +209,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       return <div key={fl.name} style={{ gridColumn: '1 / -1' }}><Field label={`${fl.label}${cur.length ? ' · ' + cur.length : ''}`} hint={fl.hint}>
         <div className="dev-pick">{opts.map(d => { const on = cur.includes(d.id);
           return <button type="button" key={d.id} className={'chip' + (on ? ' on' : '')} onClick={() => set(fl.name, on ? cur.filter(x => x !== d.id) : [...cur, d.id])}>
-            <Icon name={on ? 'check' : d.kind} size={13} />{d.name}</button>; })}
+            <Icon name={on ? 'check' : d.kind} size={13} />{nameNoFlag(d.name)}</button>; })}
           {!opts.length ? <span className="dim" style={{ fontSize: 13 }}>Сначала добавьте устройства</span> : null}</div></Field></div>; }
     return <Field key={fl.name} label={fl.label} hint={fl.hint}>
       <input className="input" type={fl.type === 'password' ? 'password' : 'text'} value={f[fl.name] || ''} onChange={e => set(fl.name, e.target.value)}
@@ -231,12 +231,12 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
     } catch (e) { toast(e.message, true); }
   };
   const del = async () => {
-    if (!(await confirm(`Удалить «${device.name}»? История и связи на карте будут удалены.`, { danger: true, ok: 'Удалить' }))) return;
+    if (!(await confirm(`Удалить «${nameNoFlag(device.name)}»? История и связи на карте будут удалены.`, { danger: true, ok: 'Удалить' }))) return;
     await api('/api/devices/' + device.id, { method: 'DELETE' }); refresh(); toast('Удалено'); onClose();
   };
   if (token) return <AgentInstall token={token.token} onClose={onClose} />;
 
-  return <Modal title={device ? 'Настройки устройства' : (entry && entry.title) || drv.title} wide onClose={onClose} onBack={device ? null : toPicker} icon={<KindIcon kind={f.kind || drv.kind} />}
+  return <Modal title={device ? 'Настройки устройства' : (entry && entry.title) || drv.title} wide onClose={onClose} onBack={device ? null : toPicker} icon={<KindIcon kind={f.kind || drv.kind} name={f.name} />}
     footer={<>{device ? <Btn kind="danger" icon="trash" onClick={del}>Удалить</Btn> : <Btn onClick={toPicker}>Назад</Btn>}<div className="grow" />
       {drvId !== 'agent' ? <Btn onClick={doTest} busy={test && test.busy}>Проверить</Btn> : null}<Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
     {entry ? <div className="dim" style={{ fontSize: 13.5 }}>{entry.text}</div> : drv.description ? <div className="dim" style={{ fontSize: 13.5 }}>{drv.description}</div> : null}

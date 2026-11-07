@@ -3,7 +3,7 @@
 A problem must hold for its rule's delay before it is sent (no flapping), a recovery message follows when it clears,
 everything that fires in one evaluation goes out as one message, and active alerts survive a restart (no re-send).
 """
-import base64, copy, hashlib, hmac, json, smtplib, ssl, threading, time, urllib.request
+import base64, copy, hashlib, hmac, json, re, smtplib, ssl, threading, time, urllib.request
 from urllib.parse import parse_qsl, urlencode
 from email.mime.text import MIMEText
 
@@ -129,7 +129,7 @@ class Alerter:
             st = states.get(d['id']) or {}
             if not st.get('updated'):
                 continue
-            name, did = d.get('name') or d.get('host'), d['id']
+            name, did = re.sub(r'^\s*/abh(?:\s+|$)', '', d.get('name') or '', flags=re.I) or d.get('name') or d.get('host'), d['id']   # «/abh …» only asks the web page for a flag
             s = st.get('summary') or {}
             if r['offline']['on'] and st.get('status') == 'offline':
                 out[f'{did}:offline'] = (r['offline']['minutes'] * 60, f'🔴 {name}: нет связи' + (f" — {st['error']}" if st.get('error') else ''),

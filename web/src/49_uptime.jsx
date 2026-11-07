@@ -22,9 +22,9 @@ function uptimeLine(u, now) {
 
 function UptimeRow({ u, now, onClick, sub }) {
   return <div className="li up-row" style={{ cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
-    <KindIcon kind={u.kind === 'ap' ? 'ap' : u.devKind || 'other'} size={34} />
+    <KindIcon kind={u.kind === 'ap' ? 'ap' : u.devKind || 'other'} name={u.name} size={34} />
     <div className="grow" style={{ minWidth: 0 }}>
-      <div className="row" style={{ gap: 8 }}><span className="ellipsis" style={{ fontWeight: 600 }}>{u.name}</span>
+      <div className="row" style={{ gap: 8 }}><span className="ellipsis" style={{ fontWeight: 600 }}>{nameNoFlag(u.name)}</span>
         {sub ? <span className="dim3" style={{ fontSize: 11.5 }}>{sub}</span> : null}<div className="grow" />
         <b style={{ color: pctColor(u.pct), fontVariantNumeric: 'tabular-nums' }}>{pctText(u.pct)}</b></div>
       <UptimeBars days={u.days} now={now} />

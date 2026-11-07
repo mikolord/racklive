@@ -1,6 +1,6 @@
 """Frank as an agent: what is allowed, the file tools and the shell, the three modes (ask / edits / full) through a real demo server and a fake model.
 Run: python tools/frank_agent_test.py (prints ВСЁ OK)"""
-import http.server, json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.request
+import http.server, json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -54,6 +54,7 @@ shutil.rmtree(d, ignore_errors=True)
 # ── through the server with a fake model ──
 plan = {}          # the user's question → the tool call the fake model makes
 results = []       # what came back to the model from tools
+slow = [False]
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -65,7 +66,10 @@ class Fake(http.server.BaseHTTPRequestHandler):
         msgs = body.get('messages') or []
         last = msgs[-1]
         usage = {'prompt_tokens': 500, 'completion_tokens': 10}
-        if last['role'] == 'tool':
+        if slow[0]:                                    # a model that keeps calling tools, a second each: only «Стоп» ends it soon
+            time.sleep(1)
+            msg = {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'c1', 'type': 'function', 'function': {'name': 'read_file', 'arguments': '{"path": "hello.txt"}'}}]}
+        elif last['role'] == 'tool':
             results.append(last['content'])
             msg = {'role': 'assistant', 'content': 'Готово.'}
         else:
@@ -156,6 +160,28 @@ try:
     check('полный доступ: разрушительное всё равно запрещено', 'никогда' in results[-1], results[-1:])
     ev = api('/api/state')['events']
     check('изменения агента — в журнале событий', any(e.get('name') == 'Frank' and 'Команда: echo full' in e.get('text', '') for e in ev) and any('по кнопке' in e.get('text', '') for e in ev), [e.get('text') for e in ev[:5]])
+    # «Стоп»: the answer ends at the next step, is saved as stopped, and the chat takes the next question at once
+    slow[0] = True
+    r = api('/api/ai/ask', {'chat': cid, 'text': 'работай долго'})
+    time.sleep(1.5)
+    try:
+        api('/api/ai/ask', {'chat': cid, 'text': 'второй вопрос'}); check('пока Frank работает, второй вопрос в тот же чат сервер не берёт', False)
+    except urllib.error.HTTPError as e:
+        check('пока Frank работает, второй вопрос в тот же чат сервер не берёт', e.code in (400, 409, 422), e.code)
+    t0 = time.time()
+    check('«Стоп» принят', api('/api/ai/stop', {'job': r['job']}).get('stopped') is True)
+    for _ in range(100):
+        j = api('/api/ai/job', {'job': r['job']})
+        if j.get('done'):
+            break
+        time.sleep(.2)
+    slow[0] = False
+    check('после «Стоп» ответ заканчивается за пару секунд, а не после всех шагов', j.get('done') and time.time() - t0 < 6, round(time.time() - t0, 1))
+    last = api('/api/ai/chats/' + cid)['messages'][-1]
+    check('остановленный ответ сохранён с пометкой', last.get('stopped') is True and 'Остановлено' in last.get('text', ''), last)
+    check('«Стоп» на уже законченном ответе ничего не ломает', api('/api/ai/stop', {'job': r['job']}).get('stopped') is False)
+    cid2, j2 = say('после остановки', cid)
+    check('после остановки чат отвечает дальше', j2.get('done') and not j2.get('error'), j2)
     msgs = api('/api/ai/chats/' + cid)['messages']
     check('в ответе виден список того, что Frank выполнил', any(o.get('device') == 'Рабочая машина' for m in msgs for o in m.get('ops') or []))
 finally:

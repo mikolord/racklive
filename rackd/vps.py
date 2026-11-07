@@ -1,14 +1,15 @@
 """VPS plugins (driver «Сервер / VPS по SSH»): 3x-ui and Remnawave panels.
 
 Optional domain → nginx with a stub site + Let's Encrypt (certbot, auto-renew) in front of the panel;
-optional inbounds → VLESS TCP+TLS (8443) and VLESS XHTTP+TLS (2053) on the domain's certificate + a test user.
+optional inbounds → VLESS TCP+TLS (8443) and VLESS XHTTP+TLS (2053) on the domain's certificate + a test user;
+3x-ui without a domain → one VLESS XHTTP+TLS (2053) on the IP certificate + one ready user.
 Everything runs as root over SSH, in stages (each stage = one SSH call), so the UI can show progress.
 """
-import json, re, secrets, shlex, string
+import ipaddress, json, re, secrets, shlex, string
 
 CATALOG = [
     {'id': '3xui', 'drivers': ['ssh'], 'title': '3x-ui', 'icon': 'shield', 'kind': 'panel',
-     'description': 'Веб-панель Xray: пользователи, инбаунды, трафик. С доменом — за nginx с сайтом-заглушкой и сертификатом.',
+     'description': 'Веб-панель Xray: пользователи, инбаунды, трафик. С доменом — за nginx с сайтом-заглушкой и сертификатом, без домена — сертификат на IP и готовый пользователь VLESS XHTTP TLS.',
      'author': 'MHSanaei', 'home': 'https://github.com/MHSanaei/3x-ui', 'needsDomain': False},
     {'id': 'remnawave', 'drivers': ['ssh'], 'title': 'Remnawave', 'icon': 'shield', 'kind': 'panel',
      'description': 'Панель Remnawave (подписки, сквады, ноды) и нода на этом же сервере. Нужен домен.',
@@ -194,20 +195,46 @@ rm -f /tmp/rl-xui.sh
 # python steps print «@@fail …» on any error (stderr is not always captured by the SSH transport)
 PY_GUARD = "import sys\nsys.excepthook = lambda t, v, tb: print('@@fail внутренняя ошибка: %s: %s' % (t.__name__, v), flush=True)\n"
 
+# Panel API from the server itself: https (IP certificate) or http (behind nginx); 3x-ui ≥ 3.9 wants a CSRF token for the session, older panels have no such route
+XUI_API = r'''
+import http.cookiejar, json, ssl, urllib.error, urllib.parse, urllib.request
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+op = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+base, csrf = None, ''
+for scheme in ('https', 'http'):
+    try:
+        op.open(f"{scheme}://{CFG['base']}/", timeout=10).read(); base = f"{scheme}://{CFG['base']}"; break
+    except urllib.error.HTTPError:
+        base = f"{scheme}://{CFG['base']}"; break
+    except Exception:
+        pass
+if not base:
+    print('@@fail панель 3x-ui не отвечает на этом сервере'); raise SystemExit
+def get_csrf():
+    global csrf
+    try:
+        csrf = json.loads(op.open(base + '/csrf-token', timeout=15).read()).get('obj') or ''
+    except Exception:
+        csrf = ''
+def req(path, data=None, form=False):
+    body = urllib.parse.urlencode(data).encode() if form else json.dumps(data).encode() if data is not None else None
+    h = {'Content-Type': 'application/x-www-form-urlencoded' if form else 'application/json', 'X-Requested-With': 'XMLHttpRequest'}
+    if csrf:
+        h['X-CSRF-Token'] = csrf
+    return json.loads(op.open(urllib.request.Request(base + path, data=body, headers=h), timeout=30).read() or b'{}')
+get_csrf()
+if not req('/login', {'username': CFG['user'], 'password': CFG['password']}, form=True).get('success'):
+    print('@@fail не удалось войти в панель 3x-ui'); raise SystemExit
+get_csrf()
+'''
+
 
 def xui_inbounds(domain, user, password, port, path, xpath):
     """Runs python3 on the server: login to the panel on localhost, add two VLESS inbounds with a test client each."""
-    cfg = repr({'base': f'http://127.0.0.1:{port}/{path}', 'user': user, 'password': password, 'domain': domain,
+    cfg = repr({'base': f'127.0.0.1:{port}/{path}', 'user': user, 'password': password, 'domain': domain,
                       'tcp': TCP_PORT, 'xh': XHTTP_PORT, 'xpath': xpath})
-    return open_ports(TCP_PORT, XHTTP_PORT) + "python3 - <<'RLPY'\n" + f'CFG = {cfg}\n' + PY_GUARD + r'''
-import http.cookiejar, json, urllib.parse, urllib.request, uuid, secrets
-op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-def req(path, data=None, form=False):
-    body = urllib.parse.urlencode(data).encode() if form else json.dumps(data).encode() if data is not None else None
-    r = urllib.request.Request(CFG['base'] + path, data=body, headers={'Content-Type': 'application/x-www-form-urlencoded' if form else 'application/json'})
-    return json.loads(op.open(r, timeout=30).read() or b'{}')
-if not req('/login', {'username': CFG['user'], 'password': CFG['password']}, form=True).get('success'):
-    print('@@fail не удалось войти в панель 3x-ui'); raise SystemExit
+    return open_ports(TCP_PORT, XHTTP_PORT) + "python3 - <<'RLPY'\n" + f'CFG = {cfg}\n' + PY_GUARD + XUI_API + r'''
+import uuid, secrets
 d = CFG['domain']
 cert = [{'certificateFile': f'/etc/letsencrypt/live/{d}/fullchain.pem', 'keyFile': f'/etc/letsencrypt/live/{d}/privkey.pem',
          'ocspStapling': 3600, 'oneTimeLoading': False, 'usage': 'encipherment', 'buildChain': False}]
@@ -225,7 +252,7 @@ for remark, port, net, extra, flow in (('VLESS TCP TLS', CFG['tcp'], 'tcp', {'tc
     c = client('test-' + net + '-' + secrets.token_hex(2), flow)
     stream = dict({'network': net, 'security': 'tls', 'externalProxy': [], 'tlsSettings': tls}, **extra)
     body = {'up': 0, 'down': 0, 'total': 0, 'remark': remark, 'enable': True, 'expiryTime': 0, 'listen': '', 'port': port, 'protocol': 'vless',
-            'settings': json.dumps({'clients': [c], 'decryption': 'none', 'fallbacks': []}), 'streamSettings': json.dumps(stream), 'sniffing': sniff}
+            'settings': json.dumps({'clients': [c], 'decryption': 'none', 'encryption': 'none', 'fallbacks': []}), 'streamSettings': json.dumps(stream), 'sniffing': sniff}
     r = req('/panel/api/inbounds/add', body)
     if not r.get('success'):
         print('@@fail инбаунд «%s»: %s' % (remark, r.get('msg'))); raise SystemExit
@@ -237,6 +264,70 @@ for remark, port, net, extra, flow in (('VLESS TCP TLS', CFG['tcp'], 'tcp', {'tc
 print('@@ok')
 RLPY
 '''
+
+
+def xui_inbound_ip(ip, user, password, port, path, xpath):
+    """No domain: one VLESS XHTTP+TLS inbound with one ready user, TLS on Xray itself. Certificate: the panel's Let's Encrypt
+    one for the IP (installer's /root/cert/ip, renewed by acme.sh with a restart of x-ui), else a self-signed one (port 80 was busy…)."""
+    ip = str(ipaddress.IPv4Address(ip))              # it goes into the shell below
+    cfg = repr({'base': f'127.0.0.1:{port}/{path}', 'user': user, 'password': password, 'ip': ip, 'xh': XHTTP_PORT, 'xpath': xpath})
+    return open_ports(XHTTP_PORT) + f'''CD=/root/cert/ip; MODE=ip
+if [ ! -s $CD/fullchain.pem ] || [ ! -s $CD/privkey.pem ]; then
+  CD=/root/cert/rl-self; MODE=self
+  command -v openssl >/dev/null 2>&1 || apt-get install -y -q openssl >/dev/null 2>&1
+  mkdir -p $CD
+  [ -s $CD/fullchain.pem ] || openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 -subj "/CN={ip}" -addext "subjectAltName=IP:{ip}" -keyout $CD/privkey.pem -out $CD/fullchain.pem >/dev/null 2>&1
+  [ -s $CD/fullchain.pem ] || {{ echo "@@fail не удалось создать сертификат"; exit 0; }}
+  chmod 600 $CD/privkey.pem
+fi
+echo "сертификат ($MODE): $(openssl x509 -enddate -noout -in $CD/fullchain.pem 2>/dev/null)"
+export RL_CD=$CD RL_MODE=$MODE RL_PIN=$(openssl x509 -in $CD/fullchain.pem -outform der 2>/dev/null | sha256sum | cut -d' ' -f1)
+python3 - <<'RLPY'
+''' + f'CFG = {cfg}\n' + PY_GUARD + XUI_API + r'''
+import os, socket, subprocess, time, uuid, secrets
+ip, cd, self_signed, pin = CFG['ip'], os.environ['RL_CD'], os.environ['RL_MODE'] == 'self', os.environ.get('RL_PIN', '')
+tls = {'serverName': ip, 'minVersion': '1.2', 'maxVersion': '1.3', 'cipherSuites': '', 'rejectUnknownSni': False,
+       'certificates': [{'certificateFile': cd + '/fullchain.pem', 'keyFile': cd + '/privkey.pem', 'ocspStapling': 3600, 'oneTimeLoading': False, 'usage': 'encipherment', 'buildChain': False}],
+       'alpn': ['h2', 'http/1.1'], 'settings': {'allowInsecure': self_signed, 'fingerprint': 'chrome'}}
+c = {'id': str(uuid.uuid4()), 'flow': '', 'email': 'user-' + secrets.token_hex(2), 'limitIp': 0, 'totalGB': 0, 'expiryTime': 0, 'enable': True,
+     'tgId': '', 'subId': secrets.token_hex(8), 'comment': 'Rack Live', 'reset': 0}
+stream = {'network': 'xhttp', 'security': 'tls', 'externalProxy': [], 'tlsSettings': tls,
+          'xhttpSettings': {'path': CFG['xpath'], 'host': '', 'headers': {}, 'mode': 'auto', 'xPaddingBytes': '100-1000', 'scMaxBufferedPosts': 30, 'scMaxEachPostBytes': '1000000', 'noSSEHeader': False}}
+body = {'up': 0, 'down': 0, 'total': 0, 'remark': 'VLESS XHTTP TLS', 'enable': True, 'expiryTime': 0, 'listen': '', 'port': CFG['xh'], 'protocol': 'vless',
+        'settings': json.dumps({'clients': [c], 'decryption': 'none', 'encryption': 'none', 'fallbacks': []}), 'streamSettings': json.dumps(stream),
+        'sniffing': json.dumps({'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'metadataOnly': False, 'routeOnly': False})}
+r = req('/panel/api/inbounds/add', body)
+if not r.get('success'):
+    print('@@fail инбаунд: %s' % r.get('msg')); raise SystemExit
+def answers():
+    try:
+        with socket.create_connection(('127.0.0.1', CFG['xh']), timeout=4) as s, ctx.wrap_socket(s, server_hostname=None) as t:
+            return bool(t.version())
+    except Exception:
+        return False
+def wait(sec):
+    end = time.time() + sec
+    while time.time() < end:
+        if answers(): return True
+        time.sleep(1)
+    return False
+if not wait(10):                                     # Xray has not picked the inbound up by itself
+    subprocess.run(['systemctl', 'restart', 'x-ui'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not wait(20):
+        print('@@fail инбаунд создан, но порт %d не отвечает по TLS' % CFG['xh']); raise SystemExit
+q = {'type': 'xhttp', 'encryption': 'none', 'security': 'tls', 'sni': ip, 'fp': 'chrome', 'alpn': 'h2,http/1.1', 'path': CFG['xpath'], 'mode': 'auto'}
+if self_signed:                                      # clients differ: old ones read allowInsecure/insecure, new Xray checks the pinned hash
+    q.update(allowInsecure='1', insecure='1', pcs=pin)
+link = 'vless://%s@%s:%d?%s#%s' % (c['id'], ip, CFG['xh'], urllib.parse.urlencode(q, safe=',/'), urllib.parse.quote('RL-XHTTP'))
+print('@@link ' + json.dumps({'name': 'VLESS XHTTP TLS', 'url': link, 'selfSigned': self_signed}))
+print('@@ok')
+RLPY
+'''
+
+
+def xhttp_path():
+    """Same look as the working XHTTP inbounds: an ordinary-looking API path with a random part."""
+    return f"/assets/v/{rnd(10, 'abcdefghijkmnpqrstuvwxyz23456789')}/api"
 
 
 def xui_remove():

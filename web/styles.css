@@ -300,6 +300,20 @@ svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
 .node.client rect.box { fill: var(--bg2); }
 .node.group rect.box { fill: var(--fill); stroke-dasharray: 4 4; }
 .dim-out { opacity: .18; }
+/* clients of a remote device fly out of it on a tap and back in on the next one */
+@keyframes nodePopIn { from { opacity: 0; transform: translateX(60px) scale(.7); } 70% { opacity: 1; } to { opacity: 1; transform: none; } }
+@keyframes nodePopOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(60px) scale(.7); } }
+@keyframes edgeIn { from { opacity: 0; } }
+@keyframes edgeOut { to { opacity: 0; } }
+.pop-in, .pop-out { transform-box: fill-box; transform-origin: right center; }
+.pop-in { animation: nodePopIn .42s cubic-bezier(.2, .9, .3, 1.18) both; }
+.pop-out { animation: nodePopOut .24s cubic-bezier(.5, 0, .9, .4) both; pointer-events: none; }
+.edge-in { animation: edgeIn .45s ease-out .08s both; } .edge-out { animation: edgeOut .18s ease-in both; }
+.rc-pill rect { fill: var(--fill); stroke: var(--line2); transition: fill .25s, stroke .25s; }
+.rc-pill text { font-size: 10.5px; font-weight: 700; fill: var(--text2); font-family: var(--mono); transition: fill .25s; }
+.rc-chev { fill: none; stroke: var(--text2); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transform-origin: 0 0; transition: transform .3s cubic-bezier(.3, .9, .3, 1.2), stroke .25s; }
+.rc-pill.open rect { fill: var(--accent); stroke: var(--accent); } .rc-pill.open text { fill: #fff; } .rc-pill.open .rc-chev { stroke: #fff; transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .pop-in, .pop-out, .edge-in, .edge-out { animation-duration: .01s; animation-delay: 0s !important; } .rc-chev { transition: none; } }
 .port-pill rect { fill: var(--bg2); stroke: var(--line2); } .port-pill text { font-size: 10px; font-weight: 700; fill: var(--text2); font-family: var(--mono); }
 .rackbox rect.frame { fill: #1c1c1e; stroke: #3a3a3c; }
 [data-theme="light"] .rackbox rect.frame { fill: #2c2c2e; }
@@ -910,6 +924,11 @@ html.frank-mode .ai-list { overscroll-behavior: contain; touch-action: pan-y; }
 .fr-send:active { transform: scale(.93); }
 html.frank-mode .ai-suggest .chip { background: var(--glass); border: .5px solid var(--glass-line); padding: 9px 14px; border-radius: 18px; color: var(--text); font-size: 14px; }
 html.frank-mode .ai-panel.standalone { background: var(--bg); }
+/* the strip under the status bar is painted by the system from the page background, not from our panel: a skin's gradient on <body> made it a different colour from the screen (#141517 vs #090a0b) */
+/* iOS 26 ignores theme-color and takes it from the page's background and the elements at the edge, so nothing behind Frank may carry the skin's gradient: not <body>, not the full-screen .app-bg */
+html.frank-mode, html.frank-mode body, html.frank-mode .app-bg { background: var(--bg); background-attachment: scroll; }
+/* the room under the messages is the real height of the input capsule (queue, attachments and long text make it taller), measured in 57_ai.jsx */
+.ai-panel.standalone .ai-list { padding-bottom: calc(max(8px, env(safe-area-inset-bottom) - 14px) + var(--fr-dock-h, 124px) + 18px); }
 
 /* install banner inside the separate apps (until they run from the home screen) */
 .inst-banner { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-radius: 20px; font-size: 13px; line-height: 1.4;
@@ -1623,6 +1642,8 @@ html.term-mode input, html.term-mode select { font-size: 16px; }
 .cd-frame i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; } .cd-frame i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
 .cd-frame i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; } .cd-frame i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
 .cd-cam-hint { position: absolute; left: 20px; right: 20px; bottom: calc(env(safe-area-inset-bottom) + 36px); text-align: center; font-size: 15px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+/* installed app, black-translucent: iOS 26 may report a viewport shorter than the screen, so the camera takes the whole screen height and the hint stays clear of a possible cut at the bottom. Only here: in a Safari tab 100lvh would go under its toolbar */
+@media (display-mode: standalone) { .cd-cam { bottom: auto; height: 100lvh; } .cd-cam-hint { bottom: calc(env(safe-area-inset-bottom) + 72px); } }
 .cd-cam-err { position: absolute; left: 24px; right: 24px; top: 50%; transform: translateY(-50%); text-align: center; padding: 22px; border-radius: 24px; background: rgba(28,28,30,.85); }
 .cd-cam-err b { font-size: 18px; } .cd-cam-err p { margin: 8px 0; opacity: .85; line-height: 1.45; }
 /* stickers: only the sheet is printed */
@@ -1937,6 +1958,7 @@ html[data-look="test"] .chip { border: 1px solid var(--line2); background: trans
 /* «Test», everything in one language: no decorative colour — rack strips, widget tiles and miniatures, map lines, room tags, hints */
 .vt-inline { position: relative; }
 .vt-inline.empty { min-height: 0; }
+.vt-add { margin-bottom: 10px; display: flex; }                  /* no photo / 3D model: just the «+ Добавить вид» button, no empty panel */
 .vt-look { position: absolute; left: 10px; top: 10px; z-index: 3; }
 html[data-look="test"] .unit .strip { background: var(--line2) !important; }
 html[data-look="test"] .wg { --tc: var(--text2); --tone: var(--text2); }
@@ -2249,6 +2271,13 @@ html[data-look="test"] :is(.set-ic, .tool-ic, .wg-opt-ic, .mi, .newdev-ic, .kind
   background: none !important; border: 0 !important; box-shadow: none !important; border-radius: 0 !important; width: 22px !important; height: 22px !important; min-width: 22px; color: var(--text2) !important; }
 html[data-look="test"] :is(.set-ic, .tool-ic, .wg-opt-ic, .mi, .newdev-ic, .kind-ic) svg { stroke: currentColor !important; stroke-width: 1.6px !important; width: 18px; height: 18px; }
 html[data-look="test"] :is(.set-item, .ios-cell):hover :is(.set-ic, .kind-ic), html[data-look="test"] :is(.set-item.on, .ios-cell.on) .set-ic { color: var(--text) !important; }
+/* a server named «🇩🇪 …»: the picture of the country's flag instead of the kind icon (KindIcon in 00_core.jsx, files in web/flags).
+   Its own class, not .kind-ic: «Test» squeezes every .kind-ic into a bare 22 px line icon with !important */
+.kind-flag { position: relative; display: block; flex-shrink: 0; overflow: hidden; }
+.kind-flag img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.kind-flag::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent); pointer-events: none; }
+html[data-look="test"] .kind-flag { width: 26px !important; height: 26px !important; border-radius: 7px !important; }
+.unit:has(> .unit-grip) { padding-right: 56px; }                                  /* edit mode: the port LEDs stay clear of the drag handle */
 html[data-look="test"] .ios-ico { width: 22px; height: 22px; background: none; }
 /* lists as in the side menu: plain rows, a fill on hover, the open one with a left bar and a blue light */
 html[data-look="test"] :is(.ios-list, .ios-group, .set-nav) { background: transparent !important; border: 0 !important; box-shadow: none !important; }

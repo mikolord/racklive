@@ -748,7 +748,10 @@ def fixed_tokens(app, c, summary=''):
     return est_tokens(build_system(app, c, summary)), est_tokens(json.dumps(_openai_tools(acts, admin, bool(c.get('agent')) or full, full, browse), ensure_ascii=False))
 
 
-def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
+STOPPED = 'Остановлено по вашей просьбе.'
+
+
+def ask(app, c, chat, progress=lambda s, t=None: None, summary='', stop=lambda: False):
     """chat = [{'role': 'user'|'assistant', 'text', 'reasoning'?}] → {'text', 'tools', 'usage', 'proposals', 'reasoning'}
     summary = what the chat said before it was squeezed (/compact): goes to the system prompt"""
     c = resolved(c)
@@ -1047,6 +1050,8 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
             msgs = list(hist)
             tools = _anthropic_tools(acts, admin, agent, full, browse)
             for rnd in range(rounds + 1):
+                if stop():                                     # the press of «Стоп»: between steps, a request already sent to the model cannot be recalled
+                    return done(STOPPED)
                 progress('Думаю…' if rnd == 0 else 'Анализирую…', used)
                 body = {'model': c['model'], 'max_tokens': 16000, 'system': system, 'messages': msgs, 'tools': tools, 'fallbacks': 'default'}
                 if c.get('effort') in ('low', 'high', 'max'):
@@ -1071,7 +1076,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
                 echo = [b for i, b in enumerate(content) if b.get('type') != 'fallback'
                         and not (i < last_fb and b.get('type') in ('thinking', 'redacted_thinking', 'tool_use'))]
                 msgs.append({'role': 'assistant', 'content': echo})
-                results = [{'type': 'tool_result', 'tool_use_id': b['id'], 'content': call_tool(b['name'], b.get('input') or {})}
+                results = [{'type': 'tool_result', 'tool_use_id': b['id'], 'content': err(STOPPED) if stop() else call_tool(b['name'], b.get('input') or {})}
                            for b in calls if any(x is b for x in echo)]
                 if not results:
                     return done('\n\n'.join(b.get('text', '') for b in echo if b.get('type') == 'text').strip())
@@ -1083,6 +1088,8 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
             if 'openrouter.ai' in c['base']:
                 headers.update({'X-Title': 'Rack Live', 'HTTP-Referer': 'https://github.com/mikolord/racklive'})
             for rnd in range(rounds + 1):
+                if stop():
+                    return done(STOPPED)
                 progress('Думаю…' if rnd == 0 else 'Анализирую…', used)
                 body = {'model': c['model'], 'messages': msgs, 'tools': tools}
                 if c.get('effort') in ('low', 'high', 'max'):     # DeepSeek: low / high / max; OpenAI knows low / medium / high
@@ -1110,7 +1117,7 @@ def ask(app, c, chat, progress=lambda s, t=None: None, summary=''):
                         args = json.loads(fn.get('arguments') or '{}') or {}
                     except ValueError:
                         args = {}
-                    msgs.append({'role': 'tool', 'tool_call_id': tc.get('id'), 'content': call_tool(fn.get('name'), args if isinstance(args, dict) else {})})
+                    msgs.append({'role': 'tool', 'tool_call_id': tc.get('id'), 'content': err(STOPPED) if stop() else call_tool(fn.get('name'), args if isinstance(args, dict) else {})})
         raise AiError('модель не дала ответа')
 
     try:
@@ -1519,9 +1526,11 @@ class Assistant:
                 with self.lock:
                     ch3 = self.chat(job['chat'])
                     summary = (ch3 or {}).get('summary') or ''
-                res = ask(self.app, c, hist, progress, summary=summary)
+                res = ask(self.app, c, hist, progress, summary=summary, stop=lambda: bool(job.get('stop')))
                 job.update(text=res['text'], tools=res['tools'], usage=res['usage'])
                 msg.update(text=res['text'], tools=res['tools'])
+                if job.get('stop'):
+                    msg['stopped'] = True
                 if res['usage'].get('last'):
                     msg['ctx'] = res['usage']['last'] + res['usage'].get('lastOut', 0)      # the exact size of the window after this answer
                 if res.get('proposals'):
@@ -1551,6 +1560,15 @@ class Assistant:
                 job['done'] = True
         threading.Thread(target=run, daemon=True).start()
         return job
+
+    def stop(self, jid):
+        """«Стоп»: the answer ends at the next step (a request already sent to the model, or a command already running, finishes first)."""
+        j = self.jobs.get(str(jid or ''))
+        if not j or j['done']:
+            return False
+        j['stop'] = True
+        j['stage'] = 'Останавливаю…'
+        return True
 
     @staticmethod
     def _hist(m):

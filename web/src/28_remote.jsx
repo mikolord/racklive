@@ -12,7 +12,7 @@ function RemotePlugin({ p, device, reload }) {
   const [again, setAgain] = useState(false);
   const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'remote', ...body } });
   const pollJob = async id => {
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 480; i++) {
       await new Promise(r => setTimeout(r, 2500));
       let j; try { j = await call({ op: 'job', job: id }); } catch (e) { continue; }
       if (j.stage) setStage(j.stage);
@@ -25,7 +25,7 @@ function RemotePlugin({ p, device, reload }) {
 
   const connect = async () => {
     if (!h) return;
-    if (!(await confirm(`Rack Live поставит на роутер WireGuard и подключит его к «${h.deviceName} · ${h.name}»: на нём появится новое подключение «${device.name}», `
+    if (!(await confirm(`Rack Live поставит на роутер WireGuard и подключит его к «${nameNoFlag(h.deviceName)} · ${h.name}»: на нём появится новое подключение «${nameNoFlag(device.name)}», `
       + `остальные подключения не трогаются. На роутере добавится только туннель — сеть, Wi-Fi и интернет клиентов не меняются. Продолжить?`, { title: 'Подключить к центру', ok: 'Подключить' }))) return;
     setBusy('install'); setResult(null); setStage('Начинаю…');
     try {
@@ -52,7 +52,7 @@ function RemotePlugin({ p, device, reload }) {
   const form = <>
     {hubs.length ? <Field label="Центр — WireGuard-сервер, к которому роутер будет подключаться">
       <select className="input" value={hub} onChange={e => setHub(e.target.value)}>
-        {hubs.map(x => <option key={x.id} value={x.id}>{x.deviceName} · {x.name} ({x.net}, занято адресов: {x.used})</option>)}</select></Field>
+        {hubs.map(x => <option key={x.id} value={x.id}>{nameNoFlag(x.deviceName)} · {x.name} ({x.net}, занято адресов: {x.used})</option>)}</select></Field>
       : <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Центра пока нет. Нужен WireGuard-сервер: добавьте в Rack Live роутер Keenetic / Netcraze, на котором включён
         WireGuard-сервер («Другие подключения» → WireGuard, режим сервера), и откройте эту вкладку снова.</div>}
     {broken.map(x => <div key={x.id} className="dim3" style={{ fontSize: 12.5 }}>«{x.deviceName}»: {x.error}</div>)}

@@ -110,12 +110,12 @@ function InternetBody({ n }) {
         В России он заблокирован — тогда замер идёт через Cloudflare, а его в России замедляют: <b>отдача и пинг могут быть занижены</b>, загрузка обычно близка к реальной.
         Через VPN-туннели Cloudflare меряет честно. Каждый замер — до 1 ГБ трафика на гигабитном тарифе.</div>
       {routers.map(d => <div key={d.id}>
-        <div style={{ fontWeight: 600, fontSize: 13.5, margin: '4px 0' }}>Каналы роутера «{d.name}» {!d.entwarePasswordSet ? <span className="dim3" style={{ fontWeight: 400 }}>— нужен доступ к Entware (плагин «Entware»)</span> : null}</div>
+        <div style={{ fontWeight: 600, fontSize: 13.5, margin: '4px 0' }}>Каналы роутера «{nameNoFlag(d.name)}» {!d.entwarePasswordSet ? <span className="dim3" style={{ fontWeight: 400 }}>— нужен доступ к Entware (плагин «Entware»)</span> : null}</div>
         <div className="row wrap" style={{ gap: 6 }}>{tunnels(d).map(t => <button key={t.id} type="button" className={'chip' + (chan(d.id, t.id) ? ' on' : '')}
           disabled={!d.entwarePasswordSet} onClick={() => toggleChan(d.id, t.id)}><Icon name={t.id === 'isp' ? 'globe' : 'shield'} size={13} />{t.name}</button>)}</div></div>)}
       {servers.length ? <div><div style={{ fontWeight: 600, fontSize: 13.5, margin: '4px 0' }}>Интернет серверов</div>
         <div className="row wrap" style={{ gap: 6 }}>{servers.map(d => <button key={d.id} type="button" className={'chip' + ((c.servers || []).includes(d.id) ? ' on' : '')}
-          onClick={() => set('servers', (c.servers || []).includes(d.id) ? c.servers.filter(x => x !== d.id) : [...(c.servers || []), d.id])}><Icon name="server" size={13} />{d.name}</button>)}</div></div> : null}
+          onClick={() => set('servers', (c.servers || []).includes(d.id) ? c.servers.filter(x => x !== d.id) : [...(c.servers || []), d.id])}><Icon name="server" size={13} />{nameNoFlag(d.name)}</button>)}</div></div> : null}
       <Btn onClick={save}>Сохранить</Btn>
     </div>
   </>;
@@ -137,7 +137,7 @@ function BackupsTab({ device }) {
       здесь видно, какие строки менялись, и можно скачать прошлую версию. Пароли и ключи в сравнении скрыты.</Hint>
     <div className="row wrap"><Btn icon="download" kind="primary" onClick={now}>Сохранить сейчас</Btn>
       <span className="dim3" style={{ fontSize: 12.5 }}>{vers.length ? `версий: ${vers.length} · проверено ${fmt.ago(vers[0].checked || vers[0].t, data.now)}` : 'копий ещё нет'}</span>
-      {sel && diff && diff.length > 0 && (vers.find(v => v.t === sel) || {}).first === false ? <AskAi label="Что изменилось?" q={`Объясни простыми словами, что изменилось в конфигурации устройства «${device.name}» (id ${device.id}) в версии ${sel} от ${fmt.time(sel)}: что включили или выключили и не опасно ли это.`} /> : null}</div>
+      {sel && diff && diff.length > 0 && (vers.find(v => v.t === sel) || {}).first === false ? <AskAi label="Что изменилось?" q={`Объясни простыми словами, что изменилось в конфигурации устройства «${nameNoFlag(device.name)}» (id ${device.id}) в версии ${sel} от ${fmt.time(sel)}: что включили или выключили и не опасно ли это.`} /> : null}</div>
     {vers.length ? <div className="backup-grid">
       <div className="list backup-list">{vers.map(v => <div role="button" tabIndex={0} key={v.t} className={'li backup-v' + (sel === v.t ? ' on' : '')} onClick={() => setSel(v.t)}>
         <div className="grow" style={{ textAlign: 'left' }}><b style={{ fontSize: 13.5 }}>{fmt.time(v.t)}</b>

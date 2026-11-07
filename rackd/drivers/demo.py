@@ -4,7 +4,7 @@ from ..util import DriverError
 import math, random, secrets, time
 
 from . import Driver
-from .. import cable, plugins, vps
+from .. import cable, keenetic_vless as kv, plugins, vps
 
 T0 = time.time()
 MAC = lambda n: 'aa:00:00:00:%02x:%02x' % (n // 256, n % 256)
@@ -160,17 +160,40 @@ class DemoRouter(DemoBase):
                 p.update(checks=[{'label': 'Компонент «WireGuard VPN»', 'ok': True}], installed=bool(cfg.get('rlTunnels')), fw='4.3.6',
                          tunnels=[{'iface': 'Wireguard0', 'name': 'Офисный VPN', 'managed': False, 'groups': 0, 'domains': 0}] +
                                  [dict(t, managed=True, groups=1 if t.get('domains') else 0) for t in cfg.get('rlTunnels') or []])
+            elif p['kind'] == 'vless':
+                on = p['id'] in self._installed
+                p.update(checks=[{'label': 'Entware установлен', 'ok': True}, {'label': 'Rack Live может зайти в Entware по SSH', 'ok': True}],
+                         ssh={'set': True, 'ok': True, 'port': 222, 'user': 'root'}, installed=on)
+                if p['id'] == 'xkeen':
+                    p.update(version='2.1' if on else None, core='26.10.21' if on else None, running=on, configured=on, policy={'id': 'Policy3', 'hosts': 0} if on else None)
+                else:
+                    p['tunnels'] = [{'tag': 'demo-vless', 'name': 'Демо VLESS', 'type': 'vless'}] if on else []
             else:
                 inst = plugins.INSTALLERS[p['id']]
                 p.update(checks=[{'label': 'Entware установлен', 'ok': True}, {'label': 'Rack Live может зайти в Entware по SSH', 'ok': True}],
                          ssh={'set': True, 'ok': True, 'port': 222, 'user': 'root'}, url=f"http://10.0.0.1:{inst['port']}", login=inst['login'],
                          installed=p['id'] in self._installed, version=self._installed.get(p['id']))
             out.append(p)
-        return {'model': 'Keenetic Ultra (KN-1811)', 'fw': '4.3.6', 'arch': 'aarch64', 'plugins': out}
+        return {'model': 'Keenetic Ultra (KN-1811)', 'fw': '4.3.6', 'arch': 'aarch64', 'plugins': out,
+                'entwareAccess': {'set': True, 'ok': True, 'port': 222, 'user': 'root', 'entware': True, 'host': '', 'defaultHost': '10.0.0.1'}}
 
     _installed = {}
+    async_ops = ('vless_setup', 'vless_remove')
 
     def plugin(self, cfg, pid, op, params):
+        if pid in ('xkeen', 'vlessawg'):
+            if op == 'preview':
+                return {'ok': True, 'preview': kv.summary(kv.parse_vless(params.get('link')))}
+            if op == 'vless_setup':
+                v = kv.parse_vless(params.get('link'))
+                (params.get('_progress') or (lambda s: None))('Настройка (демо)')
+                time.sleep(.5)
+                self._installed[pid] = '2.1'
+                return {'ok': True, 'log': [{'cmd': f"— ключ {v['host']}:{v['port']} проверен (демо)", 'ok': True, 'msg': ''}], 'message': f"Работает через {v['host']}:{v['port']} (демо)"}
+            if op == 'vless_remove':
+                self._installed.pop(pid, None)
+                return {'ok': True, 'log': [], 'message': 'Удалено (демо)'}
+            return {'ok': True, 'message': 'Готово (демо)'}
         if pid in plugins.INSTALLERS:
             meta = next(p for p in plugins.CATALOG if p['id'] == pid)
             if op == 'ssh':
@@ -591,14 +614,17 @@ class DemoServer(DemoBase):
             raise ValueError('на сервере уже стоит другая панель — сначала удалите её')
         dom = vps.clean_domain(params.get('domain')) if params.get('withDomain') else ''
         for s in (['Проверка DNS', "nginx, сайт-заглушка и сертификат Let's Encrypt"] if dom else []) + [f'Установка {pid} (демо)'] + \
-                (['Инбаунды VLESS TCP + XHTTP и тестовый пользователь'] if params.get('inbounds') and dom else []):
+                (['Инбаунды VLESS TCP + XHTTP и тестовый пользователь'] if params.get('inbounds') and dom else
+                 ['Инбаунд VLESS XHTTP TLS и пользователь'] if params.get('inbounds') and pid == '3xui' else []):
             progress(s)
             time.sleep(.6)
         self._panels[pid] = '2.6.0'
         uid = '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed'
         links = [{'name': 'VLESS TCP TLS', 'url': f'vless://{uid}@{dom}:8443?type=tcp&security=tls&sni={dom}&fp=chrome&flow=xtls-rprx-vision#RL-TCP'},
                  {'name': 'VLESS XHTTP TLS', 'url': f'vless://{uid}@{dom}:2053?type=xhttp&security=tls&sni={dom}&fp=chrome&path=/xh7k2m&mode=auto#RL-XHTTP'}] \
-            if params.get('inbounds') and dom else []
+            if params.get('inbounds') and dom else \
+            [{'name': 'VLESS XHTTP TLS', 'url': f'vless://{uid}@198.51.100.40:2053?type=xhttp&encryption=none&security=tls&sni=198.51.100.40&fp=chrome&alpn=h2,http/1.1&path=/assets/v/xh7k2m9q4w/api&mode=auto#RL-XHTTP', 'selfSigned': False}] \
+            if params.get('inbounds') and pid == '3xui' else []
         info = {'url': f'https://{dom}/k3v9q2m7x4p8w1z6/' if dom else 'https://198.51.100.40:41873/k3v9q2m7x4p8w1z6/', 'user': 'rq7m2k9x4p',
                 'password': 'Xk29fLq8Zr4Mn7Pw3Ty6', 'domain': dom or None, 'links': links, 't': int(time.time())}
         return {'ok': True, 'log': [{'cmd': '— демо-установка', 'ok': True, 'msg': ''}], 'info': info, 'message': f'{pid} установлен (демо)'}
@@ -664,7 +690,7 @@ def seed(store):
     o = D(name='Гостевой роутер · LTE', driver='demo_openwrt', kind='router', host='10.0.0.3')
     um = D(name='Свитч в кабинете', driver='unmanaged', kind='switch', ports='8', uplinkDevice=s, uplinkPort='10')     # an unmanaged one on port 10 — the printer hangs on it
     media = D(name='Медиасервер', driver='demo_server', kind='server', host='10.0.0.7')
-    D(name='VPS · Франкфурт', driver='demo_server', kind='server', host='198.51.100.40', location='remote', site='Облако')
+    D(name='🇩🇪 VPS · Франкфурт', driver='demo_server', kind='server', host='198.51.100.40', location='remote', site='Облако')       # a flag emoji in the name → the flag picture as the icon (KindIcon)
     D(name='Сайт компании', driver='demo_site', kind='web', host='https://example.com', location='remote', site='Облако')
     pve = D(name='Proxmox · виртуализация', driver='demo_proxmox', kind='server', host='10.0.0.8')
     ups = D(name='ИБП 1500 ВА', driver='ups', kind='ups', mode='manual', powerVA='1500', powerW='900', batteryV='12', batteryAh='9', batteryCount='2',

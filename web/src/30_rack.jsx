@@ -78,7 +78,7 @@ function RackUnit({ unit, dev, rack, edit, onClick, onPointerDown, dragging, swa
       {edit ? <div className="unit-grip" title="Потяните, чтобы переместить">⠿</div> : null}
       {many.map(id => { const d = data.devices.find(x => x.id === id); if (!d) return null; const st = (d.state || {}).status;
         return <div key={id} data-cord-device={id} className="shelf-cell" onClick={e => { if (edit) return; e.stopPropagation(); openDevice(d); }}>
-          <Icon name={d.kind} size={14} color="currentColor" />{st ? <span className={'dot ' + st} /> : null}<span className="ellipsis">{d.name}</span>{cords ? <Leds ports={rackCordPorts(rack, data, unit, id, (d.state || {}).ports)} min={1} all /> : null}</div>; })}
+          <Icon name={d.kind} size={14} color="currentColor" />{st ? <span className={'dot ' + st} /> : null}<span className="ellipsis">{nameNoFlag(d.name)}</span>{cords ? <Leds ports={rackCordPorts(rack, data, unit, id, (d.state || {}).ports)} min={1} all /> : null}</div>; })}
     </div>;
   }
   const kind = PASSIVE.includes(unit.type) ? unit.type : (dev && dev.kind) || unit.type;
@@ -119,13 +119,13 @@ function RackModeTransition({ show3d, rack, devById, side, onUnit, flat, cords, 
 }
 
 function RackView({ placeId, embedded } = {}) {          // embedded: one place (rack, panel, room) inside a window opened from the plan — see PlaceModal
-  const { data, edit, saveRack, saveRacks, openDevice: openDeviceCtx } = useApp();
+  const { data, edit, admin, saveRack, saveRacks, openDevice: openDeviceCtx } = useApp();
   const openDevice = embedded ? (d, t, p) => openDeviceCtx(d, t, p, true) : openDeviceCtx;           // a device opened from inside that window is a window on top of it
   const [rackId, setRackId] = useState(() => { const p = placeId || new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
   const [side, setSide] = useState(() => new URLSearchParams(location.search).get('side') === 'back' ? 'back' : 'front');
   const [r3, setR3] = useState(() => { try { return localStorage.getItem('rl_rack3d') !== '0'; } catch (e) { return true; } });
   const show3d = isTestLook() && r3 && !edit;
-  const [cordsOn, setCordsOn] = useState(() => lsGet('rl_rackcords', '0') === '1');
+  const [cordsOn, setCordsOn] = useState(() => new URLSearchParams(location.search).get('cords') === '1' || lsGet('rl_rackcords', '0') === '1');
   const [cordSettings, setCordSettings] = useState(null); const cordSurface = useRef(null);
   useEffect(() => { if (!edit) setCordSettings(null); }, [edit]);
   const [editing, setEditing] = useState(() => { const id = new URLSearchParams(location.search).get('editunit');   // unit being edited / created
@@ -279,7 +279,7 @@ function RackView({ placeId, embedded } = {}) {          // embedded: one place 
       onSelect={setRackId} /> : null}
     {moving ? <PlaceMove rack={rack} onClose={() => setMoving(false)} /> : null}
     {newPlace ? <NewPlace onClose={() => setNewPlace(false)} onCreate={addPlace} /> : null}
-    {info ? <Modal title={info.name} onClose={() => setInfo(null)} icon={<KindIcon kind={info.type} />} wide={!!info.portmap}>
+    {info ? <Modal title={nameNoFlag(info.name)} onClose={() => setInfo(null)} icon={<KindIcon kind={info.type} name={info.name} />} wide={!!info.portmap}>
       <KV rows={[['Тип', KIND_TEXT[info.type]], ...(rack.kind === 'rack' || !rack.kind ? [['Позиция', `U${info.uStart}${info.uSize > 1 ? '–' + (info.uStart + info.uSize - 1) : ''}`], ['Сторона', info.side === 'back' ? 'Тыл' : 'Фронт']] : [])]} />
       {info.portmap ? <PortMapView unit={info} /> : null}
       {info.type === 'pdu' ? (() => { const u = allUnits(data).find(x => x.id === info.id) || info; const pl = u.powerLoad || { w: 0, items: [], feeders: [] };
@@ -349,8 +349,8 @@ function TileView({ rack, edit, devById, openDevice, onEdit, onInfo, onSettings,
           style={{ left: dp ? dp.x : x, top: dp ? dp.y : y, width: TW }}
           onPointerDown={e => start(u, { x, y }, e)} onClick={() => { if (edit) return; d ? openDevice(d) : onInfo(u); }}>
           <div className="strip" style={{ background: u.color || '#0a84ff' }} />
-          <div className="row" style={{ gap: 9, minWidth: 0 }}><KindIcon kind={kind} size={32} round={9} />
-            <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{st ? <span className={'dot ' + st.status} /> : null}<span className="ellipsis" style={{ fontWeight: 650, fontSize: 14 }}>{u.name}</span></div>
+          <div className="row" style={{ gap: 9, minWidth: 0 }}><KindIcon kind={kind} name={u.name} size={32} round={9} />
+            <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{st ? <span className={'dot ' + st.status} /> : null}<span className="ellipsis" style={{ fontWeight: 650, fontSize: 14 }}>{nameNoFlag(u.name)}</span></div>
               <div className="dim ellipsis" style={{ fontSize: 12 }}>{d ? deviceLine(d) : KIND_TEXT[u.type]}</div></div></div>
           {socketLeds(u, d) ? <Leds ports={socketLeds(u, d)} min={1} round /> : <Leds ports={u.portmap ? pmLeds(data, u) : st && st.ports} min={u.portmap ? 2 : 4} />}
         </div>; })}
@@ -464,7 +464,7 @@ function UnitEditor({ unit, rack, onClose, fits }) {
       <div className="unit-pick">
         {devs.map(d => { const pl = placedIn(d.id);
           return <button key={d.id} className={'up-opt' + (pl ? ' placed' : '') + (f.deviceId === d.id ? ' on' : '')} onClick={() => pickDev(d)}>
-            <KindIcon kind={d.kind} size={32} round={9} /><div><b>{d.name}</b><small>{pl ? `уже стоит в «${pl}»` : KIND_TEXT[d.kind] || ''}</small></div></button>; })}
+            <KindIcon kind={d.kind} name={nameNoFlag(d.name)} size={32} round={9} /><div><b>{nameNoFlag(d.name)}</b><small>{pl ? `уже стоит в «${pl}»` : KIND_TEXT[d.kind] || ''}</small></div></button>; })}
         <button className="up-opt add" onClick={() => setAddDev(true)}><span className="up-plus"><Icon name="plus" size={18} /></span>
           <div><b>Новое устройство</b><small>введите адрес — тип определится сам</small></div></button>
       </div>
@@ -489,7 +489,7 @@ function UnitEditor({ unit, rack, onClose, fits }) {
         return <label key={d.id} className={'chip' + (on ? ' on' : '')} style={{ opacity: !on && ids.length >= SHELF_MAX ? .4 : 1 }}>
           <input type="checkbox" checked={on} disabled={!on && ids.length >= SHELF_MAX} style={{ display: 'none' }}
             onChange={() => { const next = on ? ids.filter(x => x !== d.id) : [...ids, d.id]; setF(x => ({ ...x, deviceIds: next, deviceId: next[0] || null })); }} />
-          <Icon name={d.kind} size={13} />{d.name}</label>; })}</div></Field> : null}
+          <Icon name={d.kind} size={13} />{nameNoFlag(d.name)}</label>; })}</div></Field> : null}
     {!f.deviceId && f.type === 'ups' ? <label className="row" style={{ gap: 8, fontSize: 13.5, cursor: 'pointer' }}>
       <Switch on={autoUps} onChange={setAutoUps} /><span>Показывать нагрузку и сколько продержится — после «Сохранить» откроется форма: мощность с наклейки и что подключено</span></label> : null}
     {(() => { const where = unitDevIds(f).map(id => { const pl = data.racks.find(r => r.units.some(x => x.id !== unit.id && unitDevIds(x).includes(id)));

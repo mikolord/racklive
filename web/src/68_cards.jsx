@@ -160,7 +160,7 @@ function CardUps({ device }) {
     <Card title="Потребление за сутки"><DayChart points={hist} field="w" unit="Вт" color="var(--orange)" /></Card>
     {ups.runtimeMin ? <Card title="Как будет садиться батарея"><UpsCurve min={ups.runtimeMin} charge={ups.charge} /></Card> : null}
     {conn.length ? <Card title={`Что подключено · ${conn.length}`}><div className="list">{conn.map((c, i) => <div className="li" key={c.id || c.unit || i} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
-      <div className="row" style={{ gap: 10 }}><KindIcon kind={c.kind || 'other'} size={30} round={8} /><div className="grow ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</div><b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
+      <div className="row" style={{ gap: 10 }}><KindIcon kind={c.kind || 'other'} name={nameNoFlag(c.name)} size={30} round={8} /><div className="grow ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(c.name)}</div><b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
       <div className="bar"><i style={{ width: Math.max(4, c.w * 100 / top) + '%', background: 'var(--orange)' }} /></div></div>)}</div></Card> : null}
   </>;
 }
@@ -542,6 +542,17 @@ function CardPage({ e }) {
 }
 
 /* ───────── Rack Live → «Сканер» → «Фото»: a picture of the device and its ports marked on it by hand ───────── */
+/* the box of the visible pixels (alpha > 10) of a canvas → a new canvas cut to it; the same canvas when there is nothing to cut (or no transparency) */
+function trimTransparent(c) {
+  const w = c.width, h = c.height; if (!w || !h) return c;
+  let a; try { a = c.getContext('2d').getImageData(0, 0, w, h).data; } catch (e) { return c; }
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0, i = y * w * 4 + 3; x < w; x++, i += 4) if (a[i] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0 || (x0 === 0 && y0 === 0 && x1 === w - 1 && y1 === h - 1)) return c;
+  const t = document.createElement('canvas'); t.width = x1 - x0 + 1; t.height = y1 - y0 + 1;
+  t.getContext('2d').drawImage(c, x0, y0, t.width, t.height, 0, 0, t.width, t.height);
+  return t;
+}
 async function shrinkImage(file) {
   const url = URL.createObjectURL(file);
   try {
@@ -549,7 +560,8 @@ async function shrinkImage(file) {
     const k = Math.min(1, 1800 / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement('canvas');
     c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     const png = /png|webp/.test(file.type);                     // a cut-out on a transparent background stays transparent
-    return await new Promise(ok => c.toBlob(ok, png ? 'image/png' : 'image/jpeg', .9));
+    const out = png ? trimTransparent(c) : c;                   // …and loses its empty transparent margins: the device fills the picture (a rack unit, a card)
+    return await new Promise(ok => out.toBlob(ok, png ? 'image/png' : 'image/jpeg', .9));
   } finally { URL.revokeObjectURL(url); }
 }
 
@@ -718,7 +730,7 @@ function StickersCard({ items, onPrint }) {
     {items.length > 8 ? <SearchBox value={q} onChange={setQ} placeholder="Найти устройство" /> : null}
     <div className="list cd-pick" style={{ marginTop: 8 }}>{shown.map(e => <label className="li" key={e.id} style={{ cursor: 'pointer' }}>
       <input type="checkbox" checked={!!pick[e.id]} onChange={ev => setPick(p => ({ ...p, [e.id]: ev.target.checked }))} />
-      <KindIcon kind={e.kind} size={30} round={8} /><div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{e.name}</div>
+      <KindIcon kind={e.kind} name={nameNoFlag(e.name)} size={30} round={8} /><div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(e.name)}</div>
         <div className="dim ellipsis" style={{ fontSize: 12 }}>{[e.place || e.group, e.sub].filter(Boolean).join(' · ')}</div></div></label>)}</div>
     <div style={{ marginTop: 12 }}><Btn kind="primary" icon="download" disabled={!chosen.length} onClick={() => onPrint(chosen, mm)}>Сохранить / поделиться · {chosen.length}</Btn></div>
     <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>В окне печати поставьте «Масштаб 100%», а не «по размеру страницы».</div>
@@ -733,7 +745,7 @@ function useCardsSave() {
 
 function QrModal({ e, onClose, onPrint }) {
   const toast = useToast(); const [mm, setMm] = useState(() => +lsGet('rl_cards_mm', 25));
-  return <Modal title={e.name} onClose={onClose} footer={<><Btn onClick={onClose}>Закрыть</Btn><Btn kind="primary" icon="download" onClick={() => onPrint([e], mm)}>Сохранить / поделиться</Btn></>}>
+  return <Modal title={nameNoFlag(e.name)} onClose={onClose} footer={<><Btn onClick={onClose}>Закрыть</Btn><Btn kind="primary" icon="download" onClick={() => onPrint([e], mm)}>Сохранить / поделиться</Btn></>}>
     <div className="col" style={{ alignItems: 'center', gap: 12 }}>
       <div style={{ background: '#fff', padding: 14, borderRadius: 18, lineHeight: 0 }}><QrCode text={'RL:' + e.id} size={230} /></div>
       <div className="mono" style={{ fontSize: 15, fontWeight: 650 }}>RL:{e.id}</div>
@@ -766,8 +778,8 @@ function ScannerMenu() {
       <div className="dim" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>Порты, нагрузка ИБП и состояние берутся из Rack Live сами. «Вид» — 3D-модель устройства (своя, от нейросети, или автоматическая по портам) либо фото с отмеченными портами. «Дополнить» добавляет свои строки и заметку; «QR» показывает наклейку и сохраняет её картинку; «Открыть» показывает карточку так, как её видит приложение.</div>
       <div style={{ marginBottom: 10 }}><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" /></div>
       <div className="plug-list" style={{ border: 0, margin: 0, padding: 0 }}>{shown.map(x => <div className="plug-row" key={x.src + x.id} style={{ cursor: 'default', flexWrap: 'wrap' }}>
-        <KindIcon kind={x.kind} size={32} round={9} />
-        <span style={{ textAlign: 'left', minWidth: 0, flex: '1 1 150px' }}><b className="ellipsis" style={{ display: 'block' }}>{x.name}</b>
+        <KindIcon kind={x.kind} name={x.name} size={32} round={9} />
+        <span style={{ textAlign: 'left', minWidth: 0, flex: '1 1 150px' }}><b className="ellipsis" style={{ display: 'block' }}>{nameNoFlag(x.name)}</b>
           <small className="ellipsis" style={{ display: 'block' }}>{[x.place || x.group, x.sub].filter(Boolean).join(' · ')}</small></span>
         <span className="row" style={{ gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
           <Btn size="sm" icon="box" onClick={() => setPhoto(x)} title="3D-модель или фото">Вид</Btn>

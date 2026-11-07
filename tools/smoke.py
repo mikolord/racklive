@@ -464,6 +464,87 @@ def main():
                 break
             time.sleep(.3)
         check('collector: remove drops the site when asked', j.get('done') and not j.get('error') and not any(s['name'] == 'Квартира Теста' for s in api('/api/sites')['sites']), json.dumps(j, ensure_ascii=False)[:300])
+        srv_d = next(d for d in api('/api/state')['devices'] if d['driver'] == 'demo_server')        # «Сетевой доктор»
+        dl = api('/api/doctor')['devices']
+        check('doctor: devices are listed with how deep each can be checked', any(x['id'] == srv_d['id'] and x['access'] == 'inside' for x in dl) and not any(x['driver'] == 'site_node' for x in dl), json.dumps(dl, ensure_ascii=False)[:300])
+        dj = api('/api/doctor/run', {'device': srv_d['id']}, 'POST')['job']
+        for _ in range(40):
+            j = api('/api/doctor/job', {'job': dj}, 'POST')
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        drep = api('/api/doctor/' + srv_d['id'])
+        check('doctor: a check runs as a job and reports', j.get('done') and not j.get('error') and drep['counts']['bad'] >= 2 and any(f['id'].endswith('guard:none') for f in drep['findings']), json.dumps(j, ensure_ascii=False)[:300])
+        dj = api('/api/doctor/run', {'device': srv_d['id'], 'fix': 'fail2ban'}, 'POST')['job']
+        for _ in range(40):
+            j = api('/api/doctor/job', {'job': dj}, 'POST')
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        rtr_d = next(d for d in api('/api/state')['devices'] if d['driver'] == 'demo_router')
+        dj2 = api('/api/doctor/run', {'device': rtr_d['id']}, 'POST')['job']
+        for _ in range(40):
+            j2 = api('/api/doctor/job', {'job': dj2}, 'POST')
+            if j2.get('done'):
+                break
+            time.sleep(.3)
+        rrep = api('/api/doctor/' + rtr_d['id'])
+        check('doctor: a router gets a fresh outside check and the list of what is open', not j2.get('error') and isinstance((rrep.get('outside') or {}).get('rows'), list) and (rrep['outside'].get('checked') or rrep['outside'].get('error')), json.dumps(rrep.get('outside'), ensure_ascii=False)[:300])
+        check('doctor: the devices say whether every port can be checked', next(x for x in api('/api/doctor')['devices'] if x['id'] == rtr_d['id'])['fullable'] is True, 'fullable')
+        dj2 = api('/api/doctor/run', {'device': rtr_d['id'], 'full': True}, 'POST')['job']
+        for _ in range(60):
+            j2 = api('/api/doctor/job', {'job': dj2}, 'POST')
+            if j2.get('done'):
+                break
+            time.sleep(.3)
+        rrep = api('/api/doctor/' + rtr_d['id'])
+        check('doctor: «Полная проверка» of a router covers all ports', j2.get('done') and not j2.get('error') and rrep['outside'].get('full') is True and rrep['outside']['checked'] == 65535 and not rrep['outside'].get('fullError'), json.dumps(rrep.get('outside'), ensure_ascii=False)[:300])
+        check('doctor: the fail2ban fix runs on a press', j.get('done') and not j.get('error') and 'fail2ban' in (j.get('message') or ''), json.dumps(j, ensure_ascii=False)[:300])
+        vuid = '11111111-2222-4333-8444-555555555555'                                                # «Проверка VPN»
+        vj = api('/api/vpncheck/run', {'text': f'vless://{vuid}@203.0.113.10:443?type=tcp&security=reality&pbk=KEY&sni=www.example.com&flow=xtls-rprx-vision#Демо', 'cdn': ''}, 'POST')['job']
+        for _ in range(40):
+            j3 = api('/api/vpncheck/job', {'job': vj}, 'POST')
+            if j3.get('done'):
+                break
+            time.sleep(.3)
+        vrep = api('/api/vpncheck')
+        check('vpn check: a pasted link gives a report, and the report has no secret', j3.get('done') and not j3.get('error') and vrep['report']['items'][0]['proto'] == 'VLESS' and vrep['report']['path']['state'] == 'direct' and vuid not in json.dumps(vrep), json.dumps(j3, ensure_ascii=False)[:300])
+        rtr = next(d for d in api('/api/state')['devices'] if d['driver'] == 'demo_router')          # VLESS on a Keenetic from a pasted link
+        RP = lambda body: api(f"/api/devices/{rtr['id']}/plugins", body, 'POST')
+        vkey = 'vless://1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed@203.0.113.5:2053?type=xhttp&security=tls&sni=203.0.113.5&path=/a#RL'
+        check('vless: plugins are listed', {'xkeen', 'vlessawg'} <= {p['id'] for p in RP({'op': 'status'})['plugins']})
+        pv = RP({'plugin': 'xkeen', 'op': 'preview', 'link': vkey})['preview']
+        check('vless: preview without secrets', pv['host'] == '203.0.113.5' and pv['net'] == 'xhttp' and '1b9d6bcd' not in json.dumps(pv))
+        try:
+            RP({'plugin': 'xkeen', 'op': 'preview', 'link': 'http://x'}); check('vless: a bad link is refused', False)
+        except urllib.error.HTTPError as e:
+            check('vless: a bad link is refused', 'vless://' in e.read().decode('utf-8', 'replace'))
+        jid = RP({'plugin': 'xkeen', 'op': 'vless_setup', 'link': vkey})['job']
+        for _ in range(40):
+            j = RP({'plugin': 'xkeen', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        check('vless: setup runs as a job and installs', j.get('done') and not j.get('error') and next(p for p in RP({'op': 'status'})['plugins'] if p['id'] == 'xkeen')['installed'], json.dumps(j, ensure_ascii=False)[:300])
+        check('vless: the key is not kept anywhere in the job', '1b9d6bcd' not in json.dumps(j))
+        jid = RP({'plugin': 'xkeen', 'op': 'vless_remove'})['job']
+        for _ in range(40):
+            if RP({'plugin': 'xkeen', 'op': 'job', 'job': jid}).get('done'):
+                break
+            time.sleep(.3)
+        jid = VP({'plugin': '3xui', 'op': 'install', 'withDomain': False, 'inbounds': True})['job']       # no domain: one XHTTP+TLS user on the IP
+        for _ in range(40):
+            j = VP({'plugin': '3xui', 'op': 'job', 'job': jid})
+            if j.get('done'):
+                break
+            time.sleep(.3)
+        ls = ((j.get('result') or {}).get('info') or {}).get('links') or []
+        check('vps: install without a domain gives one XHTTP TLS user', j.get('done') and len(ls) == 1 and 'type=xhttp' in ls[0]['url'] and 'security=tls' in ls[0]['url'], json.dumps(j, ensure_ascii=False)[:300])
+        jid = VP({'plugin': '3xui', 'op': 'remove'})['job']
+        for _ in range(40):
+            if VP({'plugin': '3xui', 'op': 'job', 'job': jid}).get('done'):
+                break
+            time.sleep(.3)
         check('vps: DNS check', VP({'plugin': '3xui', 'op': 'dns', 'domain': 'vpn.example.com'})['match'] and
               not VP({'plugin': '3xui', 'op': 'dns', 'domain': 'other.org'})['match'])
         jid = VP({'plugin': '3xui', 'op': 'install', 'withDomain': True, 'domain': 'vpn.example.com', 'inbounds': True})['job']
@@ -676,6 +757,10 @@ def main():
                  'Тест скорости': '?speedtest=1#rack', 'VPS · iperf3': f'?device={dev["demo_server"]}',
                  'Роутер · плагины': f'?device={dev["demo_router"]}&tab=plugins',
                  'Плагин HydraRoute': f'?device={dev["demo_router"]}&tab=plugins&plugin=hydraroute',
+                 'Плагин XKeen': f'?device={dev["demo_router"]}&tab=plugins&plugin=xkeen',
+                 'Сетевой доктор': f'?tsec=doctor&docdev={dev["demo_server"]}#tools',
+                 'Проверка VPN': '?tsec=vpncheck#tools',
+                 'Плагин VLESS через AWG Manager': f'?device={dev["demo_router"]}&tab=plugins&plugin=vlessawg',
                  'OpenWrt · Forkop': f'?device={dev["demo_openwrt"]}&tab=plugins&plugin=forkop',
                  'OpenWrt · модем': f'?device={dev["demo_openwrt"]}&tab=plugins&plugin=modem',
                  'Новое устройство (автоопределение)': '?add=1#devices',

@@ -41,7 +41,7 @@ function HealthBody({ h, onCheck, onNode }) {
   const t = h.type; const st = h.stats;
   const skip = async c => {            // leave this device out of the health, the availability, the problem counters, the journal and the alerts
     const d = data.devices.find(x => x.id === c.deviceId); if (!d) return;
-    try { await api('/api/devices/' + c.deviceId, { method: 'PUT', body: { noHealth: true } }); toast(`«${d.name}» больше не учитывается в здоровье сети (вернуть: настройки устройства → «Следить за здоровьем»)`); refresh(); } catch (e) { toast(e.message, true); }
+    try { await api('/api/devices/' + c.deviceId, { method: 'PUT', body: { noHealth: true } }); toast(`«${nameNoFlag(d.name)}» больше не учитывается в здоровье сети (вернуть: настройки устройства → «Следить за здоровьем»)`); refresh(); } catch (e) { toast(e.message, true); }
   };
   return <div className="health">
     <div className="row" style={{ gap: 16, alignItems: 'center' }}>
@@ -69,9 +69,9 @@ function HealthBody({ h, onCheck, onNode }) {
     {h.spof.length ? <div>
       <div className="card-title" style={{ marginBottom: 8 }}>Что будет, если узел откажет</div>
       <div className="spof">{h.spof.map(s => <div key={s.id} className={'spof-row' + (onNode ? ' click' : '')} onClick={() => onNode && onNode(s.id)}>
-        <KindIcon kind={s.kind} size={28} round={8} />
+        <KindIcon kind={s.kind} name={s.label} size={28} round={8} />
         <div className="grow" style={{ minWidth: 0 }}>
-          <div className="row between" style={{ fontSize: 13.5 }}><b className="ellipsis">{s.label}</b><span className="mono dim">−{s.affected}</span></div>
+          <div className="row between" style={{ fontSize: 13.5 }}><b className="ellipsis">{nameNoFlag(s.label)}</b><span className="mono dim">−{s.affected}</span></div>
           <div className="spof-bar"><i style={{ width: Math.max(3, s.affected / Math.max(1, st.devices) * 100) + '%' }} /></div>
           {s.what ? <div className="dim3 ellipsis" style={{ fontSize: 11.5, marginTop: 3 }}>{s.what}</div> : null}
         </div></div>)}</div>

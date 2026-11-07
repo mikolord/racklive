@@ -250,7 +250,7 @@ function SpeedRow({ t, now, onDelete }) {
     <div className="grow" style={{ minWidth: 0 }}>
       <div className="ellipsis" style={{ fontSize: 14, fontWeight: 600 }}>{iperf ? `от устр. ${mbpsText(t.down)} · к устр. ${mbpsText(t.up)} Мбит/с` : `↓ ${mbpsText(t.down)} · ↑ ${mbpsText(t.up)} Мбит/с`}
         {t.ping != null ? <span className="dim" style={{ fontWeight: 400 }}> · {t.ping} мс</span> : null}</div>
-      <div className="dim ellipsis" style={{ fontSize: 12 }}>{fmt.time(t.t)}{c.name ? ' · ' + c.name : ''}{place ? ' · ' + place : ''}{t.where ? ' · 📍' : ''}</div>
+      <div className="dim ellipsis" style={{ fontSize: 12 }}>{fmt.time(t.t)}{c.name ? ' · ' + nameNoFlag(c.name) : ''}{place ? ' · ' + place : ''}{t.where ? ' · 📍' : ''}</div>
     </div>
     {onDelete ? <Btn size="sm" icon="trash" onClick={onDelete} title="Удалить" /> : null}
   </div>;

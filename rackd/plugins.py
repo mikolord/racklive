@@ -31,6 +31,12 @@ CATALOG = [
     {'id': 'awgmanager', 'drivers': ['keenetic'], 'title': 'AWG Manager', 'icon': 'shield', 'kind': 'installer',
      'description': 'Веб-панель для управления туннелями AmneziaWG на роутере (серверы, клиенты, подписки). Нужен Entware.',
      'author': 'hoaxisr', 'home': 'https://github.com/hoaxisr/awg-manager'},
+    {'id': 'xkeen', 'drivers': ['keenetic'], 'title': 'XKeen (VLESS)', 'icon': 'shield', 'kind': 'vless', 'experimental': True,
+     'description': 'Вставьте ссылку vless:// — Rack Live поставит XKeen с Xray и настроит. Через сервер пойдут только устройства из политики xkeen. Нужен Entware.',
+     'author': 'jameszeroX', 'home': 'https://github.com/jameszeroX/XKeen'},
+    {'id': 'vlessawg', 'drivers': ['keenetic'], 'title': 'VLESS через AWG Manager', 'icon': 'globe2', 'kind': 'vless', 'experimental': True,
+     'description': 'Вставьте ссылку vless:// — появится подключение на sing-box в списке роутера, трафик сам в него не пойдёт. Нужен плагин AWG Manager.',
+     'author': 'hoaxisr', 'home': 'https://github.com/hoaxisr/awg-manager'},
 ]
 
 # One-click installers: run over SSH inside Entware. Commands are the authors' official ones (see `home`);

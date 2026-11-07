@@ -62,7 +62,7 @@ function RowPick({ value, onChange, skipPdu = [], skipDev = [] }) {
   const units = plainUnits(data); const pdus = pduUnits(data).filter(u => !skipPdu.includes(u.id));
   return <select className="select grow" value={value} onChange={e => onChange(e.target.value)}>
     {value === '' ? <option value="">— свободна —</option> : null}
-    <optgroup label="Устройства">{data.devices.filter(d => !skipDev.includes(d.id) && d.location !== 'remote').map(d => <option key={d.id} value={'d:' + d.id}>{d.name}</option>)}</optgroup>
+    <optgroup label="Устройства">{data.devices.filter(d => !skipDev.includes(d.id) && d.location !== 'remote').map(d => <option key={d.id} value={'d:' + d.id}>{nameNoFlag(d.name)}</option>)}</optgroup>
     {units.length ? <optgroup label="Оборудование без устройства (ONT, инжектор…)">{units.map(u => <option key={u.id} value={'u:' + u.id}>{u.name} ({u.rackName})</option>)}</optgroup> : null}
     {pdus.length ? <optgroup label="Блоки розеток">{pdus.map(u => <option key={u.id} value={'p:' + u.id}>{u.name} ({u.rackName})</option>)}</optgroup> : null}
     <option value="l">Своё устройство (назвать и указать В и А)…</option></select>;
@@ -76,9 +76,9 @@ function PowerTree({ items, depth = 0 }) {
     return <div key={(c.id || c.unit || 'r') + i}>
       <div className="li" style={{ cursor: d ? 'pointer' : 'default', padding: '7px 0' }} onClick={() => d && openDevice(d)}>
         <span className="pt-out">{c.outlet ? c.outlet : '·'}</span>
-        <KindIcon kind={c.kind === 'ups' ? 'ups' : c.kind || 'other'} size={26} round={7} />
+        <KindIcon kind={c.kind === 'ups' ? 'ups' : c.kind || 'other'} name={c.name} size={26} round={7} />
         <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{c.status ? <span className={'dot ' + c.status} /> : null}
-          <b className="ellipsis" style={{ fontSize: 13.5 }}>{c.name}</b></div>
+          <b className="ellipsis" style={{ fontSize: 13.5 }}>{nameNoFlag(c.name)}</b></div>
           <div className="ellipsis" style={{ fontSize: 11.5, color: c.missing ? 'var(--orange)' : 'var(--text3)' }}>{c.src}</div></div>
         <b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
       {c.children && c.children.length ? <PowerTree items={c.children} depth={depth + 1} /> : null}</div>; })}</div>;

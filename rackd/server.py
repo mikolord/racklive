@@ -10,14 +10,15 @@ from . import usage as usage_mod
 from . import frankfiles, frank_agent, frankbrowser, frankdev, webdrive
 from . import portal as portal_mod
 from . import remote as remote_mod
-from . import learn, localplug, capps, cameras, hostnet, hostops, terminal, modelstore, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
+from . import doctor, vpncheck, learn, localplug, capps, cameras, hostnet, hostops, terminal, modelstore, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
 from . import rackcords
+from . import snapshots as snapshots_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.43.7'
+VERSION = '2.45.7'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -94,6 +95,8 @@ class App:
         self.backups = backups.Backups(self.store)
         self.newdev = newdev.NewDevices(self.store)
         self.extscan = extscan.ExtScan(self)
+        self.doctor = doctor.Doctor(self)
+        self.vpncheck = vpncheck.VpnCheck(self)
         self.alerter.inet = self.inet
         self.backup_busy = False
         self.tgbot = tgbot.TgBot(self)
@@ -111,6 +114,7 @@ class App:
         self.models = models_mod.Library(DATA)            # «Сканер»: the user's own 3D models of devices
         self.modelstore = modelstore.Store(DATA)          # «Магазин моделей»: ready cards from the public catalog + the owner's moderation
         self.learn = learn.Learn(DATA)                    # «Обучение»: built-in lessons/games + modules downloaded from the owner's public catalog (data only, shown in a sandbox)
+        self.snapshots = snapshots_mod.Snapshots(DATA)    # «Слепок сервера»: whole VPS copies in data/snapshots, restored onto another VPS
         self.portal_tpl = portal_mod.Templates(DATA)      # «Гостевой Wi-Fi с порталом»: designs of the guest page
         self.community = community.Community(DATA)
         self.local = localplug.Local(DATA, lambda: self.store.cfg['devices'], lambda name, level, text: self.store.add_event(None, name, level, text), VERSION)     # the owner's own code that runs inside Rack Live (off until confirmed)
@@ -439,7 +443,7 @@ class App:
             finally:
                 job['done'], job['dur'] = True, round(time.time() - job['t'])
         threading.Thread(target=run, daemon=True).start()
-        self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: " + {'install': 'установка', 'remove': 'удаление', 'start': 'запуск', 'stop': 'остановка', 'restart': 'перезапуск'}.get(op, op) + ' начата')
+        self.store.add_event(d['id'], d.get('name'), 'info', f"плагин {pid}: " + {'install': 'установка', 'remove': 'удаление', 'start': 'запуск', 'stop': 'остановка', 'restart': 'перезапуск', 'take': 'снятие слепка', 'restore': 'восстановление из слепка'}.get(op, op) + ' начата')
         return job
 
     def ip_of_mac(self, mac):
@@ -1870,6 +1874,18 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 det = APP.community.detail(m.group(1))
                 return self.send(det) if det else self.err('плагин не найден', 404)
+            if path == '/api/vpncheck':                     # «Проверка VPN»: the last report (admin only: it names the servers)
+                if not self.need_admin():
+                    return
+                return self.send(APP.vpncheck.public())
+            m = re.match(r'/api/doctor(?:/([\w\-]+))?$', path)
+            if m:                                         # «Сетевой доктор»: the devices and their last checkup (admin only: it shows what is open and how to get in)
+                if not self.need_admin():
+                    return
+                if not m.group(1):
+                    return self.send(APP.doctor.public())
+                v = APP.doctor.view(m.group(1))
+                return self.send(v) if v else self.err('устройство ещё не проверялось', 404)
             if path == '/api/netscan':                      # «Сканировать сеть»: progress and what was found (admin only)
                 if not self.need_admin():
                     return
@@ -2890,11 +2906,37 @@ class Handler(BaseHTTPRequestHandler):
                                 card['site'] = next((s for s in APP.sites.public() if s['id'] == ci.get('siteId')), None)
                         if comm:                                 # community plugins (rackd/community.py): their status is read by their own read-only script
                             res['plugins'] = res['plugins'] + APP.community.cards(d, drv)
+                        if d.get('driver') == 'ssh' and not d.get('local') and not DEMO:     # «Слепок сервера»: copy this VPS to Rack Live / lay a copy onto it
+                            try:
+                                res['plugins'] = res['plugins'] + [APP.snapshots.card(d, drv)]
+                            except DriverError:
+                                pass
                         return self.send(res)
                     pid, op = str(body.get('plugin') or ''), str(body.get('op') or '')
                     if op == 'job':                             # progress of a background install
                         j = APP.jobs.get(str(body.get('job') or ''))
                         return self.send({k: v for k, v in j.items() if k != 'device'} if j and j['device'] == did else {'done': True, 'error': 'задача не найдена'})
+                    if pid == 'snapshot':
+                        if d.get('driver') != 'ssh' or d.get('local') or DEMO:
+                            return self.err('слепок снимается только с сервера, подключённого по SSH', 400)
+                        if op == 'delete':
+                            try:
+                                APP.snapshots.delete(str(body.get('snapshot') or ''))
+                            except DriverError as e:
+                                return self.err(str(e))
+                            st.add_event(did, d.get('name'), 'info', 'слепок сервера удалён')
+                            return self.send({'ok': True})
+                        if op not in ('take', 'restore'):
+                            return self.err('неизвестное действие')
+                        job_body = {'_drv': drv, 'stopDocker': bool(body.get('stopDocker')), 'note': body.get('note'), 'snapshot': body.get('snapshot')}
+                        if op == 'restore':
+                            try:
+                                meta = APP.snapshots.get(str(body.get('snapshot') or ''))
+                            except DriverError as e:
+                                return self.err(str(e))
+                            job_body['_source'] = st.device(meta.get('device'))
+                            st.add_event(did, d.get('name'), 'warning', f"восстановление слепка «{meta.get('deviceName')}» подтверждено администратором — сервер будет перезаписан и перезагружен")
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, APP.snapshots, 'snapshot', op, job_body)['id']})
                     if pid.startswith('x-'):                    # a community plugin: only install / remove, as a background job, after the administrator confirmed the exact commands (digest)
                         if not comm or op not in ('install', 'remove', 'run'):
                             return self.err('неверный запрос плагина')
@@ -3065,6 +3107,8 @@ class Handler(BaseHTTPRequestHandler):
                 except assistant.AiError as e:
                     return self.err(str(e))
                 return self.send({'ok': True, 'proposal': p, 'chat': APP.ai.chat_view(str(body.get('chat') or ''))})
+            if path == '/api/ai/stop' and method == 'POST':     # «Стоп» while Frank is answering
+                return self.send({'ok': True, 'stopped': APP.ai.stop(body.get('job'))})
             if path == '/api/ai/job' and method == 'POST':
                 j = APP.ai.jobs.get(str(body.get('job') or ''))
                 return self.send(j or {'done': True, 'error': 'вопрос не найден — задайте его ещё раз'})
@@ -3131,6 +3175,26 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(APP.cameras.op(body))
                 except cameras.CamError as e:
                     return self.err(str(e), 400)
+            if path in ('/api/vpncheck/run', '/api/vpncheck/job') and method == 'POST':
+                if not self.need_admin():
+                    return
+                if path.endswith('job'):
+                    return self.send(APP.vpncheck.jobs.get(str(body.get('job') or '')) or {'done': True, 'error': 'проверка не найдена, запустите её ещё раз'})
+                try:
+                    return self.send({'ok': True, 'job': APP.vpncheck.start(str(body.get('text') or ''), str(body.get('cdn') or ''))['id']})
+                except ValueError as e:
+                    return self.err(str(e), 400)
+            if path in ('/api/doctor/run', '/api/doctor/job') and method == 'POST':
+                if not self.need_admin():
+                    return
+                if path.endswith('job'):
+                    j = APP.doctor.jobs.get(str(body.get('job') or ''))
+                    return self.send(j or {'done': True, 'error': 'проверка не найдена, запустите её ещё раз'})
+                try:
+                    fix = str(body.get('fix')) if body.get('fix') else None
+                    return self.send({'ok': True, 'job': APP.doctor.start(str(body.get('device') or ''), fix, bool(body.get('full')))['id']})
+                except ValueError as e:
+                    return self.err(str(e), 404)
             if path in ('/api/netscan/start', '/api/netscan/stop') and method == 'POST':
                 if not self.need_admin():
                     return

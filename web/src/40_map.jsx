@@ -1,7 +1,7 @@
 /* Network map: the rack in the middle, cables from its units to everything else. */
 const M = { NW: 214, NH: 56, CW: 196, CH: 46, COL: 130, GAP: 12, RW: 310, RU: 38, MT: 150, MTH: 48 };     // MT×MTH: a box tile
 
-function layoutMap(data, collapsed) {
+function layoutMap(data, collapsed, remoteOpen = true) {
   const topo = data.topology || { nodes: [], edges: [] };
   const nodes = {}; topo.nodes.forEach(n => nodes[n.id] = { ...n });
   const tree = topo.edges.filter(e => !e.extra && !e.manual && nodes[e.source] && nodes[e.target]).map(e => ({ ...e }));
@@ -59,6 +59,19 @@ function layoutMap(data, collapsed) {
   const frameW = Math.max(M.RW, ...Object.values(rackMeta).map(m => m.w));
   const hasRack = Object.keys(rackNode).length > 0;
 
+  // a remote device (a router on another site) keeps who is connected to it to itself until it is tapped; the nodes go away entirely, so every map view gets the same picture
+  const hiddenClients = {};                                          // client id → { node, parent }: «Найти устройство» opens the right device
+  Object.values(nodes).filter(n => n.remote).forEach(n => {
+    const es = kids[n.id] || [];
+    const leaves = es.filter(e => nodes[e.target] && nodes[e.target].client && !kids[e.target] && !rackNode[e.target]);
+    if (!leaves.length) return;
+    n.remoteClients = leaves.length;
+    n.remoteOpen = remoteOpen === true || !!remoteOpen[n.id];
+    if (n.remoteOpen) { if (remoteOpen !== true) leaves.forEach((e, i) => { nodes[e.target].remoteOf = n.id; nodes[e.target].remoteIdx = i; }); return; }   // remoteOf: the card flies out of its device (an animation)
+    leaves.forEach(e => { hiddenClients[e.target] = { node: nodes[e.target], parent: n.id }; delete nodes[e.target]; delete parentEdge[e.target]; });
+    kids[n.id] = es.filter(e => !leaves.includes(e));
+  });
+
   // collapse big groups of Wi-Fi leaf clients
   const groups = {}; const hiddenIds = new Set();
   Object.entries(kids).forEach(([pid, es]) => {
@@ -112,21 +125,31 @@ function layoutMap(data, collapsed) {
   // remote devices (a VPS, a router on another site) go to the left of the internet node, in a column going up: each one has its own line from the internet.
   // In one row the lines ran along it behind the neighbours' cards and looked like a chain «internet → one → another → …»
   remotes.forEach((id, i) => { pos[id] = { x: (pos.inet ? pos.inet.x : 0) - (M.NW + 90), y: topY - i * (M.NH + 28), w: M.NW, h: M.NH }; col[id] = -1; });
+  // the clients of an opened remote device: next to it on the left. The devices go up in a column, so each next list stays above the previous one
+  let aboveY = Infinity;
+  remotes.forEach(id => {
+    const list = (kids[id] || []).filter(e => !e.hidden && nodes[e.target] && (nodes[e.target].client || nodes[e.target].kind === 'group') && !rackNode[e.target] && !kids[e.target]).map(e => e.target);
+    if (!list.length) return;
+    const h = list.length * (M.CH + M.GAP) - M.GAP, p = pos[id];
+    const y = Math.min(p.y + p.h / 2 - h / 2, aboveY - h - M.GAP * 2);
+    list.forEach((c, i) => { pos[c] = { x: p.x - (M.CW + 90), y: y + i * (M.CH + M.GAP), w: M.CW, h: M.CH }; col[c] = -2; });
+    aboveY = y;
+  });
   // nodes never reached (shouldn't happen) go to a bottom row
   let stray = 0; Object.keys(nodes).forEach(id => { if (!pos[id] && !hiddenIds.has(id)) {
     const [w, h] = sizeOf(id); pos[id] = { x: colX(1) + stray * (w + 20), y: stackH + 80, w, h }; stray++; } });
   // user overrides (edit mode drag)
   Object.entries(data.map.positions || {}).forEach(([id, [x, y]]) => { if (pos[id] && !pos[id].rack) Object.assign(pos[id], { x, y }); });
   const edges = [...Object.values(kids).flat().filter(e => !e.hidden), ...topo.edges.filter(e => (e.extra || e.manual) && pos[e.source] && pos[e.target])];
-  return { nodes, pos, edges, groups, hasRack, rackNode, racks: Object.values(rackMeta), rooms };
+  return { nodes, pos, edges, groups, hasRack, rackNode, racks: Object.values(rackMeta), rooms, hiddenClients };
 }
 
 /* other ways to see the same network (the choice is kept in this browser): a classic top-down tree, rings around the internet / main router, and columns by network.
    They use the same nodes and wires as the default scheme; only the places differ (no rack frames, and dragging cards is for the default scheme). */
 const MAP_STYLES = [['columns', 'Схема со шкафом'], ['tree', 'Дерево сверху вниз'], ['radial', 'Кольца вокруг роутера'], ['groups', 'Столбцы по сетям']];
 
-function layoutAlt(data, style, collapsed) {
-  const base = layoutMap(data, collapsed);
+function layoutAlt(data, style, collapsed, remoteOpen) {
+  const base = layoutMap(data, collapsed, remoteOpen);
   const nodes = base.nodes;
   const CWA = M.CW + 44;                                              // cards of these views are wider than in the default scheme: long names fit
   const sizeOf = id => { const n = nodes[id]; return n.kind === 'group' || n.client ? [CWA, M.CH] : [M.NW + 40, M.NH]; };
@@ -185,7 +208,7 @@ function layoutAlt(data, style, collapsed) {
   }
   Object.keys(nodes).forEach(id => { if (!pos[id]) { const [w, h] = sizeOf(id); pos[id] = { x: 0, y: 2000, w, h }; } });
   const edges = base.edges.filter(e => pos[e.source] && pos[e.target] && (style !== 'groups' || (!nodes[e.source].client && !nodes[e.target].client && nodes[e.target].kind !== 'group')));
-  return { nodes, pos, edges, groups: base.groups, hasRack: false, rackNode: {}, racks: [], rooms: base.rooms, style, headers };
+  return { nodes, pos, edges, groups: base.groups, hasRack: false, rackNode: {}, racks: [], rooms: base.rooms, style, headers, hiddenClients: base.hiddenClients };
 }
 
 function edgePath(e, L) {
@@ -240,27 +263,42 @@ function edgePath(e, L) {
   return { d: `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`, lx: tx - 22, ly: ty, mx: (sx + tx) / 2, my: (sy + ty) / 2 };
 }
 
-function MapNode({ n, p, sel, dim, mark, onDown, onClick, onDoubleClick }) {
+function MapNode({ n, p, sel, dim, mark, phase, onDown, onClick, onDoubleClick }) {
   const { data } = useApp(); const spec = (data.icons || {})[n.id];            // the icon chosen by hand («Иконка» in the node card), if any
   const small = n.kind === 'group' || n.client;
   const iconKind = n.kind === 'group' ? 'wifi' : n.kind;
   const c = kindColor(iconKind);
   const is = small ? 28 : 34;
-  const room = p.w - (is + 18) - 24, capL = Math.max(8, Math.floor(room / 7.4)), capS = Math.max(10, Math.floor(room / 6.2));      // characters that fit the card (the other map views have wider cards)
+  const pw = n.remoteClients ? 24 + String(n.remoteClients).length * 7 : 0;            // the pill «‹ 3» of a remote device
+  const room = p.w - (is + 18) - 24, capL = Math.max(8, Math.floor(room / 7.4)), capS = Math.max(10, Math.floor(room / 6.2)) - (n.remoteClients ? Math.ceil((pw - 6) / 6.2) : 0);      // characters that fit the card (the other map views have wider cards)
+  const cc = flagOf(n.label);            // a name starting with «🇩🇪 …» or «/abh …»: the picture of the flag instead of the icon, the name without the prefix
+  const [badFlag, setBadFlag] = useState('');
+  const flag = cc && badFlag !== cc, label = nameNoFlag(n.label, n.kind), clipId = 'fc-' + String(n.id).replace(/[^\w-]/g, '_');
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}
     transform={`translate(${p.x},${p.y})`} onPointerDown={onDown} onClick={onClick} onDoubleClick={onDoubleClick}>
     {mark ? <rect className="spof-mark" x={-5} y={-5} width={p.w + 10} height={p.h + 10} rx={small ? 16 : 19} /> : null}
-    <title>{[n.label, n.sub].filter(Boolean).join(' · ')}</title>
+    <title>{[label, n.sub, n.remoteClients ? (n.remoteOpen ? 'нажмите — скрыть подключённых' : 'нажмите — показать подключённых') + ', дважды — открыть карточку' : ''].filter(Boolean).join(' · ')}</title>
+    <g className={phase ? 'pop-' + phase : undefined} style={phase === 'in' ? { animationDelay: Math.min(8, n.remoteIdx || 0) * 45 + 'ms' } : undefined}>
     <rect className="box" width={p.w} height={p.h} rx={small ? 12 : 15} />
     {n.room ? <g transform="translate(10,-9)"><rect width={Math.min(p.w - 20, 14 + n.room.length * 6.4)} height={15} rx={7.5} className="room-tag" />
       <text x={7} y={11} className="room-tag-t">{trunc(n.room, Math.floor((p.w - 34) / 6.4))}</text></g> : null}
-    <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
-    {isUpIcon(spec) ? <g transform={`translate(${9 + is * .12},${(p.h - is) / 2 + is * .12})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .76} color={c} /></g>
-      : <g transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .6} color={c} /></g>}
-    <text className="lbl" x={is + 18} y={n.sub || n.kind === 'group' ? p.h / 2 - 3 : p.h / 2 + 4}>{trunc(n.label, capL)}</text>
+    {flag ? <g>
+      <clipPath id={clipId}><rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} /></clipPath>
+      <image href={'/flags/' + cc + '.svg'} x={9} y={(p.h - is) / 2} width={is} height={is} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} onError={() => setBadFlag(cc)} />
+      <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill="none" stroke="var(--text)" strokeOpacity=".16" /></g>
+    : <>
+      <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
+      {isUpIcon(spec) ? <g transform={`translate(${9 + is * .12},${(p.h - is) / 2 + is * .12})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .76} color={c} /></g>
+        : <g transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .6} color={c} /></g>}</>}
+    <text className="lbl" x={is + 18} y={n.sub || n.kind === 'group' ? p.h / 2 - 3 : p.h / 2 + 4}>{trunc(label, capL)}</text>
     {n.kind === 'group' ? <text className="sub" x={is + 18} y={p.h / 2 + 12}>нажмите, чтобы раскрыть</text>
       : n.sub ? <text className="sub" x={is + 18} y={p.h / 2 + 13}>{trunc(n.sub, capS)}</text> : null}
+    {n.remoteClients ? <g className={'rc-pill' + (n.remoteOpen ? ' open' : '')} transform={`translate(${p.w - pw - 8},${p.h - 22})`}>
+      <rect width={pw} height={16} rx={8} />
+      <g transform="translate(9.5,8)"><path className="rc-chev" d="M1.6,-3.6 L-2.2,0 L1.6,3.6" /></g>
+      <text x={pw - 7} y={11.8} textAnchor="end">{n.remoteClients}</text></g> : null}
     {n.status && n.kind !== 'group' ? <circle cx={p.w - 13} cy={13} r={4.5} fill={n.status === 'online' ? 'var(--green)' : n.status === 'warning' ? 'var(--orange)' : n.status === 'offline' ? 'var(--red)' : 'var(--text3)'} /> : null}
+    </g>
   </g>;
 }
 const trunc = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -291,6 +329,11 @@ function MapView({ scope }) {
   const data = useMemo(() => scope ? scopeData(dataAll, scope.seed) : dataAll, [dataAll, scope && scope.key]);
   const toast = useToast(); const confirm = useConfirm();
   const [collapsed, setCollapsed] = useState(data.map.collapsed || {});
+  const [remoteOpenIds, setRemoteOpenIds] = useState({});  // the remote devices showing who is connected to them; closed again after a reload
+  const [closingIds, setClosingIds] = useState({});        // just closed: their clients are still drawn for a moment, flying back into the device
+  const remoteOpen = useMemo(() => scope ? true : { ...remoteOpenIds, ...closingIds }, [scope, remoteOpenIds, closingIds]);   // the map of one house is about that place: everything is shown
+  const openIdsRef = useRef(remoteOpenIds); openIdsRef.current = remoteOpenIds;
+  const revealRef = useRef(null);                          // the device just opened: the map glides so its clients are on the screen
   const [view, setView] = useState(null);                 // {x, y, k}
   const [sel, setSel] = useState(null);
   const [linking, setLinking] = useState(null);           // null | 'pick' | nodeId
@@ -303,7 +346,7 @@ function MapView({ scope }) {
   const openCheck = useCheckOpener();
   const wrap = useRef(null); useFillScreen(wrap);
   const [style, setStyle] = useState(() => { const v = new URLSearchParams(location.search).get('mapstyle') || lsGet('rl_map_style', 'columns'); return MAP_STYLES.some(x => x[0] === v) ? v : 'columns'; });
-  const L0 = useMemo(() => style !== 'columns' ? layoutAlt(data, style, collapsed) : layoutMap(data, collapsed), [data, collapsed, style]);       // раскладка считается один раз, а не на каждое движение карточки
+  const L0 = useMemo(() => style !== 'columns' ? layoutAlt(data, style, collapsed, remoteOpen) : layoutMap(data, collapsed, remoteOpen), [data, collapsed, style, remoteOpen]);       // раскладка считается один раз, а не на каждое движение карточки
   const L = useMemo(() => {
     if (style !== 'columns' || !Object.keys(dragPos).length) return L0;
     const pos = { ...L0.pos };
@@ -357,9 +400,49 @@ function MapView({ scope }) {
       if (gRef.current) gRef.current.setAttribute('transform', tr);
       const gp = document.getElementById('mapgrid'); if (gp) gp.setAttribute('patternTransform', tr); });
   };
+  const animRef = useRef(0); const animV = useRef(null);
+  const stopGlide = () => { if (!animRef.current) return; cancelAnimationFrame(animRef.current); animRef.current = 0; if (animV.current) { viewRef.current = animV.current; setView(animV.current); } };   // a finger on the map stops the glide where it is
+  const glideTo = to => {                                   // a smooth move of the map (only the layer's transform per frame, the state once at the end)
+    const from = viewRef.current; cancelAnimationFrame(animRef.current);
+    if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) { setView(to); return; }
+    const t0 = performance.now(), dur = 380;
+    const step = now => { const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+      const v = { k: from.k + (to.k - from.k) * e, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e };
+      const tr = `translate(${v.x},${v.y}) scale(${v.k})`; animV.current = v;
+      if (gRef.current) gRef.current.setAttribute('transform', tr);
+      const gp = document.getElementById('mapgrid'); if (gp) gp.setAttribute('patternTransform', tr);
+      if (t < 1) animRef.current = requestAnimationFrame(step); else { animRef.current = 0; setView(to); } };
+    animRef.current = requestAnimationFrame(step);
+  };
+  const toggleRemote = id => {
+    if (openIdsRef.current[id]) {
+      setRemoteOpenIds(o => { const c = { ...o }; delete c[id]; return c; });
+      setClosingIds(c => ({ ...c, [id]: true }));
+      setTimeout(() => setClosingIds(c => { const x = { ...c }; delete x[id]; return x; }), 260);
+    } else {
+      setRemoteOpenIds(o => ({ ...o, [id]: true })); revealRef.current = id;
+      if (!lsGet('rl_remote_hint', '')) { lsSet('rl_remote_hint', '1'); toast('Дважды нажмите на устройство, чтобы открыть его карточку'); }
+    }
+  };
+  useEffect(() => {                                         // after opening: if its clients went past the edge, glide so the device and its clients are in sight
+    const id = revealRef.current; revealRef.current = null; const el = wrap.current; const v = viewRef.current;
+    if (!id || !el || !v) return;
+    const ps = Object.values(L.nodes).filter(n => n.id === id || n.remoteOf === id).map(n => L.pos[n.id]).filter(Boolean); if (ps.length < 2) return;
+    const W = el.clientWidth, H = el.clientHeight, pad = 36, top = 70;
+    const x1 = Math.min(...ps.map(p => p.x)), y1 = Math.min(...ps.map(p => p.y)), x2 = Math.max(...ps.map(p => p.x + p.w)), y2 = Math.max(...ps.map(p => p.y + p.h));
+    let k = v.k, x = v.x, y = v.y;
+    const kFit = Math.min((W - 2 * pad) / (x2 - x1), (H - top - pad) / (y2 - y1));
+    if (kFit < k) { k = Math.max(.2, kFit); x = W / 2 - (x1 + x2) / 2 * k; y = top + (H - top - pad) / 2 - (y1 + y2) / 2 * k; }
+    else {
+      const sx1 = x1 * k + x, sx2 = x2 * k + x, sy1 = y1 * k + y, sy2 = y2 * k + y;
+      if (sx1 < pad) x += pad - sx1; else if (sx2 > W - pad) x -= sx2 - (W - pad);
+      if (sy1 < top) y += top - sy1; else if (sy2 > H - pad) y -= sy2 - (H - pad);
+    }
+    if (Math.abs(x - v.x) > 1 || Math.abs(y - v.y) > 1 || Math.abs(k - v.k) > .001) glideTo({ k, x, y });
+  }, [L]);
   const commitView = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } if (liveV.current) { setView(liveV.current); liveV.current = null; } if (wrap.current) wrap.current.classList.remove('moving'); };
   const baseline = () => {
-    const pts = Object.values(ptrs.current); const v = { ...(liveV.current || viewRef.current) };
+    stopGlide(); const pts = Object.values(ptrs.current); const v = { ...(liveV.current || viewRef.current) };
     if (!pts.length) return null;
     if (pts.length >= 2) { const r = wrap.current.getBoundingClientRect();
       return { pinch: true, dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1, cx: (pts[0].x + pts[1].x) / 2 - r.left, cy: (pts[0].y + pts[1].y) / 2 - r.top, v }; }
@@ -431,6 +514,8 @@ function MapView({ scope }) {
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
+  const tapRef = useRef(null);
+  const popOf = id => { const n = L.nodes[id]; const r = n && n.remoteOf; return r ? (closingIds[r] && !remoteOpenIds[r] ? 'out' : 'in') : ''; };   // a client of a remote device: flying out of it or back in
   const nodeClick = async (id) => {
     const n = L.nodes[id];
     if (linking) {
@@ -444,10 +529,17 @@ function MapView({ scope }) {
     }
     if (n.kind === 'group') { const nc = { ...collapsed, [n.parent]: false }; setCollapsed(nc); setView(null); if (edit) saveMap({ collapsed: nc }); return; }
     if (Date.now() - dragEnd.current < 350) return;                     // the click that ends a drag is not a tap
+    if (n.remoteClients && !scope) {                                    // a remote device: one tap shows / hides who is connected, two taps open its card
+      const last = tapRef.current;
+      if (last && last.id === id && Date.now() - last.t < 320) { clearTimeout(last.timer); tapRef.current = null; setSel(id); return; }
+      if (last) clearTimeout(last.timer);
+      tapRef.current = { id, t: Date.now(), timer: setTimeout(() => { tapRef.current = null; toggleRemote(id); }, 240) };
+      return;
+    }
     if (edit && ptr.current === 'mouse') return;                        // on a computer in edit mode the card opens on double click (single click = grab)
     setSel(id);
   };
-  const nodeDbl = id => { if (edit && ptr.current === 'mouse' && L.nodes[id] && L.nodes[id].kind !== 'group' && !linking) setSel(id); };
+  const nodeDbl = id => { if (L.nodes[id] && L.nodes[id].remoteClients && !scope) return; if (edit && ptr.current === 'mouse' && L.nodes[id] && L.nodes[id].kind !== 'group' && !linking) setSel(id); };
   const edgeClick = async (e) => {
     if (!edit || !e.manual) return;
     if (await confirm('Удалить эту связь?', { danger: true, ok: 'Удалить' })) saveMap({ links: (data.map.links || []).filter(l => l.id !== e.id && `m:${l.source}>${l.target}` !== e.id) });
@@ -461,6 +553,11 @@ function MapView({ scope }) {
     return s;
   }, [sel, L, focus]);
   const searchHit = q ? Object.values(L.nodes).filter(n => [n.label, n.sub].join(' ').toLowerCase().includes(q.toLowerCase())).map(n => n.id) : [];
+  useEffect(() => {                       // a search that finds a client hidden behind a remote device opens that device
+    const s = q.trim().toLowerCase(); if (s.length < 2) return;
+    const want = Object.values(L.hiddenClients || {}).filter(h => [h.node.label, h.node.sub].join(' ').toLowerCase().includes(s)).map(h => h.parent);
+    if (want.length) { setRemoteOpenIds(o => ({ ...o, ...Object.fromEntries(want.map(i => [i, true])) })); setView(null); }
+  }, [q]);
   useEffect(() => {
     if (searchHit.length === 1 && wrap.current) { const p = L.pos[searchHit[0]]; if (!p) return; const W = wrap.current.clientWidth, H = wrap.current.clientHeight;
       setSel(searchHit[0]); setView(v => ({ k: Math.max(v.k, .9), x: W / 2 - (p.x + p.w / 2) * Math.max(v.k, .9), y: H / 2 - (p.y + p.h / 2) * Math.max(v.k, .9) })); }
@@ -469,7 +566,7 @@ function MapView({ scope }) {
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   useEffect(() => {                       // ?mapnode=<part of a name>: open that node's card (for links and tests)
     const q = (new URLSearchParams(location.search).get('mapnode') || '').toLowerCase(); if (!q) return;
-    const id = Object.keys(L.nodes).find(k => String(L.nodes[k].label || '').toLowerCase().includes(q)); if (id) setSel(id);
+    const id = Object.keys(L.nodes).find(k => String(L.nodes[k].label || '').toLowerCase().includes(q)); if (id) { setSel(id); if (L.nodes[id].remoteClients) { setRemoteOpenIds({ [id]: true }); setView(null); } }
   }, []);
   const selNode = sel && L.nodes[sel];
   const [findOpen, setFindOpen] = useState(false);
@@ -518,16 +615,16 @@ function MapView({ scope }) {
         {(L.headers || []).map(h => <g key={h.label} pointerEvents="none"><text x={h.x + 4} y={h.y + 16} fontSize="15" fontWeight="700" fill="var(--text)">{trunc(h.label, 28)}</text>
           <text x={h.x + 4} y={h.y + 34} fontSize="11.5" fill="var(--text3)">{h.count} {ruPlural(h.count, 'устройство', 'устройства', 'устройств')}</text><rect x={h.x} y={h.y + 40} width={h.w} height={2} rx={1} fill="var(--accent)" opacity=".5" /></g>)}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
-          const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
-          return <g key={e.id} className={dim}>
+          const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : ''; const pop = popOf(e.target);
+          return <g key={e.id} className={dim + (pop ? ' edge-' + pop : '')}>
             <path className={'edge' + (e.speed >= 1000 && e.kind !== 'wifi' && e.kind !== 'mesh' ? ' fast' : e.speed > 0 && e.speed < 1000 ? ' slow' : '') + (e.kind === 'wifi' || e.kind === 'mesh' ? ' wifi' : '') + (e.kind === 'remote' || e.extra || e.kind === 'lan' ? ' dashed' : '') + (e.kind === 'isp' ? ' isp' : '')} d={g.d} stroke={col} opacity={e.extra ? .55 : 1} />
             {(e.kind === 'wan' || e.kind === 'isp' || (e.kind === 'wire' && e.speed >= 1000)) && !e.extra ? <path className="edge flow" d={g.d} stroke="#fff" opacity=".5" /> : null}
             {e.manual ? <path className="edge-hit" d={g.d} onClick={() => edgeClick(e)} /> : null}
           </g>; })}
         {/* labels in their own layer: above every wire, with the watts lifted over the line so it stays readable */}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null;
-          const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : '';
-          return <g key={'l' + e.id} className={dim} pointerEvents="none">
+          const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : ''; const pop = popOf(e.target);
+          return <g key={'l' + e.id} className={dim + (pop ? ' edge-' + pop : '')} pointerEvents="none">
             {e.sourcePort && !g.inside ? <g className="port-pill" transform={`translate(${g.lx - 14},${g.ly - 9})`}><rect width="28" height="18" rx="9" /><text x="14" y="12.5" textAnchor="middle">{e.sourcePort}</text></g> : null}
             {g.cross ? <g className="map-cross" transform={`translate(${g.lx},${g.ly})`}><rect x={-52} y={-10} width={104} height={20} rx={10} fill="var(--accent)" opacity=".92" />
               <text x={0} y={4} textAnchor="middle" fontSize="11" fontWeight="600" fill="#fff">между шкафами{e.sourcePort ? ' · ' + e.sourcePort : ''}</text></g> : null}
@@ -538,7 +635,7 @@ function MapView({ scope }) {
           {guides.x != null ? <line x1={guides.x} x2={guides.x} y1={-4000} y2={5000} /> : null}
           {guides.y != null ? <line y1={guides.y} y2={guides.y} x1={-4000} x2={5000} /> : null}</g> : null}
         {Object.values(L.nodes).map(n => { const p = L.pos[n.id]; if (!p || p.rack) return null;
-          return <MapNode key={n.id} n={n} p={p} sel={sel === n.id || searchHit.includes(n.id) || linking === n.id} dim={pathSet && !pathSet.has(n.id)} mark={spofSet && spofSet.has(n.id)}
+          return <MapNode key={n.id} n={n} p={p} sel={sel === n.id || searchHit.includes(n.id) || linking === n.id} dim={pathSet && !pathSet.has(n.id)} mark={spofSet && spofSet.has(n.id)} phase={popOf(n.id)}
             onDown={e => nodeDown(n.id, e)} onClick={() => nodeClick(n.id)} onDoubleClick={() => nodeDbl(n.id)} />; })}
       </g>
     </svg>
@@ -570,12 +667,14 @@ function RackFrame({ rk, devById, dimSet, markSet, onOpen, nodes = {}, onSel }) 
     const st = d ? d.state : un ? { status: un.status } : null;
     const dim = dimSet && !(d ? dimSet.has('d:' + d.id) : un && dimSet.has(un.id));
     const kind = PASSIVE.includes(u.type) ? u.type : (d && d.kind) || u.type;
-    const name = d && (compact || unitDevIds(u).length > 1) ? d.name : u.name;
+    const rawName = d && (compact || unitDevIds(u).length > 1) ? d.name : u.name;
+    const name = nameNoFlag(rawName), cc = flagOf(rawName) || (d ? flagOf(d.name) : '');            // the prefix may be on the unit or on the device inside it
     return <g key={key} className={'u' + (dim ? ' dim-out' : '')} style={{ cursor: d || un ? 'pointer' : 'default' }} onClick={() => d ? onOpen(d) : un && onSel && onSel(un.id)}>
       <rect x={x} y={y} width={w} height={hh} rx={compact ? 10 : 6} />
       {d && markSet && markSet.has('d:' + d.id) ? <rect className="spof-mark" x={x - 3} y={y - 3} width={w + 6} height={hh + 6} rx={compact ? 12 : 8} /> : null}
       <rect x={x} y={y} width={4} height={hh} rx={2} fill={u.color || '#0a84ff'} stroke="none" />
-      <g className="u-ic" transform={`translate(${x + 12},${y + hh / 2 - 9})`}><NodeGlyph svg spec={d ? chosen['d:' + d.id] : un ? chosen[un.id] : undefined} kind={kind} size={18} color="currentColor" /></g>
+      {cc ? <image href={'/flags/' + cc + '.svg'} x={x + 12} y={y + hh / 2 - 9} width={18} height={18} preserveAspectRatio="xMidYMid slice" />
+        : <g className="u-ic" transform={`translate(${x + 12},${y + hh / 2 - 9})`}><NodeGlyph svg spec={d ? chosen['d:' + d.id] : un ? chosen[un.id] : undefined} kind={kind} size={18} color="currentColor" /></g>}
       <text x={x + 38} y={y + (hh > 30 ? hh / 2 - 2 : hh / 2 + 4)} fontSize="12.5" fontWeight="600">{trunc(name, Math.max(8, Math.floor((w - 50) / 7.2)))}</text>
       {hh > 30 && w > 120 ? <text x={x + 38} y={y + hh / 2 + 12} className="usub">{trunc(d ? deviceLine(d) : KIND_TEXT[u.type], Math.floor((w - 50) / 5.6))}</text> : null}
       {st ? <circle cx={x + w - 11} cy={y + 11} r={4} fill={stCol(st.status)} /> : null}
@@ -657,7 +756,7 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
   const conn = pe ? (pe.kind === 'wifi' ? `Wi-Fi · ${parent ? parent.label : ''}${pe.band ? ' · ' + pe.band : ''}${pe.rssi ? ' · ' + pe.rssi + ' дБм' : ''}`
     : pe.kind === 'mesh' ? 'Mesh (беспроводной)' : pe.kind === 'remote' ? 'Через интернет' : `${parent ? parent.label : ''}${pe.sourcePort ? ', порт ' + pe.sourcePort : ''}${pe.speed ? ' · ' + fmt.speed(pe.speed) : ''}`) : '';
   return <div className="card pad fade-in node-info">
-    <div className="row"><KindIcon kind={n.kind} icon={(data.icons || {})[n.id]} size={40} /><div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700 }} className="ellipsis">{n.label}</div>
+    <div className="row"><KindIcon kind={n.kind} name={n.label} icon={(data.icons || {})[n.id]} size={40} /><div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700 }} className="ellipsis">{nameNoFlag(n.label, n.kind)}</div>
       <div className="dim" style={{ fontSize: 12.5 }}>{KIND_TEXT[n.kind] || ''}{n.model ? ' · ' + n.model : ''}</div></div><Btn size="sm" icon="x" onClick={onClose} /></div>
     <div style={{ marginTop: 10 }}><KV rows={[['IP', n.sub ? <span className="mono">{n.sub}</span> : null], ...(n.mac ? [['MAC', <span className="mono">{n.mac}</span>]] : []),
       ...(client && client.segment ? [['Сеть', client.segment]] : []), ['Подключение', conn], ...(pe && pe.poeW ? [['PoE', pe.poeW + ' Вт']] : []),
@@ -668,7 +767,7 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
     {!dev && n.mac && findClient(data, n.mac) ? <Btn style={{ width: '100%', marginTop: 8 }} onClick={() => setEdit(n.mac)}>Настройки на роутере</Btn> : null}
     {!dev && /^\d+\.\d+\.\d+\.\d+$/.test(n.sub || '') ? <ClientActions c={{ ip: n.sub, mac: n.mac, kind: n.kind, name: n.label }} onClose={onClose} /> : null}
     {admin && n.kind !== 'group' && !String(n.id).startsWith('x:') ? <Btn size="sm" icon="edit" style={{ width: '100%', marginTop: 8 }} onClick={() => setPick(true)}>Иконка</Btn> : null}
-    {pick ? <IconPicker nodeKey={n.id} kind={n.kind} title={n.label} onClose={() => setPick(false)} /> : null}
+    {pick ? <IconPicker nodeKey={n.id} kind={n.kind} title={nameNoFlag(n.label, n.kind)} onClose={() => setPick(false)} /> : null}
     {edit ? <ClientEditor mac={edit} onClose={() => setEdit(null)} /> : null}
   </div>;
 }

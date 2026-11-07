@@ -50,7 +50,7 @@ function NetScanModal({ onClose }) {
   const row = (it, primary) => <div className="li netscan-row" key={it.ip}>
     <KindIcon kind={it.driver && it.driver !== 'ping' ? (drvKind(it.driver) || it.kind) : it.kind} size={36} round={10} />
     <div className="grow" style={{ minWidth: 0 }}>
-      <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 14 }} className="ellipsis">{it.name || it.ip}</b>{it.vendor ? <span className="found-type">{it.vendor}</span> : null}</div>
+      <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 14 }} className="ellipsis">{nameNoFlag(it.name) || it.ip}</b>{it.vendor ? <span className="found-type">{it.vendor}</span> : null}</div>
       <div className="dim ellipsis" style={{ fontSize: 12.5 }}>{it.what}</div>
       <div className="dim3 mono ellipsis" style={{ fontSize: 11.5 }}>{[it.ip, it.mac, it.ports.length ? 'порты ' + it.ports.join(' ') : '', it.also && it.also.length ? 'ещё адреса: ' + it.also.join(', ') : ''].filter(Boolean).join(' · ')}</div>
     </div>

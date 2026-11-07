@@ -12,10 +12,11 @@ function SecurityItem({ f, onFix, onIgnore, hidden }) {
       {open ? <div className="col" style={{ gap: 8, marginTop: 6 }}>
         <div className="dim" style={{ fontSize: 13, lineHeight: 1.45 }}>{f.text}</div>
         {f.how ? <div style={{ fontSize: 13, lineHeight: 1.45 }}><b>Как исправить: </b>{f.how}</div> : null}
+        {f.cmd ? <pre className="mono" style={{ margin: 0, padding: '8px 10px', fontSize: 12, borderRadius: 8, background: 'var(--fill)', overflowX: 'auto', whiteSpace: 'pre-wrap', userSelect: 'text', WebkitUserSelect: 'text' }}>{f.cmd}</pre> : null}
         <div className="row wrap" style={{ gap: 6 }}>
           {f.fix && onFix && !hidden ? <Btn size="sm" kind="primary" icon="check" onClick={() => onFix(f)}>{f.fix.label}</Btn> : null}
           {onIgnore ? <Btn size="sm" onClick={() => onIgnore(f, !hidden)}>{hidden ? 'Снова показывать' : 'Это нормально, не показывать'}</Btn> : null}
-          {!hidden ? <AskAi label="Объяснить" q={`Объясни простыми словами замечание безопасности «${f.title}» (id ${f.id}): чем это опасно именно у меня и как исправить по шагам.`} /> : null}
+          {!hidden ? <AskAi label="Объяснить" q={`Объясни простыми словами замечание безопасности «${f.title}»${f.doctor ? `: ${f.text}` : ` (id ${f.id})`}: чем это опасно именно у меня и как исправить по шагам.`} /> : null}
         </div></div> : null}
     </div></div>;
 }

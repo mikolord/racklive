@@ -1,13 +1,27 @@
 """Keenetic / Netcraze routers via the RCI HTTP API (KeeneticOS 3.x–5.x)."""
-import codecs, hashlib, http.cookiejar, ipaddress, json, re, secrets, ssl, time, urllib.error, urllib.request
+import base64, codecs, hashlib, hmac, http.cookiejar, ipaddress, json, re, secrets, socket, ssl, time, urllib.error, urllib.parse, urllib.request
 
 from . import Driver, FIELD_HOST, FIELD_PASS, FIELD_USER
-from .. import plugins
+from .. import keenetic_vless as kv, plugins
+from ..argon2id import argon2id
 from ..util import DriverError, uptime_seconds, guess_kind
 
 
 BAD_LOGIN = {}              # sha256(address, login, password) → time of the last rejected login
 SESSIONS = {}               # sha256(address, login, password) → url opener holding the router's session cookie
+BASES = {}                  # address as typed (white IP) → the http:// or https:// that answered
+NO_WEB = {}                 # address → until when not to wait for a silent web interface (a router in lockout says nothing at all): Entware answers instead
+NO_WEB_FOR = 300
+CONNECT_WAIT = 5            # a router either accepts the connection at once or is silent: reading may take long, connecting does not
+
+
+def web_reachable(base):
+    u = urllib.parse.urlsplit(base)
+    try:
+        socket.create_connection((u.hostname, u.port or (443 if u.scheme == 'https' else 80)), CONNECT_WAIT).close()
+        return True
+    except OSError:
+        return False
 
 
 class Keenetic(Driver):
@@ -15,39 +29,101 @@ class Keenetic(Driver):
     title = 'Keenetic / Netcraze'
     kind = 'router'
     description = 'Роутер: порты, VLAN, клиенты по сегментам, mesh-точки и их Wi-Fi-клиенты.'
-    fields = [dict(FIELD_HOST, hint='Локально — IP (192.168.1.1). Удалённо через домен — только прямой доступ: '
-                   'https://дом.рф:ПОРТ (проброшенный порт роутера). Облачный KeenDNS не подойдёт.'),
-              dict(FIELD_USER, default='admin'), FIELD_PASS]
+    fields = [dict(FIELD_HOST, hint='Локально — IP (192.168.1.1). Удалённо — белый IP или домен с прямым доступом, порт через двоеточие: 203.0.113.5:8080 '
+                   '(на роутере откройте веб-интерфейс из интернета). Облачный KeenDNS не подойдёт.'),
+              dict(FIELD_USER, default='admin'), FIELD_PASS,
+              {'name': 'entwareHost', 'label': 'Entware: адрес для SSH', 'type': 'text', 'hint': 'Необязательно. Пусто — тот же адрес, что у роутера. Плагинам нужен доступ к Entware, его можно указать и позже, на вкладке «Плагины».'},
+              {'name': 'entwarePort', 'label': 'Entware: порт SSH', 'type': 'text', 'placeholder': '222'},
+              {'name': 'entwareUser', 'label': 'Entware: логин', 'type': 'text', 'placeholder': 'root'},
+              {'name': 'entwarePassword', 'label': 'Entware: пароль', 'type': 'password', 'secret': True}]
     actions = [{'id': 'reboot', 'label': 'Перезагрузить роутер', 'scope': 'device', 'confirm': 'Интернет пропадёт на 2–3 минуты. Перезагрузить?'},
                {'id': 'reboot_child', 'label': 'Перезагрузить точку', 'scope': 'child', 'confirm': 'Wi-Fi этой точки пропадёт на пару минут. Перезагрузить?'},
                {'id': 'sec_fix', 'label': 'Исправить', 'scope': 'security'}]
 
+    @staticmethod
+    def _ndw4(req, user, password):
+        """Sign-in of KeeneticOS 5.2 (x-ndw4-interactive), as the router's own web panel does it: Argon2id, then three steps where each side
+        proves that it knows the password. True = signed in, False = the router did not accept the password, None = this firmware has no such sign-in."""
+        data = lambda r: json.loads(base64.b64decode(r.headers.get('X-NDM-Data') or 'e30=') or b'{}')
+        status = lambda r: getattr(r, 'status', getattr(r, 'code', 0))
+        hm = lambda k, m: hmac.new(k, m.encode() if isinstance(m, str) else m, hashlib.sha3_512).digest()
+        xor = lambda a, b: bytes(x ^ y for x, y in zip(a, b))
+        b64 = lambda b: base64.b64encode(b).decode()
+        nonce1 = b64(secrets.token_bytes(16))
+        r = req('/auth', {'login': user, 'nonce': nonce1})
+        try:
+            p = data(r)
+        except ValueError:
+            p = {}
+        if status(r) != 401 or not all(k in p for k in ('salt', 'nonce', 'iter', 'memcost')):
+            return None
+        salt, nonce2, iters, mem = p['salt'], p['nonce'], p['iter'], p['memcost']
+        try:
+            key = argon2id(password, base64.b64decode(salt), iters, mem, 64)
+        except ValueError as e:
+            raise DriverError(str(e))
+        client_key = hm(key, 'NDW4 Interactive Client Key')
+        stored_key = hashlib.sha3_512(client_key).digest()
+        server_key = hm(key, 'NDW4 Interactive Server Key')
+        message = (f'login1={user},nonce1={nonce1};iter2={iters},memcost2={mem},nonce2={nonce2},salt2={salt};login3={user},nonce3={nonce2}')
+        r = req('/auth', {'login': user, 'nonce': nonce2, 'proof': b64(xor(client_key, hm(stored_key, message)))})
+        sig = data(r).get('signature')
+        if status(r) != 401 or not sig:
+            return False
+        if not hmac.compare_digest(hm(server_key, message), base64.b64decode(sig)):
+            return False                                   # this is not the router that knows the password
+        proof = xor(client_key, hm(stored_key, f'{message};signature4={sig}'))
+        return status(req('/auth', {'login': user, 'nonce': nonce2, 'signature-proof': b64(proof)})) == 200
+
     def _session(self, cfg, host=None):
         h = (host or cfg['host']).strip().rstrip('/')
-        base = h if '://' in h else 'http://' + h          # allow "https://dom.ru:8080" for remote access
         user = cfg.get('username') or 'admin'
-        # keep one logged-in session per router: a fresh login on every poll makes the Keenetic/Netcraze app
-        # notify «user admin logged in» every minute
-        skey = hashlib.sha256(f"{base}\0{user}\0{cfg.get('password', '')}".encode()).hexdigest()
-        op = SESSIONS.get(skey)
-        if op is None:
-            ctx = ssl.create_default_context()             # remote routers often have a self-signed / KeenDNS cert
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
-                                             urllib.request.HTTPSHandler(context=ctx))
+        # a bare address (white IP) may answer only on one of them: http, then https; the one that worked is remembered
+        bases = [h] if '://' in h else ['http://' + h, 'https://' + h]
+        if BASES.get(h) in bases:
+            bases = [BASES[h]] + [b for b in bases if b != BASES[h]]
+        reason, base, req, r, skey = None, None, None, None, None
+        if NO_WEB.get(h, 0) > time.time() and cfg.get('entwarePassword'):
+            return self._local_rci(cfg)
+        for base in bases:
+            if not web_reachable(base):                    # otherwise every request waits out two full timeouts, and whoever asked sees endless loading
+                reason, r = f'нет ответа от {base}', None
+                continue
+            # keep one logged-in session per router: a fresh login on every poll makes the Keenetic/Netcraze app
+            # notify «user admin logged in» every minute
+            skey = hashlib.sha256(f"{base}\0{user}\0{cfg.get('password', '')}".encode()).hexdigest()
+            op = SESSIONS.get(skey)
+            if op is None:
+                ctx = ssl.create_default_context()         # remote routers often have a self-signed / KeenDNS cert
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+                                                 urllib.request.HTTPSHandler(context=ctx))
 
-        def req(path, data=None):
-            r = urllib.request.Request(base + path, data=json.dumps(data).encode() if data is not None else None,
-                                       headers={'Content-Type': 'application/json'})
+            def req(path, data=None, op=op, base=base):
+                r = urllib.request.Request(base + path, data=json.dumps(data).encode() if data is not None else None,
+                                           headers={'Content-Type': 'application/json'})
+                try:
+                    return op.open(r, timeout=25)
+                except urllib.error.HTTPError as e:
+                    return e
             try:
-                return op.open(r, timeout=25)
-            except urllib.error.HTTPError as e:
-                return e
-
+                r = req('/auth')
+            except (urllib.error.URLError, OSError) as e:
+                reason, r = getattr(e, 'reason', e), None
+                continue
+            if r.headers.get('X-NDM-Realm') or getattr(r, 'status', getattr(r, 'code', 0)) == 200 or base == bases[-1]:
+                break
+        if r is None:
+            if cfg.get('entwarePassword'):                 # e.g. the router's lockout (5 failed logins → 15 min of silence): it still answers from the inside
+                NO_WEB[h] = time.time() + NO_WEB_FOR
+                return self._local_rci(cfg)
+            raise DriverError(f'не удалось подключиться к {h}: {reason}. Если роутер удалённый — на нём нужно открыть веб-интерфейс из интернета '
+                              '(«Управление → Пользователи и доступ»); если порт нестандартный, укажите его: IP:ПОРТ. '
+                              'Если раньше подключение работало, подождите 15 минут: после 5 неудачных входов роутер на это время перестаёт отвечать этому адресу.')
+        BASES[h] = base
         get = lambda p: json.loads(req(p).read() or b'{}')
         cli = lambda cmds: json.loads(req('/rci/', [{'parse': c} for c in cmds]).read())
-        r = req('/auth')
         if getattr(r, 'status', getattr(r, 'code', 0)) == 200 and skey in SESSIONS:
             return get, cli                                # still logged in — no new login, no notification
         SESSIONS.pop(skey, None)
@@ -65,9 +141,24 @@ class Keenetic(Driver):
                 return self._local_rci(cfg)
             raise DriverError('неверный логин или пароль — следующая попытка через ' +
                               f"{int((1800 - (time.time() - BAD_LOGIN[bad_key])) / 60) + 1} мин (или сразу после смены пароля), чтобы роутер не заблокировал адрес")
-        md5 = hashlib.md5(f"{user}:{realm}:{cfg.get('password', '')}".encode()).hexdigest()
-        a = req('/auth', {'login': user, 'password': hashlib.sha256((ch + md5).encode()).hexdigest()})
-        if getattr(a, 'status', getattr(a, 'code', 0)) != 200:
+        # KeeneticOS 5.2 still announces the old method in /auth but refuses it even with the right password, and a failed old login breaks the
+        # session for the new one. So: ask for the parameters of the new sign-in first (no password is sent); no parameters = old firmware, old login.
+        try:
+            ok = self._ndw4(req, user, cfg.get('password', ''))
+        except DriverError:
+            if not cfg.get('entwarePassword'):
+                raise
+            ok = False
+        if ok is None:
+            r = req('/auth')                               # a fresh challenge
+            if getattr(r, 'status', getattr(r, 'code', 0)) == 200:
+                ok = True
+            else:
+                realm, ch = r.headers.get('X-NDM-Realm') or realm, r.headers.get('X-NDM-Challenge') or ch
+                md5 = hashlib.md5(f"{user}:{realm}:{cfg.get('password', '')}".encode()).hexdigest()
+                a = req('/auth', {'login': user, 'password': hashlib.sha256((ch + md5).encode()).hexdigest()})
+                ok = getattr(a, 'status', getattr(a, 'code', 0)) == 200
+        if not ok:
             BAD_LOGIN[bad_key] = time.time()
             if cfg.get('entwarePassword'):
                 return self._local_rci(cfg)
@@ -660,8 +751,39 @@ class Keenetic(Driver):
                                {'label': 'Rack Live может зайти в Entware по SSH', 'ok': bool(ssh.get('ok'))}]
                 if pkgs is None:
                     p['installed'] = None                   # unknown until SSH works
+            elif p['id'] in ('xkeen', 'vlessawg'):
+                p['ssh'] = ssh
+                s, known = {}, False
+                if ssh.get('ok'):
+                    try:
+                        s, known = kv.parse_status(self._ssh(cfg, kv.STATUS, 25)), True
+                    except DriverError as e:
+                        ssh['error'], ssh['ok'] = str(e), False
+                p['checks'] = [{'label': 'Entware установлен', 'ok': entware},
+                               {'label': 'Rack Live может зайти в Entware по SSH', 'ok': bool(ssh.get('ok'))}]
+                if p['id'] == 'xkeen':
+                    p['checks'].append({'label': 'Архитектура роутера подходит (aarch64, mipsel, mips)', 'ok': arch.startswith(('aarch64', 'mips'))})
+                    p['installed'], p['version'], p['running'] = bool(s.get('xkeen')), s.get('xkeen'), bool(s.get('running') or s.get('mihomo_on'))
+                    p['core'], p['mine'], p['configured'] = s.get('xray'), bool(s.get('mine')), bool(s.get('mine') or s.get('conf') or s.get('mihomo'))
+                    p['mihomo'] = bool(s.get('xkeen') and (s.get('mihomo_on') or (s.get('mihomo') and not s.get('xray'))))
+                    p['policy'] = self._xkeen_policy(get)
+                    if not known and entware:               # no way into Entware: not «not installed» but «unknown»; what the router's API can tell
+                        core = self._proxy_process(get)
+                        p['installed'], p['running'] = (True, True) if core else (None, None)
+                        p['detected'] = f'работает процесс {core}' if core else 'на роутере есть политика xkeen' if p['policy'] else None
+                else:
+                    p['checks'].append({'label': 'Установлен AWG Manager', 'ok': bool(s.get('awgm'))})
+                    p['tunnels'] = []
+                    if s.get('awgm'):
+                        try:
+                            out_ = self._ssh(cfg, kv.awg_list(ssh['user'], cfg.get('entwarePassword') or ''), 25)
+                            p['tunnels'] = kv.tunnels_of(next((l[7:] for l in out_.splitlines() if l.startswith('@@list ')), ''))
+                        except DriverError:
+                            pass
+                    p['installed'] = bool(p['tunnels']) if known or not entware else None
             out.append(p)
-        return {'model': v.get('model'), 'fw': v.get('title'), 'arch': arch, 'plugins': out}
+        return {'model': v.get('model'), 'fw': v.get('title'), 'arch': arch, 'plugins': out,
+                'entwareAccess': dict(ssh, entware=entware, host=cfg.get('entwareHost') or '', defaultHost=host)}
 
     # ── Entware over SSH (installers) ──
     @staticmethod
@@ -673,8 +795,12 @@ class Keenetic(Driver):
         pw = p.get('password') or cfg.get('entwarePassword')
         if not pw:
             raise DriverError('укажите пароль SSH от Entware (пользователь root, порт 222)')
-        return {'host': self._hostname(cfg), 'sshPort': p.get('port') or cfg.get('entwarePort') or 222,
-                'username': p.get('user') or cfg.get('entwareUser') or 'root', 'password': pw}
+        host = re.sub(r'^\w+://', '', str(p['host'] if 'host' in p else cfg.get('entwareHost') or '').strip()).split('/')[0].split(':')[0]
+        port = str(p.get('port') or cfg.get('entwarePort') or 222).strip()
+        if not port.isdigit() or not 0 < int(port) < 65536:
+            raise DriverError('порт SSH — число от 1 до 65535')
+        return {'host': host or self._hostname(cfg), 'sshPort': int(port),
+                'username': str(p.get('user') or cfg.get('entwareUser') or 'root').strip(), 'password': pw}
 
     def _ssh(self, cfg, script, timeout=30, params=None):
         from .sshhost import SSHHost
@@ -689,7 +815,7 @@ class Keenetic(Driver):
                 raise DriverError('Entware ответил не так, как ожидалось')
             s = self._ssh_cfg(cfg, params)
             return {'ok': True, 'message': f"SSH в Entware работает ({out.split('@@ok', 1)[1].strip()})",
-                    'sshSave': {'entwarePort': int(s['sshPort']), 'entwareUser': s['username'], 'entwarePassword': s['password']}}
+                    'sshSave': {'entwareHost': '' if s['host'] == self._hostname(cfg) else s['host'], 'entwarePort': s['sshPort'], 'entwareUser': s['username'], 'entwarePassword': s['password']}}
         if op not in ('install', 'remove'):
             raise DriverError('неизвестное действие')
         log = []
@@ -725,8 +851,135 @@ class Keenetic(Driver):
             raise DriverError(f"{meta['title']} не удалился: {body.strip().splitlines()[-1] if body.strip() else 'нет ответа'}")
         return {'ok': True, 'log': log, 'message': f"{meta['title']} удалён"}
 
+    # ── VLESS from a pasted link (rackd/keenetic_vless.py) ──
+    async_ops = ('vless_setup', 'vless_remove')             # minutes long → background jobs
+
+    @staticmethod
+    def _proxy_process(get):
+        """Is the XKeen core running? The router's own process list answers without Entware access."""
+        try:
+            return next((x.get('comm') for x in get('/rci/show/processes').get('process') or [] if x.get('comm') in ('xray', 'mihomo')), None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _xkeen_policy(get):
+        """The router's policy that XKeen looks for: {id, hosts} or None."""
+        try:
+            pol = get('/rci/show/ip/policy')
+        except Exception:
+            return None
+        pid = next((k for k, v in pol.items() if isinstance(v, dict) and str(v.get('description') or '').lower() == 'xkeen'), None) if isinstance(pol, dict) else None
+        if not pid:
+            return None
+        try:
+            hosts = get('/rci/show/ip/hotspot').get('host') or []
+            n = sum(1 for h in hosts if isinstance(h, dict) and h.get('policy') == pid)
+        except Exception:
+            n = None
+        return {'id': pid, 'hosts': n}
+
+    def _xkeen_ensure_policy(self, get, cli, log):
+        """Without a policy named xkeen, XKeen catches ALL clients of the router. An empty policy first: nobody is affected until a device is added to it."""
+        have = self._xkeen_policy(get)
+        if have:
+            return have
+        pol = get('/rci/show/ip/policy')
+        used = set(pol) if isinstance(pol, dict) else set()
+        pid = next(f'Policy{i}' for i in range(64) if f'Policy{i}' not in used)
+        ifs = get('/rci/show/interface')
+        wan = [k for k, v in ifs.items() if isinstance(v, dict) and v.get('defaultgw')] if isinstance(ifs, dict) else []
+        if not wan:
+            raise DriverError('не удалось определить интернет-подключение роутера — политика xkeen не создана, установка не начата')
+        self._run(cli, [f'ip policy {pid}', f'ip policy {pid} description xkeen', f'ip policy {pid} permit global {wan[0]}', 'system configuration save'], log)
+        have = self._xkeen_policy(get)
+        if not have:
+            raise DriverError('роутер не создал политику xkeen — установка не начата, без неё XKeen перехватил бы все устройства')
+        return have
+
+    def _vless(self, cfg, pid, op, params, get, cli):
+        progress = params.get('_progress') or (lambda s: None)
+        log = []
+
+        def stage(title, script, timeout=300):
+            progress(title)
+            body = kv.mask(self._ssh(cfg, script, timeout=timeout))
+            log.append({'cmd': f'— {title}', 'ok': True, 'msg': ''})
+            log.extend({'cmd': l[:200], 'ok': '@@fail' not in l and not re.search(r'\berror\b|ошибка', l, re.I), 'msg': ''}
+                       for l in body.splitlines() if l.strip() and not l.startswith('@@'))
+            if '@@fail' in body:
+                raise DriverError(body.split('@@fail', 1)[1].splitlines()[0].strip())
+            return body
+
+        if op == 'ssh':
+            return self._installer(cfg, 'awgmanager', 'ssh', params, get, cli)
+        if op == 'preview':
+            return {'ok': True, 'preview': kv.summary(kv.parse_vless(params.get('link')))}
+        user, pw = cfg.get('entwareUser') or 'root', cfg.get('entwarePassword') or ''
+        if pid == 'xkeen' and op in kv.XKEEN_CONTROL:
+            if op == 'start' and not self._xkeen_policy(get):
+                raise DriverError('на роутере нет политики xkeen — запуск перехватил бы все устройства. Нажмите «Настроить» ещё раз')
+            stage('Запуск XKeen' if op == 'start' else 'Остановка XKeen', kv.XKEEN_CONTROL[op], 120)
+            return {'ok': True, 'log': log, 'message': 'XKeen запущен' if op == 'start' else 'XKeen остановлен: устройства политики идут в интернет напрямую'}
+        if op == 'vless_setup':
+            try:
+                v = kv.parse_vless(params.get('link'))
+            except ValueError as e:
+                raise DriverError(str(e))
+            where = f"{v['host']}:{v['port']}"
+            if pid == 'xkeen':
+                s = kv.parse_status(self._ssh(cfg, kv.STATUS, 25))
+                if s.get('xkeen') and (s.get('mihomo_on') or (s.get('mihomo') and not s.get('xray'))):
+                    raise DriverError('этот XKeen работает на ядре Mihomo, а плагин настраивает только Xray. Настройки роутера не менялись')
+                progress('Создаю политику xkeen')
+                pol = self._xkeen_ensure_policy(get, cli, log)
+                if not (s.get('xkeen') and s.get('xray')):
+                    stage('Установка XKeen и Xray (несколько минут)', kv.XKEEN_INSTALL, 900)
+                stage('Проверка ключа отдельным Xray', kv.key_test(v), 60)
+                stage('Настройка и запуск XKeen', kv.xkeen_apply(v), 180)
+                n = pol.get('hosts')
+                return {'ok': True, 'log': log, 'message': f'XKeen работает через {where}. ' + (f'В политике xkeen устройств: {n}.' if n else
+                        'Пока никто не идёт через сервер: добавьте устройства в политику xkeen (в роутере: «Приоритеты подключений» или карточка устройства).')}
+            body = stage('Добавляю подключение в AWG Manager', kv.awg_add(v, user, pw), 400)
+            line = lambda k: next((l[len(k) + 3:] for l in body.splitlines() if l.startswith(f'@@{k} ')), '')
+            code = line('code')
+            if code != '200':
+                m = re.search(r'"(?:message|error)"\s*:\s*"([^"]+)"', line('resp'))
+                raise DriverError(f"AWG Manager не принял ключ{': ' + m.group(1) if m else ' (код ' + code + ')'}" + (' — возможно, его sing-box не поддерживает XHTTP, попробуйте плагин XKeen' if v['net'] == 'xhttp' else ''))
+            before = {t['tag'] for t in kv.tunnels_of(line('before'))}
+            new = [t for t in kv.tunnels_of(line('after')) if t['tag'] not in before]
+            res = {'ok': True, 'log': log, 'tunnels': new}
+            probe = ''
+            if new:
+                out = stage('Проверка подключения', kv.awg_probe(new[0]['tag'], user, pw), 60)
+                probe = next((l[8:] for l in out.splitlines() if l.startswith('@@probe ')), '')
+            ok = '"connected":true' in probe.replace(' ', '')
+            res['message'] = (f'Подключение через {where} добавлено' + (', связь проверена.' if ok else '. Проверить связь не удалось — посмотрите статус в панели AWG Manager.') +
+                              ' Трафик сам в него не пойдёт: выберите его в приоритетах подключений или в маршрутах роутера.')
+            return res
+        if op == 'vless_remove':
+            if pid == 'xkeen':
+                stage('Удаление XKeen', kv.XKEEN_REMOVE, 300)
+                pol = self._xkeen_policy(get)
+                if pol:
+                    self._run(cli, [f"no ip policy {pol['id']}", 'system configuration save'], log)
+                return {'ok': True, 'log': log, 'message': 'XKeen удалён, политика xkeen снята. Устройства вернулись к обычной политике.'}
+            tag = str(params.get('tag') or '')
+            if not tag:
+                raise DriverError('не указано подключение')
+            out = stage('Удаляю подключение', kv.awg_delete(tag, user, pw), 60)
+            if '@@code 200' not in out:
+                raise DriverError('AWG Manager не удалил подключение')
+            return {'ok': True, 'log': log, 'message': f'Подключение {tag} удалено'}
+        raise DriverError('неизвестное действие')
+
     def plugin(self, cfg, pid, op, params):
         get, cli = self._session(cfg)
+        if pid in ('xkeen', 'vlessawg'):
+            try:
+                return self._vless(cfg, pid, op, params, get, cli)
+            except ValueError as e:
+                raise DriverError(str(e))
         if pid in plugins.INSTALLERS:
             return self._installer(cfg, pid, op, params, get, cli)
         if pid != 'awg':

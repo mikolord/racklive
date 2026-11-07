@@ -75,8 +75,9 @@ const scoreTone = s => (s == null ? null : s >= 80 ? 'var(--accent)' : s >= 50 ?
 /* «Сводка»: four readings in a row, split by hairlines */
 function StatsInstr() {
   const { data } = useApp(); const devices = data.devices;
-  const on = devices.filter(d => d.state && d.state.status === 'online').length;
-  const problems = devices.filter(d => !d.healthSkip && ['offline', 'warning'].includes(d.state && d.state.status)).length;
+  const watched = devices.filter(d => !d.healthSkip);                        // devices that are not «без слежки» — only they count as «в сети» and as problems
+  const on = watched.filter(d => d.state && d.state.status === 'online').length;
+  const problems = watched.filter(d => ['offline', 'warning'].includes(d.state && d.state.status)).length;
   const clients = devices.reduce((a, d) => a + ((d.state && d.state.clients) || []).length, 0);
   const poe = devices.flatMap(d => (d.state && d.state.ports) || []).reduce((a, p) => a + (p.poeW || 0), 0);
   const cell = (k, v, sub, frac, warn, digits) => <div className={'sp-cell' + (warn ? ' warn' : '')}>
@@ -84,8 +85,8 @@ function StatsInstr() {
     <div className="sp-line"><i style={{ width: Math.max(0, Math.min(1, frac)) * 100 + '%' }} /></div></div>;
   return <div className="sp-row with-lamp">
     <div className="sp-lamp"><PilotLamp data={data} /></div>
-    {cell('Устройства', on, '/' + devices.length, devices.length ? on / devices.length : 0)}
-    {cell('Проблемы', problems, '', devices.length ? problems / devices.length : 0, problems > 0)}
+    {cell('Устройства', on, '/' + watched.length, watched.length ? on / watched.length : 0)}
+    {cell('Проблемы', problems, '', watched.length ? problems / watched.length : 0, problems > 0)}
     {cell('Клиенты', clients, '', Math.min(1, clients / 100))}
     {cell('PoE', +poe.toFixed(1), ' Вт', Math.min(1, poe / 370), false, 1)}
   </div>;
@@ -250,14 +251,14 @@ function UpsInstr({ list }) {
   return <div className="ui-list">{list.map(d => { const u = d.state.ups, tone = upsTone(u), col = tone === 'green' ? 'var(--accent)' : tone === 'red' ? 'var(--red)' : 'var(--orange)';
     const f = u.charge != null ? u.charge / 100 : 1, feeds = [...(u.connected || [])].sort((a, b) => b.w - a.w);
     return <div key={d.id} className="ui" onClick={() => openDevice(d)}>
-      <div className="ui-head"><span className="sp-k">{d.name}</span><span className="ui-st" style={{ color: col }}><i style={{ background: col, boxShadow: `0 0 6px ${col}` }} />{u.onBattery ? 'от батареи' : u.estimated ? 'расчёт' : 'от сети'}</span></div>
+      <div className="ui-head"><span className="sp-k">{nameNoFlag(d.name)}</span><span className="ui-st" style={{ color: col }}><i style={{ background: col, boxShadow: `0 0 6px ${col}` }} />{u.onBattery ? 'от батареи' : u.estimated ? 'расчёт' : 'от сети'}</span></div>
       <div className="ui-main">
         <div><div className="sr-v"><Num v={u.runtimeMin || 0} /><small> мин</small></div><div className="sr-t">хватит при отключении света</div></div>
         <div className="ui-bat" title={u.charge != null ? 'заряд ' + Math.round(u.charge) + '%' : 'расчёт'}>{Array.from({ length: 10 }, (_, i) => <i key={i} className={i < Math.round(f * 10) ? 'on' : ''} style={i < Math.round(f * 10) ? { background: col } : null} />)}<b /></div>
       </div>
       <div className="sp-k" style={{ marginTop: 14 }}>Нагрузка · {u.loadW} Вт{u.nominalW ? ` из ${Math.round(u.nominalW)}` : ''}</div>
       {u.loadPct != null ? <Scale value={u.loadPct} zones={[[0, .7, 'var(--accent)'], [.7, .85, 'var(--orange)'], [.85, 1, 'var(--red)']]} tone={u.loadPct > 85 ? 'var(--red)' : u.loadPct > 70 ? 'var(--orange)' : null} /> : null}
-      {feeds.length ? <div className="ui-feeds">{feeds.map((c, i) => <div key={i}><span className="ellipsis">{c.name}</span><i /><b>{c.w} Вт</b></div>)}</div> : null}
+      {feeds.length ? <div className="ui-feeds">{feeds.map((c, i) => <div key={i}><span className="ellipsis">{nameNoFlag(c.name)}</span><i /><b>{c.w} Вт</b></div>)}</div> : null}
       {u.supply ? <div className="sr-t" style={{ marginTop: 8 }}>питается от: {u.supply.name}{u.supply.outlet ? `, розетка ${u.supply.outlet}` : ''}</div> : null}
     </div>; })}</div>;
 }
@@ -272,7 +273,7 @@ function NewDevInstr() {
       <div className="sp-k">Новые за неделю · сейчас в сети</div>
       <div className="sr-v"><Num v={all.length} /><small>{ask.length ? ` · ждут решения: ${ask.length}` : ' · все свои'}</small></div>
       <div className="dt" style={{ marginTop: 10 }}>{all.slice(0, 8).map((r, i) => <div key={r.mac + i} className="dt-row" style={{ '--i': i, cursor: 'default' }}>
-        <i className="tt-bdot dt-dot" /><span className="dt-n ellipsis">{r.name || (r.random ? 'Телефон или ноутбук' : 'Без имени')}</span><span className="dt-a ellipsis">{r.ip || r.mac}</span></div>)}</div>
+        <i className="tt-bdot dt-dot" /><span className="dt-n ellipsis">{nameNoFlag(r.name) || (r.random ? 'Телефон или ноутбук' : 'Без имени')}</span><span className="dt-a ellipsis">{r.ip || r.mac}</span></div>)}</div>
       <div style={{ marginTop: 12 }}><NewDevicesCard /></div>
     </div>
   </div>;
@@ -280,7 +281,8 @@ function NewDevInstr() {
 
 /* ───────── «Сводка» as a pilot lamp: a bezel with a glowing lens; the colour says how the network is ───────── */
 function PilotLamp({ data }) {           // an ordinary light bulb drawn in hairlines: the filament glows in the network's colour
-  const ds = data.devices || [], off = ds.filter(x => (x.state || {}).status === 'offline').length, warn = ds.filter(x => (x.state || {}).status === 'warning').length;
+  const ds = (data.devices || []).filter(x => !x.healthSkip),            // «Следить за здоровьем» выключено → лампочка этого устройства не видит
+    off = ds.filter(x => (x.state || {}).status === 'offline').length, warn = ds.filter(x => (x.state || {}).status === 'warning').length;
   const tone = off ? 'var(--red)' : warn ? 'var(--orange)' : 'var(--accent)', word = off ? 'нет связи: ' + off : warn ? 'внимание: ' + warn : 'всё в сети';
   return <div className={'plamp' + (off ? ' bad' : '')} style={{ '--lc': tone }} title={word}>
     <svg className="bulb" viewBox="0 0 60 80">
@@ -352,7 +354,7 @@ function Rack3D({ rack, devById, side, onUnit, flatten = false, cords = false, o
     const dd = Math.min(R3.D - 90, R3_DEPTH[u.type] || R3_DEPTH[(dev && dev.kind) || 'other'] || 300) * k, back = (u.side || 'front') === 'back';
     const zf = D / 2 - 26 * k, z = back ? -zf + dd / 2 : zf - dd / 2;
     const open = () => { if (!moved.current) onUnit(u); };
-    return <R3Box key={u.id} x={0} y={y} z={z} w={R3.PANEL * k} h={h} d={dd} flip={back} cls={'r3-unit' + (dev ? '' : ' plain')} onClick={open} title={u.name}
+    return <R3Box key={u.id} x={0} y={y} z={z} w={R3.PANEL * k} h={h} d={dd} flip={back} cls={'r3-unit' + (dev ? '' : ' plain')} onClick={open} title={nameNoFlag(u.name)}
       front={<R3Front unit={u} dev={dev} rack={rack} data={data} cords={cords} />} />; };
   return <div className={'r3-wrap' + (dragging ? ' r3-dragging' : '')} ref={wrap} style={{ '--k': k, height: H + 90 }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
     onDoubleClick={() => setRot({ x: -10, y: side === 'back' ? 156 : -24 })}>

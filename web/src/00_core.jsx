@@ -221,8 +221,29 @@ function kindColor(kind) {
   if (document.documentElement.getAttribute('data-skin') === 'net' && KIND_COLOR_NET[k]) return KIND_COLOR_NET[k];
   return KIND_COLOR[k] || KIND_COLOR.other;
 }
-function KindIcon({ kind, size = 36, round = 10, icon }) {
+/* A name that starts with a flag: an emoji flag («🇩🇪 Germany», two regional-indicator letters) or a short code for a place that has no emoji («/abh Гагра», see NAME_CODES).
+   Windows has no flag glyphs (it draws a plain «DE»), so the icon is the picture of the flag — web/flags/<cc>.svg (flag-icons, MIT; abh.svg is drawn here) — and the name is shown without the prefix.
+   Any kind of device or client. A hand-chosen node icon loses to the flag, as the flag is what the owner typed into the name. */
+const FLAG_RE = /^\s*([\u{1F1E6}-\u{1F1FF}])([\u{1F1E6}-\u{1F1FF}])\s*/u;
+const NAME_CODES = { abh: 'abh' };
+const NAME_CODE_RE = /^\s*\/([a-z]+)(?:\s+|$)/i;
+function flagOf(name) {
+  const m = FLAG_RE.exec(name || '');
+  if (m) return String.fromCharCode(m[1].codePointAt(0) - 0x1F1E6 + 97, m[2].codePointAt(0) - 0x1F1E6 + 97);
+  const c = NAME_CODE_RE.exec(name || '');
+  return (c && NAME_CODES[c[1].toLowerCase()]) || '';
+}
+function nameNoFlag(name) {
+  if (!flagOf(name)) return name;
+  const s = String(name);
+  return (FLAG_RE.test(s) ? s.replace(FLAG_RE, '') : s.replace(NAME_CODE_RE, '')) || name;
+}
+function KindIcon({ kind, size = 36, round = 10, icon, name }) {
   const c = kindColor(kind);
+  const cc = flagOf(name);
+  const [bad, setBad] = useState('');                  // the country code whose picture is missing (a code with no flag): fall back to the plain server icon
+  if (cc && bad !== cc) return <div className="kind-flag" style={{ width: size, height: size, borderRadius: round }}>
+    <img src={'/flags/' + cc + '.svg'} alt="" draggable={false} onError={() => setBad(cc)} /></div>;
   return <div className="kind-ic" style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
     background: `color-mix(in srgb, ${c} 16%, transparent)` }}><NodeGlyph spec={icon} kind={kind} size={size * (isUpIcon(icon) ? .72 : .54)} color={c} /></div>;
 }

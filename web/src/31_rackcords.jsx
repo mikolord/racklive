@@ -103,7 +103,7 @@ function RackCordOverlay({ root, rack, data, side, enabled, width, height, scale
   const cords = rackCords(rack, data);
   useLayoutEffect(() => {
     if (!enabled) return;
-    let ro;
+    let ro, stop = null;
     const frame = requestAnimationFrame(() => {
     const el = root.current; if (!el) return;
     const measure = () => {
@@ -120,9 +120,15 @@ function RackCordOverlay({ root, rack, data, side, enabled, width, height, scale
       }
       setLayout({ points, width: w, height: h });
     };
-    measure(); ro = new ResizeObserver(measure); ro.observe(el);
+    // re-measure when the ports move without the rack changing size: a unit photo finishes loading, «Фото» is switched, a row re-renders
+    let again = 0; const later = () => { cancelAnimationFrame(again); again = requestAnimationFrame(measure); };
+    const mo = new MutationObserver(list => { if (list.some(m => !(m.target.closest && m.target.closest('svg.rack-cords')))) later(); });
+    measure(); ro = new ResizeObserver(later); ro.observe(el);
+    mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'src'] });
+    el.addEventListener('load', later, true);
+    stop = () => { cancelAnimationFrame(again); mo.disconnect(); el.removeEventListener('load', later, true); };
     });
-    return () => { cancelAnimationFrame(frame); if (ro) ro.disconnect(); };
+    return () => { cancelAnimationFrame(frame); if (ro) ro.disconnect(); if (stop) stop(); };
   }, [root, enabled, rack, data.devices, side, width, height, scale, mode]);
   if (!enabled || !layout.width) return null;
   const w = layout.width, h = layout.height;
