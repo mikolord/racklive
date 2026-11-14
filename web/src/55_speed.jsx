@@ -2,7 +2,9 @@
 const SPEED = { secs: 8, warm: 1.5, streams: 4, chunk: 25 << 20, upBlob: 8 };
 const speedHeaders = () => { const t = ssGet('rl_tok'); return t ? { 'X-RL-Session': t } : {}; };
 const SPEED_LEVELS = [[200, '#30d158', 'Отлично'], [50, '#ffd60a', 'Хорошо'], [15, '#ff9f0a', 'Средне'], [0, '#ff453a', 'Плохо']];
-const speedLevel = mbps => SPEED_LEVELS.find(l => (mbps || 0) >= l[0]) || SPEED_LEVELS[3];
+const AU_DIM = ['var(--accent)', 'color-mix(in srgb, var(--accent) 72%, #8e8e93)', 'color-mix(in srgb, var(--accent) 45%, #8e8e93)', '#8e8e93'];   // «Аврора»: чем хуже, тем тусклее цвет системы
+const speedLevel = mbps => { const i = Math.max(0, SPEED_LEVELS.findIndex(l => (mbps || 0) >= l[0])), l = SPEED_LEVELS[i] || SPEED_LEVELS[3];
+  return isAurora() ? [l[0], AU_DIM[i], l[2]] : l; };
 const mbpsText = v => v == null ? '—' : v >= 100 ? String(Math.round(v)) : v.toFixed(1);
 
 async function measurePing(n = 12) {
@@ -69,6 +71,28 @@ function useGlide(target, tau = 260) {
     raf = requestAnimationFrame(step); return () => cancelAnimationFrame(raf); }, []);
   return v;
 }
+/* «Аврора»: шкала как в iOS / macOS — дуга на 240° со скруглёнными концами, заливка цветом системы, белый бегунок на конце, тонкие риски и крупная цифра в центре */
+function AuGauge({ f, shown, phase, scale, progress }) {
+  const id = React.useId().replace(/:/g, '');
+  const R = 78, cx = 100, cy = 98, A0 = 150, SW = 240;
+  const pt = (deg, r = R) => [cx + r * Math.cos(deg * Math.PI / 180), cy + r * Math.sin(deg * Math.PI / 180)];
+  const arc = (from, to) => { const [x1, y1] = pt(from), [x2, y2] = pt(to); return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${to - from > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`; };
+  const end = A0 + SW * f, [kx, ky] = pt(end);
+  return <div className="gauge au-g">
+    <svg viewBox="0 0 200 172">
+      <defs><linearGradient id={'aug' + id} x1="0" x2="1" y1="0" y2="0"><stop offset="0" style={{ stopColor: 'color-mix(in srgb, var(--accent) 55%, #5ac8fa)' }} /><stop offset="1" style={{ stopColor: 'var(--accent)' }} /></linearGradient></defs>
+      <path d={arc(A0, A0 + SW)} className="aug-track" />
+      {f > .004 ? <path d={arc(A0, end)} className="aug-fill" stroke={`url(#aug${id})`} /> : null}
+      {Array.from({ length: 25 }, (_, i) => { const a = A0 + SW * i / 24, [x1, y1] = pt(a, R - 16), [x2, y2] = pt(a, R - (i % 6 === 0 ? 24 : 20));
+        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} className={'aug-tick' + (i % 6 === 0 ? ' b' : '') + (i / 24 <= f && phase ? ' on' : '')} />; })}
+      {[0, .5, 1].map(k => { const [x, y] = pt(A0 + SW * k, R - 34); return <text key={k} x={x} y={y + 3} textAnchor="middle" className="aug-num">{Math.round(scale * k)}</text>; })}
+      {phase || f > .004 ? <circle cx={kx} cy={ky} r="8.5" className="aug-knob" /> : null}
+    </svg>
+    <div className="aug-val"><b style={phase ? null : { color: 'var(--text3)' }}>{phase ? mbpsText(shown) : '0'}</b><span>Мбит/с</span></div>
+    <div className="gauge-phase">{phase || ' '}</div>
+    {progress != null ? <div className="gauge-bar"><i style={{ width: progress * 100 + '%' }} /></div> : null}
+  </div>;
+}
 function Gauge({ value, phase, progress }) {
   const target = value || 0;
   const scale = [100, 500, 1000, 2500, 10000].find(m => target <= m) || 10000;          // the scale grows with the speed
@@ -76,6 +100,7 @@ function Gauge({ value, phase, progress }) {
   const f = Math.max(0, Math.min(1, shown / max)), a = Math.PI * (1 - f);
   const R = 80, cx = 100, cy = 92, x = cx + R * Math.cos(a), y = cy - R * Math.sin(a);
   const col = phase ? speedLevel(shown)[1] : 'var(--text3)';
+  if (isAurora()) return <AuGauge f={f} shown={shown} phase={phase} scale={scale} progress={progress} />;
   if (isTestLook()) { const pc = Math.round(f * 100), tip = `color-mix(in srgb, var(--accent) ${pc}%, var(--text))`;
     return <div className="gauge lin">
       <div className="lg-val"><b style={phase ? null : { color: 'var(--text3)' }}>{phase ? mbpsText(shown) : '0'}</b><span>Мбит/с</span></div>

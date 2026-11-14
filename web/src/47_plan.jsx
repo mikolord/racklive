@@ -2,7 +2,8 @@
 const PG = 20;
 const uid = p => p + Math.random().toString(36).slice(2, 7);
 const snap = v => Math.round(v / PG) * PG;
-const clampK = k => Math.min(6, Math.max(.08, k));
+let planMinK = .08;                                              // the plan scene sets it to a little under its «whole house» zoom: zooming out stops there, so you can always get back to the home view
+const clampK = k => Math.min(6, Math.max(planMinK, k));
 const planRoomsOverlap = (a,b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
 
 // The network map also contains discovered APs, clients and units without a poller.
@@ -129,7 +130,8 @@ function usePanZoom(wrapRef, opts, initial) {
     const r = wrapRef.current.getBoundingClientRect(); return { x: (cx - r.left - vr.current.x) / vr.current.k, y: (cy - r.top - vr.current.y) / vr.current.k };
   };
   const wheel = e => { e.preventDefault(); const r = wrapRef.current.getBoundingClientRect(); const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const k = clampK(vr.current.k * Math.exp(-e.deltaY * .0015)); setView(v => ({ k, x: mx - (mx - v.x) * k / v.k, y: my - (my - v.y) * k / v.k })); };
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY, f = Math.exp(-Math.max(-120, Math.min(120, dy)) * (e.ctrlKey ? .01 : .0015));
+    setView(v => { const k = clampK(v.k * f); return { k, x: mx - (mx - v.x) * k / v.k, y: my - (my - v.y) * k / v.k }; }); };      // computed from the newest view: quick wheel / trackpad bursts used to mix old and new zoom and the picture jerked back and forth
   useEffect(() => { const el = wrapRef.current; if (!el) return; el.addEventListener('wheel', wheel, { passive: false }); return () => el.removeEventListener('wheel', wheel); }, []);
   const pinchBase = () => { const p = Object.values(ptrs.current); const r = wrapRef.current.getBoundingClientRect();
     return { pinch: true, dist: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, cx: (p[0].x + p[1].x) / 2 - r.left, cy: (p[0].y + p[1].y) / 2 - r.top, v: { ...vr.current } }; };
@@ -178,7 +180,7 @@ function ZoomBtns({ setView, onFit }) {
 }
 /* fit a set of world points into the canvas (used on open and by the «показать всё» button) */
 function fitView(el, xs, ys, setView, pad = 40) {
-  if (!el) return; const W = el.clientWidth, H = el.clientHeight;
+  planMinK = .08; if (!el) return; const W = el.clientWidth, H = el.clientHeight;
   if (!xs.length) { setView({ x: W / 2, y: H / 2, k: 1 }); return; }
   const x1 = Math.min(...xs) - pad, y1 = Math.min(...ys) - pad, x2 = Math.max(...xs) + pad, y2 = Math.max(...ys) + pad;
   const k = clampK(Math.min(1.2, Math.min(W / (x2 - x1), H / (y2 - y1))));
@@ -222,16 +224,27 @@ function houseScope(b, data, back, openHouse) {
 }
 
 /* Only the measured hull is coloured; pins remain available with one or two samples. */
-function CoverageSurface({ mesh, metric }) {
-  const image=useMemo(()=>coverageRaster(mesh,metric),[mesh,metric]);
+function CoverageSurface({ mesh, metric, waves, rooms }) {
+  const theme = document.documentElement.getAttribute('data-theme');      // the scale depends on the theme: redraw when it changes
+  const image=useMemo(()=>waves ? null : coverageRaster(mesh,metric),[mesh,metric,waves,theme]);
+  const rasters=useMemo(()=>waves ? coverageWaveRasters(mesh,metric,rooms || []) : [],[mesh,metric,waves,rooms]);
+  if (waves) return <g className="coverage-waves" pointerEvents="none">{rasters.map(r => <image key={r.key} className="coverage-heatmap waves" x={r.x} y={r.y} width={r.w} height={r.h} href={r.url} preserveAspectRatio="none" />)}</g>;
   return image ? <image className="coverage-heatmap" x={image.x} y={image.y} width={image.w} height={image.h} href={image.url} pointerEvents="none" /> : null;
-}
-function CoverageLayer({ tests, mesh, metric, sel, onSel, placing, view, projection, markerScale = .3 }) {
+}function CoverageLayer({ tests, mesh, metric, waves, rooms, sel, onSel, placing, view, projection, markerScale = .3 }) {
   const scale=coverageScale(mesh,metric), {a,b,c,d}=projection, det=a*d-b*c;
   const screenMatrix=`matrix(${d/det/view.k} ${-b/det/view.k} ${-c/det/view.k} ${a/det/view.k} 0 0)`;
   const marker=Math.max(.2,Math.min(1,markerScale))/.3;
   return <g className="coverage" data-metric={metric}>
-    {tests.map(t => { const value=coverageValue(t,metric), color='rgb('+coverageColor(value,scale).join(',')+')';
+    {waves ? <g className="cov-waves" pointerEvents="none">{tests.map(t => { const value = coverageValue(t, metric), k = coverageRatio(value, scale), col = 'rgb(' + coverageColor(value, scale).join(',') + ')', r = (7 + 15 * (k == null ? 0 : k)) * PPM;
+      const room = rooms ? rooms.find(q => t.where.x >= q.x && t.where.x <= q.x + q.w && t.where.y >= q.y && t.where.y <= q.y + q.h) : null, cid = 'cvclip-' + t.id;      // the waves stop at the walls of their room
+      return <g key={t.id} className="cov-wave" style={{ '--wc': col }}>
+        {room ? <clipPath id={cid}><rect x={room.x} y={room.y} width={room.w} height={room.h} /></clipPath> : null}
+        <g clipPath={room ? 'url(#' + cid + ')' : undefined}><g transform={`translate(${t.where.x},${t.where.y})`}>
+          <circle r={r} className="cw-fill" />
+          {[0, 1, 2].map(i => <circle key={i} r={r} className="cw-ring" vectorEffect="non-scaling-stroke" style={{ animationDelay: (-i * 1.5) + 's' }} />)}
+          <circle r={r * .5} className="cw-core" />
+        </g></g></g>; })}</g> : null}
+    {tests.map(t => { const value=coverageValue(t,metric), rgbv=coverageColor(value,scale), color='rgb('+rgbv.join(',')+')';
       const label=metric==='signal' ? (value==null ? '—' : Math.round(value)+' дБм') : mbpsText(value);
       return <g key={t.id} className={'cov-pin' + (sel === t.id ? ' sel' : '')} transform={`translate(${t.where.x},${t.where.y})`}
         onPointerDown={e => { if (!placing) { e.stopPropagation(); onSel(sel === t.id ? null : t.id); } }}>
@@ -239,7 +252,7 @@ function CoverageLayer({ tests, mesh, metric, sel, onSel, placing, view, project
         <g transform={screenMatrix}>
           <rect className="cov-hit" x={-(Math.max(40,(Math.max(40,label.length*6.5+16)*marker))/2)-5} y={-Math.max(20,20*marker)} width={Math.max(40,Math.max(40,label.length*6.5+16)*marker)+10} height={Math.max(40,40*marker)} rx={13} />
           <rect x={-(Math.max(40,label.length*6.5+16)*marker)/2} y={-11*marker} width={Math.max(40,label.length*6.5+16)*marker} height={22*marker} rx={8*marker} fill={color} />
-          <text y={4*marker} textAnchor="middle" className="cov-txt" style={{fontSize:11*marker}}>{label}</text>
+          <text y={4*marker} textAnchor="middle" className="cov-txt" style={{fontSize:11*marker,fill:coverageInk(rgbv)}}>{label}</text>
         </g>
       </g>; })}
   </g>;
@@ -651,6 +664,7 @@ function BuildingPlan({ building, plan, back }) {
   const buildings = plan.buildings; const links = plan.links || [];
   const [cov, setCov] = useState(() => defaults.coverage !== false);
   const [covMode, setCovMode] = useState('auto');
+  const covStyle = 'heat';                                         // the «waves» look was tried and dropped: the heat map stays as it was
   const [covSource, setCovSource] = useState('');
   const [selTest, setSelTest] = useState(null);
   const networkDevices = planNetworkDevices(data);
@@ -890,7 +904,7 @@ function BuildingPlan({ building, plan, back }) {
   };
 
   // centre the view on the floor's content whenever the floor changes
-  const viewAnim = useRef(0);
+  const viewAnim = useRef(0), fitTo = useRef(null), touching = useRef(0);
   const animateView = (to, animate) => {                      // the camera glides to the new framing; a touch or the wheel stops it at once
     cancelAnimationFrame(viewAnim.current);
     const from = view;
@@ -904,6 +918,15 @@ function BuildingPlan({ building, plan, back }) {
   useEffect(() => { const el = wrap.current, stop = () => cancelAnimationFrame(viewAnim.current); if (!el) return stop;
     el.addEventListener('pointerdown', stop, true); el.addEventListener('wheel', stop, { passive: true });
     return () => { stop(); el.removeEventListener('pointerdown', stop, true); el.removeEventListener('wheel', stop); }; }, []);
+  /* zoomed out to (almost) the «whole house» view and let go: settle exactly onto it — pinching back never ends up «not quite the same» */
+  useEffect(() => { const el = wrap.current; if (!el) return;
+    const dn = () => { touching.current++; }, up = () => { touching.current = Math.max(0, touching.current - 1); };
+    el.addEventListener('pointerdown', dn, true); window.addEventListener('pointerup', up, true); window.addEventListener('pointercancel', up, true);
+    return () => { el.removeEventListener('pointerdown', dn, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true); }; }, []);
+  useEffect(() => { const fit = fitTo.current; if (!fit || !wrap.current) return;
+    if (view.k > fit.k * 1.12 || (Math.abs(view.k - fit.k) < 1e-4 && Math.abs(view.x - fit.x) < 1 && Math.abs(view.y - fit.y) < 1)) return;
+    const timer = setTimeout(() => { if (!touching.current) animateView(fit, true); }, 280);
+    return () => clearTimeout(timer); }, [view]);
   const fitFloor = (animate = false) => { const xs = [], ys = [];
     const shown = overview ? sceneFloors : ghost ? sceneFloors.slice(0,floorIndex+1) : [floor];
     const b = planBounds(shown);
@@ -926,15 +949,21 @@ function BuildingPlan({ building, plan, back }) {
     const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
     const width = Math.max(100,W-inset.left-inset.right), height = Math.max(120,H-inset.top-inset.bottom);
     const k = Math.max(.001,Math.min(1, width/Math.max(1,x2-x1), height/Math.max(1,y2-y1)) * (mobile ? .86 : .92));
-    animateView({ k, x: inset.left+(width-(x2-x1)*k)/2-x1*k, y: inset.top+(height-(y2-y1)*k)/2-y1*k }, animate);
+    const to = { k, x: inset.left+(width-(x2-x1)*k)/2-x1*k, y: inset.top+(height-(y2-y1)*k)/2-y1*k };
+    fitTo.current = to; planMinK = Math.max(.02, k * .82);
+    animateView(to, animate);
   };
   const fitFloorRef = useRef(fitFloor); fitFloorRef.current = fitFloor;
   const firstFit = useRef(true);
   useEffect(() => {
     const animate = !firstFit.current; firstFit.current = false;          // the very first framing is instant; later changes (floor, «Весь дом», обход) glide
     let timer, skip = true; const schedule = glide => { clearTimeout(timer); timer = setTimeout(() => fitFloorRef.current(glide), glide ? 0 : 60); };
+    const lastSize = { w: wrap.current ? wrap.current.clientWidth : 0, h: wrap.current ? wrap.current.clientHeight : 0 };
     const resized = () => schedule(false);
-    const observer = new ResizeObserver(() => { if (skip) { skip = false; return; } resized(); });       // observe() reports once at the start: that is not a resize
+    const observer = new ResizeObserver(() => { if (skip) { skip = false; return; }
+      const el = wrap.current; if (!el) return; const dw = Math.abs(el.clientWidth - lastSize.w), dh = Math.abs(el.clientHeight - lastSize.h); lastSize.w = el.clientWidth; lastSize.h = el.clientHeight;
+      if (dw < 40 && dh < 140) return;                                   // the phone's address bar sliding in and out nudges the height: that must not re-frame the plan under the finger
+      resized(); });       // observe() reports once at the start: that is not a resize
     if (wrap.current) observer.observe(wrap.current);
     window.addEventListener('orientationchange',resized); schedule(animate);
     return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener('orientationchange',resized); };
@@ -1075,10 +1104,11 @@ function BuildingPlan({ building, plan, back }) {
             draft={draft} tool={tool} edit={edit && !overview} cov={cov && !overview} tests={coverageTests} coverageData={coverageData} coverageMetric={coverageMetric} selTest={selTest} setSelTest={setSelTest} placingPoint={placingPoint}
             survey={surveyVisible && surveyOnFloor && surveyValid && !pinTest ? survey : null}
             devById={devById} racks={data.racks} sel={sel} dragRoom={dragRoom} dragItem={dragItem} wrap={wrap} view={view} wallPt={wallPt}
-            admin={admin} frameDraft={frameDraft} resizeFloor={resizeFloor} projection={projection} overview={overview} equipmentScale={equipmentScale} coverageMarkerScale={coverageMarkerScale} floorStep={floorStep} anim={anim} resizeRoom={resizeRoom} icons={data.icons || {}} />
+            admin={admin} frameDraft={frameDraft} resizeFloor={resizeFloor} projection={projection} overview={overview} equipmentScale={equipmentScale} coverageMarkerScale={coverageMarkerScale} covStyle={covStyle} floorStep={floorStep} anim={anim} resizeRoom={resizeRoom} icons={data.icons || {}} />
         </g>
       </svg>
-      <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={back}>Все дома</Btn><b className="ellipsis">{building.name}</b>
+      <AuBack fn={back} label="Все дома" />
+      <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" className="au-inpage-back" onClick={back}>Все дома</Btn><b className="ellipsis">{building.name}</b>
         <Btn size="sm" icon="home" kind={overview ? 'primary' : ''} onClick={() => { setOverview(v => !v); setTool('select'); setPending(null); setWallPt(null); setSel(null); }}>{overview ? 'К этажу' : 'Весь дом'}</Btn>
       </div>
       {indoorFloors.length > 1 ? <div className="plan-floors plan-ovl"><label className="plan-floor-picker"><Icon name="home" size={16} /><span>Этаж</span>
@@ -1177,7 +1207,7 @@ function BuildingPlan({ building, plan, back }) {
 }
 
 function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghost, planeRef, draft, tool, edit, cov, tests, coverageData, coverageMetric, selTest, setSelTest, placingPoint, survey,
-  devById, racks, sel, dragRoom, dragItem, wrap, view, wallPt, admin, frameDraft, resizeFloor, projection, overview, equipmentScale, coverageMarkerScale, floorStep, anim, resizeRoom, icons }) {
+  devById, racks, sel, dragRoom, dragItem, wrap, view, wallPt, admin, frameDraft, resizeFloor, projection, overview, equipmentScale, coverageMarkerScale, covStyle, floorStep, anim, resizeRoom, icons }) {
   const { a, b, c, d } = projection;
   const isoPoint = (x,y) => ({ x: a*x + c*y, y: b*x + d*y });
   const isoPoly = pts => pts.map(([x,y]) => { const p = isoPoint(x,y); return `${p.x},${p.y}`; }).join(' ');
@@ -1199,6 +1229,8 @@ function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghos
   const groundDy = aIdx * aStep + ISO_SLAB;
   return <g className={'plan-iso-scene' + (overview ? ' overview' : '')}>
     <defs>
+      <radialGradient id="plan-wifi-grad"><stop offset="0" style={{ stopColor: 'var(--accent)', stopOpacity: .46 }} /><stop offset=".6" style={{ stopColor: 'var(--accent)', stopOpacity: .15 }} /><stop offset="1" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} /></radialGradient>
+      <filter id="plan-wifi-glow" x="-15%" y="-15%" width="130%" height="130%"><feGaussianBlur stdDeviation="3.5" /></filter>
       <linearGradient id="plan-wall-matte" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
         <stop offset="0" stopColor="var(--plan-wall-active)" /><stop offset="1" stopColor="var(--plan-wall-shade)" />
       </linearGradient>
@@ -1232,7 +1264,7 @@ function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghos
             <polygon points={roomPoints(r)} className="pr-fill" style={{ fill: `color-mix(in srgb, ${rc} ${active ? 32 : 18}%, var(--bg2))`, stroke: rc }} />
             {r.text ? <text x={p.x} y={p.y + 4} className="plan-iso-label" textAnchor="middle">{r.text}</text> : null}
           </g>; })}
-        {active && cov && tests.length ? <g transform={`matrix(${a} ${b} ${c} ${d} 0 0)`}><CoverageSurface mesh={coverageData} metric={coverageMetric} /></g> : null}
+        {active && cov && tests.length ? <g transform={`matrix(${a} ${b} ${c} ${d} 0 0)`}><CoverageSurface mesh={coverageData} metric={coverageMetric} waves={covStyle !== 'heat'} rooms={fRooms} /></g> : null}
         {walls3d.map((w,wi) => ({w,wi})).sort((a,b) => isoPoint(a.w.x1+a.w.x2,a.w.y1+a.w.y2).y-isoPoint(b.w.x1+b.w.x2,b.w.y1+b.w.y2).y).map(({w,wi}) => <g key={wi} data-wall-side={Math.abs(w.x2-w.x1) >= Math.abs(w.y2-w.y1) ? 'x' : 'y'} data-plan-wall={wi < fWalls.length ? wi : undefined} className={'plan-iso-wall' + (active && sel === 'wall:' + wi ? ' selected' : '')}>
           <polygon points={wallFace(w)} className="plan-iso-wall-face" />
           {(() => { const a = isoPoint(w.x1, w.y1), b = isoPoint(w.x2, w.y2); return <>
@@ -1241,6 +1273,8 @@ function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghos
           </>; })()}
         </g>)}
         {active && draft ? <polygon points={draftPoints} className={tool === 'erase' ? 'plan-erase-draft' : 'plan-room-draft'} /> : null}
+        {/* above the walls: they are tall and would hide the floor, and the glow is the point */}
+        {active && cov ? fItems.map(it => { const wr = wifiRange(it, devById); return wr ? <g key={'wifi' + it.id} transform={`matrix(${a} ${b} ${c} ${d} 0 0) translate(${it.x},${it.y})`}><PlanWifiRange r={wr} /></g> : null; }) : null}
         {fItems.map(it => { const p = isoPoint(it.x, it.y); return <g key={it.id} transform={`translate(${p.x - it.x},${p.y - it.y})`}>
           <PlanItem it={it} devById={devById} racks={racks} sel={active && sel === it.id} edit={edit} scale={equipmentScale*Math.max(1,.6/view.k)} icons={icons} onDown={active ? e => dragItem(it, e) : undefined} />
         </g>; })}
@@ -1276,11 +1310,46 @@ function PlanIsoScene({ floors, activeId, activeIndex, bounds, houseBounds, ghos
   </g>;
 }
 
+/* Wi-Fi devices on the plan: a blue «drop» pin (as on a map) with the device in it, a ring on the floor under its tip and a glowing coverage radius around.
+   The radius in metres is a default per kind (it.range overrides it). It is a picture of «about this far», not a measurement — the measured map is the heatmap. */
+const WIFI_KINDS = { ap: 10, router: 12 };
+function wifiRange(it, devById) {
+  if (it.kind === 'label' || it.kind === 'place') return 0;
+  const d = devById[it.ref], base = d && WIFI_KINDS[d.kind];
+  if (!base) return 0;
+  const m = Number(it.range);
+  return (m > 0 ? Math.min(30, m) : base) * PPM;
+}
+function PlanWifiRange({ r }) {
+  const rings = [1, .68, .38];
+  return <g className="plan-wifi" pointerEvents="none">
+    <circle r={r} className="pw-fill" />
+    <g className="pw-glow" filter="url(#plan-wifi-glow)">{rings.map((k, i) => <circle key={i} r={r * k} className={'pw-ring r' + i} vectorEffect="non-scaling-stroke" />)}</g>
+    {rings.map((k, i) => <circle key={i} r={r * k} className={'pw-ring r' + i} vectorEffect="non-scaling-stroke" />)}
+  </g>;
+}
 function PlanItem({ it, devById, racks, sel, edit, onDown, scale = 1, icons = {} }) {
   if (it.kind === 'label') return <g className="plan-item plan-label" transform={`translate(${it.x},${it.y})`} onPointerDown={onDown}>
     <text textAnchor="middle" className={sel ? 'sel' : ''}>{it.text}</text></g>;
   const isPlace = it.kind === 'place';
   const ref = isPlace ? racks.find(r => r.id === it.ref) : devById[it.ref];
+  if (ref) {
+    const cam = !isPlace && ref.kind === 'camera';
+    const name = ref.name, st = isPlace ? placeStatus(ref, devById) : (ref.state ? ref.state.status : '');
+    const pkind = isPlace ? (PLACE_KINDS[ref.kind] || PLACE_KINDS.rack).icon : ref.kind;
+    return <g className={'plan-item plan-pin' + (cam ? ' cam' : '') + (isPlace ? ' place' : '') + (sel ? ' sel' : '') + (it.outdoor ? ' outdoor' : '')} transform={`translate(${it.x},${it.y}) scale(${scale * 1.1})`} onPointerDown={onDown} style={{ cursor: edit ? 'move' : 'pointer' }}>
+      <title>{name}</title>
+      <ellipse rx={46} ry={23} className="pp-ring o" /><ellipse rx={27} ry={13.5} className="pp-ring i" />
+      {<>
+        <path d="M0 0C-10-14-34-34-34-66a34 34 0 1 1 68 0C34-34 10-14 0 0Z" className="pp-pin" />
+        <circle cy={-66} r={25} className="pp-plate" />
+      </>}
+      <g transform={isPlace ? "translate(-21,-87)" : "translate(-17,-83)"}><NodeGlyph svg spec={icons[it.ref] || icons['d:' + it.ref]} kind={pkind} size={isPlace ? 42 : 34} color={isPlace ? "var(--text)" : cam ? "#30d158" : "var(--accent)"} /></g>
+      {st ? <circle cx={26} cy={-92} r={6} fill={statusColor(st)} stroke="var(--card-solid)" strokeWidth={2.5} /> : null}
+      <text className="pp-name" y={42} textAnchor="middle">{name.length > 16 ? name.slice(0, 15) + '…' : name}</text>
+      {it.outdoor ? <text className="pi-outdoor" y={58} textAnchor="middle">УЛИЦА</text> : null}
+    </g>;
+  }
   const name = ref ? ref.name : '—';
   const kind = isPlace ? (ref ? (PLACE_KINDS[ref.kind] || PLACE_KINDS.rack).icon : 'rack') : (ref ? ref.kind : 'other');
   const status = isPlace ? (ref ? placeStatus(ref, devById) : '') : (ref && ref.state ? ref.state.status : '');

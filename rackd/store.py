@@ -17,8 +17,8 @@ DEFAULT = {
 }
 
 SECRET_KEYS = ('password', 'token', 'agentToken', 'privateKey', 'entwarePassword', 'panelInfo', 'webPassword', 'tokenSecret', 'portal')
-NEVER_EXPORTED = ('auth', 'mfa')          # the administrator password and the second factor stay with the installation: a backup file never carries them
-KEPT_ON_IMPORT = ('auth', 'mfa', 'notify')   # …and restoring a file never replaces them (nor the notification channels)
+NEVER_EXPORTED = ('auth', 'mfa', 'passkeys')          # the administrator password, the second factor and the Face ID keys stay with the installation: a backup file never carries them
+KEPT_ON_IMPORT = ('auth', 'mfa', 'notify', 'passkeys')   # …and restoring a file never replaces them (nor the notification channels)
 
 
 def _service_secrets(c):

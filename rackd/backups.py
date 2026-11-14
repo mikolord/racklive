@@ -5,7 +5,10 @@ the comparison ignores service lines (Keenetic «! $$$ Last change / Md5 / Agent
 import difflib, hashlib, json, os, re, threading, time
 
 KEEP = 60                                   # versions per device
-EVERY = 6 * 3600                            # automatic check interval
+EVERY = 6 * 3600                            # automatic check interval by default (settings.backupEvery, hours, overrides it)
+CHOICES = (6, 24, 168, 0)                   # every 6 h · once a day · once a week · only by hand
+KEEP_DAYS = 7                               # old versions go after this many days by default (settings.backupKeepDays; 0 = only the KEEP limit)
+KEEP_CHOICES = (7, 30, 90, 0)               # the newest version of a device is never removed
 # any word containing key / pass / secret / psk / token / hash (private_key, faskey, wpa_passphrase, community…): hide the rest of the line
 SECRET = re.compile(r'''(?i)(?<!['"\w-])([\w-]*(?:key|pass|secret|psk|token|community|hash|authentication)[\w-]*)\b(\s*=?\s*)(\S.*)$''')
 NOISE = re.compile(r'^! \$\$\$ ')
@@ -39,8 +42,15 @@ class Backups:
         with open(self.path(did, t), encoding='utf-8') as f:
             return f.read()
 
-    def due(self, did):
-        return time.time() - self.last_try.get(did, 0) >= EVERY
+    def due(self, did, hours=None):
+        """time for the automatic check? `hours` from the settings (None = default, 0 = never by itself).
+        The last check survives a restart through the index (else a weekly schedule would run on every start)."""
+        every = EVERY if hours is None else int(hours) * 3600
+        if every <= 0:
+            return False
+        vers = self.index.get(did) or []
+        last = max(self.last_try.get(did, 0), (vers[-1].get('checked') or vers[-1]['t']) if vers else 0)
+        return time.time() - last >= every
 
     def take(self, d, drv, force=False):
         """Fetch the config; store a new version only when it differs. → (version | None, message)."""
@@ -80,6 +90,30 @@ class Backups:
             self._save_index()
         msg = 'сохранена первая копия конфигурации' if v['first'] else f"конфигурация изменилась: +{added} −{removed} строк"
         return v, msg
+
+    def prune(self, days):
+        """remove versions older than `days` (0 = keep all up to KEEP); the newest version of every device always stays. → removed count"""
+        days = KEEP_DAYS if days is None else int(days)
+        if days <= 0:
+            return 0
+        edge = time.time() - days * 86400
+        n = 0
+        with self.lock:
+            for did, vers in self.index.items():
+                old = [v for v in vers[:-1] if v['t'] < edge]
+                if not old:
+                    continue
+                for v in old:
+                    try:
+                        os.remove(self.path(did, v['t']))
+                    except OSError:
+                        pass
+                gone = {v['t'] for v in old}
+                vers[:] = [v for v in vers if v['t'] not in gone]
+                n += len(old)
+            if n:
+                self._save_index()
+        return n
 
     def diff(self, did, t, prev=None):
         """Unified diff (secrets masked) between version `t` and the previous one (or `prev`)."""

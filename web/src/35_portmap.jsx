@@ -93,7 +93,7 @@ function PortMapView({ unit, compact }) {
     return [lp && (lp.d || lp.unit) ? '→ ' + lp.text + (lp.p ? ` · ${lp.p.link ? fmt.speedShort(lp.p.speed) : 'нет линка'}` : '') + (lp.peers && lp.peers.length ? ' · ' + lp.peers.slice(0, 2).join(', ') : '') : '',
       ...inc.map(x => `← ${x.unit.name}, ${x.unit.type === 'modem' ? portName(x.unit, x.n) : 'порт ' + x.n}`),
       ...backbonesFor(data, unit.id, n).map(t => '⇄ ' + t)].filter(Boolean).join('   ') || 'никуда не подключён'; };
-  const t3 = isTestLook();
+  const t3 = isRichLook();
   return <div className="pm">
     {t3 ? <UnitModel unit={unit} sel={sel} onPick={n => setSel(sel === n ? null : n)} /> : null}
     <div className="row wrap dim" style={{ gap: 10, fontSize: 12 }}>

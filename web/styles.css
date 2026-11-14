@@ -261,6 +261,8 @@ svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
 /* лёгкая карта: бегущие штрихи на десятках линий перерисовывали всю схему каждый кадр — на телефоне и пока карту двигают они стоят; полупрозрачные панели без размытия фона */
 @media (max-width: 760px) { .edge.flow, .edge.wifi { animation: none; } }
 .map-wrap.moving .edge { animation: none !important; transition: none; }
+.map-wrap.moving svg * { transition: none !important; }
+.kind-brand-t { font-weight: 800; letter-spacing: -.02em; line-height: 1; white-space: nowrap; font-family: inherit; }
 .page-full .map-panel, .page-full .card, .page-full .plan-ctx, .page-full .plan-hint, .page-full .zoom-btns .btn, .page-full .health-panel, .page-full .node-info { backdrop-filter: none; -webkit-backdrop-filter: none; }
 .newdev-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: .5px solid var(--line); color: inherit; font: inherit; cursor: pointer; }
 .newdev-ic { position: relative; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); flex-shrink: 0; }
@@ -484,6 +486,24 @@ svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
 .plan-item .pi-core { stroke: none; }
 .plan-item.sel .pi-bg { stroke: var(--accent); stroke-width: 3.5; }
 .plan-item.outdoor .pi-bg { stroke: var(--accent) !important; stroke-dasharray: 4 2; }
+/* Wi-Fi: glowing coverage rings on the floor and a «drop» pin with the device (see PlanWifiRange / PlanItem) */
+.plan-wifi .pw-fill { fill: url(#plan-wifi-grad); }
+.plan-wifi .pw-ring { fill: none; stroke: var(--accent); stroke-width: 1.4; animation: pw-breathe 4.2s ease-in-out infinite; }
+.plan-wifi .pw-ring.r0 { stroke-opacity: .34; } .plan-wifi .pw-ring.r1 { stroke-opacity: .5; animation-delay: -1.4s; } .plan-wifi .pw-ring.r2 { stroke-opacity: .75; stroke-width: 1.8; animation-delay: -2.8s; }
+.plan-wifi .pw-glow .pw-ring { stroke-width: 6; animation: none; } .plan-wifi .pw-glow { opacity: .5; }
+.coverage-heatmap.waves { animation: pw-breathe 4.2s ease-in-out infinite; }
+/* measured waves: the colour is the signal at that point; rings spread out from it and fade, the room's walls stop them */
+.cov-wave .cw-fill { fill: var(--wc); fill-opacity: .1; }
+.cov-wave .cw-core { fill: var(--wc); fill-opacity: .14; }
+.cov-wave .cw-ring { fill: none; stroke: var(--wc); stroke-width: 2.2; transform: scale(.12); opacity: 0; animation: cw-spread 4.5s cubic-bezier(.2,.6,.4,1) infinite; }
+@keyframes cw-spread { 0% { transform: scale(.12); opacity: 0; } 12% { opacity: .95; } 100% { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cov-wave .cw-ring { animation: none; transform: scale(.7); opacity: .6; } }
+@keyframes pw-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.plan-pin .pp-ring { fill: none; stroke: var(--pc, var(--accent)); } .plan-pin .pp-ring.o { stroke-opacity: .38; stroke-width: 2; } .plan-pin .pp-ring.i { stroke-opacity: .8; stroke-width: 2.6; fill: color-mix(in srgb, var(--pc, var(--accent)) 22%, transparent); }
+.plan-pin .pp-pin { fill: var(--pc, var(--accent)); stroke: rgba(255,255,255,.7); stroke-width: 1.6; filter: drop-shadow(0 6px 5px rgba(0,0,0,.22)); }
+.plan-pin .pp-plate { fill: #fff; } .plan-pin.cam { --pc: #30d158; } .plan-pin.place { --pc: var(--text); } .plan-pin.place .pp-plate { fill: var(--card-solid); } .plan-pin .pp-lens { fill: var(--pc, var(--accent)); stroke: rgba(255,255,255,.7); stroke-width: 1.6; }
+.plan-pin .pp-name { font-size: 12px; font-weight: 650; fill: var(--text); paint-order: stroke; stroke: var(--bg2); stroke-width: 3.5px; pointer-events: none; }
+.plan-pin.sel .pp-pin { stroke: var(--text); stroke-width: 3; }
 .plan-item .pi-label { font-size: 12.5px; font-weight: 650; fill: var(--text); stroke: none; }
 .plan-item .pi-type { font-size: 10.5px; font-family: var(--mono); fill: var(--text2); pointer-events: none; }
 .plan-item .pi-outdoor { font-size: 9px; font-weight: 700; letter-spacing: .08em; fill: var(--accent); paint-order: stroke; stroke: var(--bg2); stroke-width: 3.5px; }
@@ -579,6 +599,17 @@ svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
 .loads { display: flex; flex-direction: column; gap: 6px; }
 .hint-box .tips { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; line-height: 1.4; }
 .hint-box .tips li::marker { color: var(--accent); }
+/* «Клиенты VPN» */
+.vpn-meters { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; } .vpn-meters .row { font-size: 13px; margin-bottom: 4px; }
+.vpn-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; } .vpn-row + .vpn-row { border-top: .5px solid var(--line); }
+/* widget «Оплата серверов» */
+.pay-list { display: flex; flex-direction: column; } .pay-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 0; } .pay-row + .pay-row { border-top: .5px solid var(--line); }
+.pay-main { display: flex; align-items: center; gap: 10px; flex: 1 1 160px; min-width: 0; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.pay-orange .pay-main b { color: var(--orange); } .pay-red .pay-main b { color: var(--red); }
+.pay-row { flex-wrap: nowrap; gap: 10px; padding: 8px 0; } .pay-main { flex: 1 1 auto; }
+.pay-txt { min-width: 0; text-align: left; display: flex; flex-direction: column; } .pay-txt b { font-size: 14.5px; } .pay-txt small { font-size: 12px; color: var(--text3); }
+.pay-when { font-style: normal; font-weight: 600; color: var(--green); } .pay-orange .pay-when { color: var(--orange); } .pay-red .pay-when { color: var(--red); }
+.pay-acts { display: flex; gap: 6px; align-items: center; flex-shrink: 0; } .pay-acts .btn { height: 30px; padding: 0 12px; border-radius: 15px; font-size: 13px; } .pay-acts .pay-done { width: 30px; padding: 0; justify-content: center; }
 .upsw-list { display: flex; flex-direction: column; gap: 12px; } .upsw { cursor: pointer; padding: 14px; }
 .wg .upsw { border: 0; box-shadow: none; background: transparent; padding: 4px; } .wg .upsw + .upsw { border-top: .5px solid var(--line); border-radius: 0; padding-top: 14px; }
 .upsw-main { display: flex; align-items: center; gap: 14px; margin: 12px 0 8px; } .upsw-bat { width: 112px; flex: none; }
@@ -929,6 +960,20 @@ html.frank-mode .ai-panel.standalone { background: var(--bg); }
 html.frank-mode, html.frank-mode body, html.frank-mode .app-bg { background: var(--bg); background-attachment: scroll; }
 /* the room under the messages is the real height of the input capsule (queue, attachments and long text make it taller), measured in 57_ai.jsx */
 .ai-panel.standalone .ai-list { padding-bottom: calc(max(8px, env(safe-area-inset-bottom) - 14px) + var(--fr-dock-h, 124px) + 18px); }
+/* Frank внутри Rack Live — тот же вид, что у приложения /frank: на телефоне во весь экран (поднимается снизу), на компьютере — скруглённая панель справа.
+   Слева две кнопки (закрыть и разговоры), справа две (глаз и новый разговор) — заголовок остаётся по центру */
+.ai-panel.standalone.inapp { overflow: hidden; animation: frRise .38s cubic-bezier(.2,1,.3,1); }
+@keyframes frRise { from { transform: translateY(46px); opacity: 0; } }
+.ai-panel.inapp .fr-top { grid-template-columns: auto minmax(0, 1fr) auto; }
+.ai-panel.inapp .fr-title { max-width: none; } .ai-panel.inapp .fr-side { min-width: 102px; }
+.ai-panel.inapp .ai-suggest .chip { background: var(--glass); border: .5px solid var(--glass-line); padding: 9px 14px; border-radius: 18px; color: var(--text); font-size: 14px; }
+.ai-panel.inapp .ai-list { overscroll-behavior: contain; }
+@media (min-width: 761px) {
+  .ai-panel.standalone.inapp { inset: 12px 12px 12px auto; width: min(540px, calc(100vw - 24px)); border-radius: 30px; border: .5px solid var(--line); box-shadow: var(--shadow-lg);
+    animation: slide .32s cubic-bezier(.2,1,.3,1); }
+  .ai-panel.inapp .ai-list, .ai-panel.inapp .ai-head { padding-left: 16px; padding-right: 16px; }
+  .ai-panel.inapp .fr-top { padding-left: 14px; padding-right: 14px; } .ai-panel.inapp .fr-dock { left: 10px; right: 10px; bottom: 10px; }
+}
 
 /* install banner inside the separate apps (until they run from the home screen) */
 .inst-banner { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-radius: 20px; font-size: 13px; line-height: 1.4;
@@ -2273,6 +2318,10 @@ html[data-look="test"] :is(.set-ic, .tool-ic, .wg-opt-ic, .mi, .newdev-ic, .kind
 html[data-look="test"] :is(.set-item, .ios-cell):hover :is(.set-ic, .kind-ic), html[data-look="test"] :is(.set-item.on, .ios-cell.on) .set-ic { color: var(--text) !important; }
 /* a server named «🇩🇪 …»: the picture of the country's flag instead of the kind icon (KindIcon in 00_core.jsx, files in web/flags).
    Its own class, not .kind-ic: «Test» squeezes every .kind-ic into a bare 22 px line icon with !important */
+.kind-brand { position: relative; display: grid; place-items: center; flex-shrink: 0; overflow: hidden; }
+.kind-brand svg { display: block; pointer-events: none; }
+.kind-brand::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent); pointer-events: none; }
+html[data-look="test"] .kind-brand { width: 26px !important; height: 26px !important; border-radius: 7px !important; }
 .kind-flag { position: relative; display: block; flex-shrink: 0; overflow: hidden; }
 .kind-flag img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .kind-flag::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent); pointer-events: none; }
@@ -2425,6 +2474,7 @@ html[data-theme="light"] .plamp-bezel { background: conic-gradient(from 210deg, 
 .rack-transition .r3-obj { transition: transform .72s cubic-bezier(.22,.7,.2,1); }
 .rack-transition .r3-dragging .r3-obj { transition-duration: .08s; }
 .rack-transition-flat .rack-body { transition: transform .72s cubic-bezier(.22,.7,.2,1); transform-origin: 50% 42%; }
+.rack-transition:not(.armed), .rack-transition:not(.armed) :is(.rack-transition-3d, .rack-transition-flat, .r3-obj, .rack-body) { transition: none !important; }   /* first frames of a tab: no transitions (height measure settles, 3D mounts) — they looked like a stutter */
 .rack-transition.is-3d .rack-transition-3d, .rack-transition.is-flat .rack-transition-flat { opacity: 1; visibility: visible; transition-delay: .25s, 0s; }
 .rack-transition.is-flat .rack-transition-3d, .rack-transition.is-3d .rack-transition-flat { opacity: 0; visibility: hidden; pointer-events: none; }
 .rack-transition.is-3d .rack-transition-flat .rack-body { transform: scale(.94); }
@@ -2928,4 +2978,729 @@ html.plan-mode .wm-fab { top:calc(env(safe-area-inset-top,0px) + 11px); right:ca
 .wm-fab.edit { border-color: var(--orange); }
 .wm-fab.edit::after { content: ""; position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--orange); border: 2px solid var(--card-solid); }
 
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+   «Аврора» (data-look="aurora") — по правилам Apple Liquid Glass (Human Interface Guidelines, iOS 26 / macOS Tahoe):
+   стекло — только у слоя навигации (боковая панель, верхние кнопки, нижний док), он парит над содержимым;
+   содержимое — на обычных системных материалах: холст с сеткой из точек, сплошные карточки. Кнопки — капсулы и круги,
+   значки без рамок, не больше трёх групп. Телефон: круглая кнопка и капсула сверху, маленький док по центру снизу
+   и две круглые кнопки по бокам (разметка — AuTop / AuDock в 90_app.jsx). ПК: стеклянная боковая панель с точечными значками.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+html[data-look="aurora"] {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --r: 14px; --r-lg: 22px; --au-side: 248px; --au-gap: 16px;
+}
+html[data-look="aurora"][data-theme="light"] {
+  --bg: #ffffff; --bg2: #f2f2f7; --card: #ffffff; --card-solid: #ffffff; --elev: rgba(255,255,255,.86);
+  --text: #000000; --text2: rgba(60,60,67,.6); --text3: rgba(60,60,67,.3);
+  --line: rgba(60,60,67,.12); --line2: rgba(60,60,67,.2); --fill: rgba(120,120,128,.12); --fill2: rgba(120,120,128,.2);
+  --shadow: 0 0 0 .5px rgba(0,0,0,.06), 0 2px 6px rgba(0,0,0,.04), 0 10px 30px rgba(0,0,0,.05); --shadow-lg: 0 24px 70px rgba(0,0,0,.18);
+  --dock: rgba(255,255,255,.55); --glass: rgba(255,255,255,.62); --glass-line: rgba(0,0,0,.06); --dock-glass: rgba(255,255,255,.72); --fr-btn: rgba(120,120,128,.12);
+  --au-glass: rgba(255,255,255,.52); --au-rim: rgba(255,255,255,.85); --au-hair: rgba(0,0,0,.07); --au-lens: rgba(120,120,128,.16);
+  --au-dots: rgba(60,60,67,.2); --au-float: 0 8px 28px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.06);
+}
+html[data-look="aurora"][data-theme="dark"] {
+  --bg: #000000; --bg2: #1c1c1e; --card: #1c1c1e; --card-solid: #1c1c1e; --elev: rgba(30,30,32,.86);
+  --text: #ffffff; --text2: rgba(235,235,245,.6); --text3: rgba(235,235,245,.3);
+  --line: rgba(84,84,88,.6); --line2: rgba(84,84,88,.85); --fill: rgba(118,118,128,.24); --fill2: rgba(118,118,128,.36);
+  --shadow: 0 0 0 .5px rgba(255,255,255,.06); --shadow-lg: 0 24px 70px rgba(0,0,0,.7);
+  --dock: rgba(28,28,30,.55); --glass: rgba(36,36,40,.62); --glass-line: rgba(255,255,255,.1); --dock-glass: rgba(36,36,40,.72); --fr-btn: rgba(118,118,128,.24);
+  --au-glass: rgba(40,40,44,.5); --au-rim: rgba(255,255,255,.16); --au-hair: rgba(0,0,0,.5); --au-lens: rgba(255,255,255,.14);
+  --au-dots: rgba(255,255,255,.11); --au-float: 0 8px 28px rgba(0,0,0,.5);
+}
+html[data-look="aurora"][data-theme="light"]:not([data-accent]) { --accent: #1f6feb; }          /* синий, как у «Витрины» */
+html[data-look="aurora"][data-theme="dark"]:not([data-accent]) { --accent: #3d8bff; }
 
+/* значки без цветных плиток: просто линия, как в доке (настройки, инструменты, виджеты, устройства) */
+html[data-look="aurora"] :is(.set-ic, .tool-ic, .wg-opt-ic, .mi, .newdev-ic, .kind-ic, .ios-ico .set-ic, .modal-head .wg-tile-ic) {
+  background: none !important; border: 0 !important; box-shadow: none !important; border-radius: 0 !important; width: 24px !important; height: 24px !important; min-width: 24px; color: var(--text2) !important; }
+/* настройки, инструменты, выбор виджетов, меню и похожие списки: сама линия значка — цветом системы (значки те же) */
+html[data-look="aurora"] :is(.set-ic, .tool-ic, .wg-opt-ic, .mi, .newdev-ic, .ios-ico .set-ic, .modal-head .wg-tile-ic, .hdr-tiles button > svg, .hdr-row > svg) { color: var(--accent) !important; }
+html[data-look="aurora"] .wg-tile-ic svg { stroke: var(--accent) !important; }
+
+/* Frank — живой глаз: линия цветом текста, зрачок цветом системы оглядывается, глаз моргает; пока думает — зрачок «дышит» */
+.au-eye { flex: none; overflow: visible; display: inline-block; vertical-align: middle; }
+.au-eye .ae-pupil { fill: var(--accent); }
+.au-eye .ae-lid { transform-box: view-box; transform-origin: 12px 12px; animation: ae-blink 6.5s infinite; animation-delay: var(--ae-d, 0s); }
+.au-eye .ae-look { transform-box: view-box; animation: ae-look 11s ease-in-out infinite; animation-delay: var(--ae-d, 0s); }
+.au-eye.busy .ae-look { animation: ae-look 3.2s ease-in-out infinite; }
+.au-eye.busy .ae-pupil { transform-box: fill-box; transform-origin: center; animation: ae-think 1.1s ease-in-out infinite; }
+@keyframes ae-blink { 0%, 92.5%, 100% { transform: scaleY(1); } 95.5% { transform: scaleY(.08); } }
+@keyframes ae-look { 0%, 14% { transform: translate(0, 0); } 19%, 33% { transform: translate(2.5px, -.6px); } 38%, 52% { transform: translate(-2.5px, .5px); }
+  57%, 70% { transform: translate(.6px, 1.1px); } 75%, 100% { transform: translate(0, 0); } }
+@keyframes ae-think { 50% { transform: scale(.72); } }
+@media (prefers-reduced-motion: reduce) { .au-eye .ae-lid, .au-eye .ae-look, .au-eye .ae-pupil { animation: none !important; } }
+html[data-look="aurora"] .frank-mono { color: var(--text); }
+html[data-look="aurora"] .au-eye circle { stroke: none !important; }
+html[data-look="aurora"] .set-ic .au-eye { color: var(--text) !important; stroke: none !important; }
+html[data-look="aurora"] .set-ic .au-eye path { stroke: var(--accent) !important; }
+.mini-frank.au { display: grid; place-items: center; width: 100%; height: 100%; color: var(--text); }
+.mini-frank.au .au-eye { max-width: 82%; height: auto; }
+/* приложение Frank целиком: свой фон, без стекла поверх пустоты */
+html[data-look="aurora"].frank-mode .app-bg { background: var(--bg) !important; }
+html[data-look="aurora"] .ai-panel.standalone { background: var(--bg) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; border: 0 !important; box-shadow: none !important; }
+
+/* виджеты как в iOS: «Аккумуляторы» — кольца заряда со значком, проценты под ними */
+.au-ring { position: relative; display: inline-grid; place-items: center; flex: none; }
+.au-ring svg { position: absolute; inset: 0; }
+.au-ring-track { stroke: var(--fill2); }
+.au-ring-fill { transition: stroke-dasharray .8s cubic-bezier(.2,.9,.3,1); }
+.au-ring-in { position: relative; display: grid; place-items: center; color: var(--text); }
+.au-bat-bolt { position: absolute; top: -13px; left: 50%; transform: translateX(-50%); width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--green); color: #fff; box-shadow: 0 0 0 2.5px var(--card-solid, var(--bg)); }
+.au-bat-bolt svg { stroke: #fff; fill: #fff; }
+.au-bat { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 10px 8px; }
+.au-bat.one { grid-template-columns: 1fr; }
+.au-bat-i { display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 2px; color: var(--text); cursor: pointer; min-width: 0; font: inherit; text-align: center; }
+.au-bat.one .au-bat-i { flex-direction: row; align-items: center; gap: 18px; text-align: left; }
+.au-bat-ring { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: none; }
+.au-bat-pct { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.au-bat-cap { display: flex; flex-direction: column; min-width: 0; max-width: 100%; font-size: 12px; color: var(--text2); line-height: 1.3; }
+.au-bat-cap small { color: var(--text3); font-size: 11.5px; }
+.au-bat-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.au-bat-name { font-size: 13px; color: var(--text2); font-weight: 500; }
+.au-bat-big { font-size: 30px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.au-bat-sub { font-size: 12.5px; color: var(--text2); }
+.au-bat-load { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; font-size: 12px; color: var(--text2); }
+.au-bat-load i { display: block; height: 6px; border-radius: 3px; background: var(--fill2); overflow: hidden; }
+.au-bat-load b { display: block; height: 100%; border-radius: 3px; transition: width .8s cubic-bezier(.2,.9,.3,1); }
+.au-bat-feeds { font-size: 12px; color: var(--text3); margin-top: 4px; }
+/* квадрат «Шкафы»: шкаф со скруглёнными юнитами, занятые — цветом системы */
+.au-mrack-body { fill: var(--fill); stroke: var(--line2, var(--line)); stroke-width: 1.2; }
+.au-mrack-u { fill: var(--fill2); }
+.au-mrack-u.on { fill: var(--accent); }
+html[data-look="aurora"] .wg-tile .mini-faces span { background: color-mix(in srgb, var(--accent) 85%, transparent) !important; }
+
+/* квадраты целиком в духе iOS + UniFi: ИБП, Советы Frank, Новые в сети */
+html[data-look="aurora"] .wg.size-S:is(.t-ups, .t-advice, .t-newdev, .t-stats, .t-note, .t-pay, .t-vpn) .wg-in { background: var(--card-solid) !important; }
+/* батарейка как в строке состояния iPhone */
+.au-batt { display: block; max-width: 100%; height: auto; overflow: visible; }
+.au-batt-body { fill: none; stroke: color-mix(in srgb, var(--text) 38%, transparent); stroke-width: 3.2; }
+.au-batt-nub { fill: color-mix(in srgb, var(--text) 38%, transparent); }
+.au-batt-fill { transition: width .8s cubic-bezier(.2,.9,.3,1); }
+.au-batt-t { font: 700 27px ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.auw-batt1 { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: flex-start; padding: 4px 0; }
+.auw-batt1 .au-batt { width: min(132px, 88%); }
+.auw-big.sm { font-size: clamp(22px, 15cqw, 28px); }
+.auw-batts { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 7px; margin-top: 6px; min-height: 0; }
+.auw-bi { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 7px; font-size: 12px; color: var(--text2); min-width: 0; }
+.auw-bi .au-batt { width: 52px; }
+.auw-bi b { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+/* витрина устройств: iPhone → Android → ноутбук, плавно сменяют друг друга */
+.auw-show { flex: 1; min-height: 0; display: grid; place-items: center; padding: 6px 0 2px; }
+.au-show { width: 100%; height: 100%; max-height: 100%; overflow: visible; }
+.ads-frame { fill: #1c1c1e; stroke: color-mix(in srgb, var(--text) 22%, transparent); stroke-width: 1; }
+html[data-theme="light"] .ads-frame { fill: #2c2c2e; }
+.ads { opacity: 0; transform-box: fill-box; transform-origin: 50% 60%; animation: ads-cycle 12s cubic-bezier(.4,0,.2,1) infinite; }
+.ads-lid { fill: #b9b9be; stroke: #d8d8dc; stroke-width: .6; }
+html[data-theme="dark"] .ads-lid { fill: #8e8e93; stroke: #aeaeb2; }
+.ads-base { fill: #c7c7cc; stroke: #a1a1a6; stroke-width: .5; }
+html[data-theme="dark"] .ads-base { fill: #98989d; stroke: #6e6e73; }
+.ads-notch { fill: #000; opacity: .18; }
+.ads-b { animation-delay: 3s; } .ads-c { animation-delay: 6s; } .ads-d { animation-delay: 9s; }
+@keyframes ads-cycle { 0% { opacity: 0; transform: translateY(6px) scale(.92); } 5%, 23% { opacity: 1; transform: none; } 28%, 100% { opacity: 0; transform: translateY(-4px) scale(.96); } }
+@media (prefers-reduced-motion: reduce) { .ads { animation: none; } .ads-a { opacity: 1; } }
+.au-w-newdev .auw-foot { margin-top: 4px; }
+html[data-look="aurora"] .wg.size-S.t-state .wg-in { background: var(--card-solid) !important; }
+/* меньше красного и оранжевого: «плохо» — это цвет системы, который тускнеет, а совсем плохо — серый.
+   Красным остаются только счётчики-«бейджи» уведомлений (как на iPhone) и карточки в «Сводке» */
+html[data-look="aurora"][data-theme] { --red: #8e8e93; --orange: color-mix(in srgb, var(--accent) 50%, #8e8e93); --yellow: color-mix(in srgb, var(--accent) 72%, #8e8e93); }
+html[data-look="aurora"] .wg[class*="tone-"] .wg-in { background: var(--card-solid) !important; }
+html[data-look="aurora"] .au-dock .count, html[data-look="aurora"] .newdev-ic .count { background: #ff3b30 !important; }
+/* «Оплата серверов»: кнопки — цветом системы */
+html[data-look="aurora"] .pay-row .btn { background: var(--accent); color: #fff; border: 0; box-shadow: none; font-weight: 600; }
+html[data-look="aurora"] .pay-row .btn svg { stroke: #fff; color: #fff; }
+html[data-look="aurora"] .pay-row .btn.pay-done { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+html[data-look="aurora"] .pay-row .btn.pay-done svg { stroke: var(--accent); color: var(--accent); }
+/* when to pay: the system colour, dimmer the further away; overdue — grey (no red / orange) */
+html[data-look="aurora"] .pay-when { color: color-mix(in srgb, var(--accent) 55%, #8e8e93); }
+html[data-look="aurora"] .pay-orange .pay-when { color: var(--accent); } html[data-look="aurora"] .pay-red .pay-when { color: #8e8e93; }
+html[data-look="aurora"] .pay-orange .pay-main b, html[data-look="aurora"] .pay-red .pay-main b { color: var(--text); }
+/* square tiles warning about something take the system colour, not yellow / red */
+html[data-look="aurora"] .wg.tone-red, html[data-look="aurora"] .wg.tone-yellow { --tone: var(--accent); }
+/* «Сводка»: лента — новая карточка падает сверху, старые съезжают вниз, уменьшаются и бледнеют */
+.auw-feed { position: relative; flex: 1; min-height: 0; margin: 9px 0 4px; }
+.auw-feed .auw-fi { position: absolute; left: 0; right: 0; top: 0; transform-origin: 50% 100%;
+  transform: translateY(calc(var(--i) * 9px)) scale(calc(1 - var(--i) * .07)); opacity: calc(1 - var(--i) * .3);
+  transition: transform .55s cubic-bezier(.2,1.1,.3,1), opacity .45s ease; box-shadow: 0 6px 16px rgba(0,0,0,.14); background: var(--au-note, var(--fill)); }
+html[data-theme="dark"] .auw-feed .auw-fi { --au-note: #2c2c2e; }
+html[data-theme="light"] .auw-feed .auw-fi { --au-note: #f2f2f7; }
+.auw-feed .auw-fi.drop { animation: auw-drop .6s cubic-bezier(.2,1.25,.35,1) both; }
+@keyframes auw-drop { from { transform: translateY(-115%) scale(.96); opacity: 0; } 60% { opacity: 1; } }
+.auw-fi .auw-note-k em { margin-left: auto; font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text3); }
+.auw-fi .auw-note-t { -webkit-line-clamp: 2; }
+.auw-feed .auw-fi > * { transition: opacity .35s ease; }
+.auw-feed .auw-fi.back > * { opacity: 0; }
+/* «Состояние сети»: стена по-эпловски */
+.auw-wall { flex: 1; min-height: 0; display: grid; place-items: center; padding: 6px 4px 0; }
+.au-wall { width: 100%; height: 100%; max-height: 100%; overflow: visible; }
+.aw-fill { fill: var(--fw); }
+.aw-b { transform-box: fill-box; transform-origin: 50% 100%; animation: aw-in .55s cubic-bezier(.2,1.3,.4,1) var(--d) both, aw-breath 5s ease-in-out calc(1.2s + var(--c) * 1.2s) infinite; }
+@keyframes aw-in { from { opacity: 0; transform: translateY(-10px) scale(.7); } }
+@keyframes aw-breath { 0%, 70%, 100% { filter: none; } 82% { filter: brightness(1.28) saturate(1.15); } }
+.aw-gap { fill: none; stroke: color-mix(in srgb, var(--text) 18%, transparent); stroke-width: .7; stroke-dasharray: 1.6 1.6; }
+.aw-shine { animation: aw-shine 5s cubic-bezier(.4,0,.2,1) 1s infinite; }
+@keyframes aw-shine { 0% { transform: skewX(-18deg) translateX(0); } 40%, 100% { transform: skewX(-18deg) translateX(140px); } }
+.aw-fall { fill: var(--fw); opacity: .85; transform-box: fill-box; transform-origin: center; animation: aw-fall 1.1s cubic-bezier(.5,0,.75,.4) var(--d) both; }
+@keyframes aw-fall { 0% { transform: none; opacity: .9; } 85% { opacity: .8; } 100% { transform: translateY(var(--y)) rotate(var(--r)) scale(.55); opacity: .45; } }
+.aw-crack { fill: none; stroke: var(--card-solid); stroke-width: 1.4; stroke-linejoin: bevel; }
+.au-wall.broken .aw-b { animation: aw-in .55s cubic-bezier(.2,1.3,.4,1) var(--d) both, aw-shake 2.6s ease-in-out 1s infinite; }
+@keyframes aw-shake { 0%, 88%, 100% { transform: none; } 91% { transform: translateX(-.6px); } 94% { transform: translateX(.6px); } }
+.auw-scores { display: flex; gap: 14px; margin-top: 8px; position: relative; z-index: 2; }
+.auw-scores > span { display: flex; align-items: baseline; gap: 4px; font-size: 12px; color: var(--text2); font-weight: 500; }
+.auw-scores b { font: 600 clamp(20px, 14cqw, 26px)/1 ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .aw-b, .aw-shine, .aw-fall, .auw-feed .auw-fi.drop { animation: none !important; } }
+.au-w { gap: 0; padding: 2px 2px 0; font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; }
+.au-w .grow { flex: 1; min-height: 4px; }
+.auw-big { display: flex; align-items: baseline; gap: 2px; font-family: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; font-size: clamp(30px, 24cqw, 44px);
+  font-weight: 600; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; color: var(--text); }
+.auw-big small { font-size: .46em; font-weight: 600; color: var(--text2); letter-spacing: 0; margin-left: 3px; }
+.auw-sub { font-size: 12.5px; color: var(--text2); margin-top: 5px; font-weight: 500; }
+.auw-bolt { display: inline-grid; place-items: center; color: var(--green); align-self: center; margin-left: 4px; }
+.auw-bolt svg { fill: currentColor; }
+.auw-bolt.mini { position: absolute; right: -3px; bottom: -1px; width: 17px; height: 17px; border-radius: 50%; background: var(--green); color: #fff; box-shadow: 0 0 0 2.5px var(--card-solid); margin: 0; }
+.auw-ring1 { align-self: flex-start; }
+.au-w .au-ring-track { stroke: color-mix(in srgb, var(--text) 13%, transparent); }
+.auw-rings { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-content: center; justify-items: center; gap: 10px 6px; }
+.auw-rings.n2 { grid-template-rows: 1fr; }
+.auw-ri { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.auw-ri b { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+/* шапка как у уведомления iOS: значок приложения, имя, красный счётчик */
+.auw-head { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; color: var(--text); }
+.auw-head b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auw-app { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex: none; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--fill)); }
+.auw-app .au-eye { width: 19px; height: auto; }
+.auw-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #ff3b30; color: #fff; font-style: normal;
+  font-size: 12px; font-weight: 700; display: grid; place-items: center; font-variant-numeric: tabular-nums; flex: none; }
+.auw-stack { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; margin: 9px 0 6px; }
+.auw-note { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border-radius: 14px; background: var(--fill);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent) inset; min-height: 0; }
+.auw-stack.n2::after, .auw-stack.n3::after, .auw-stack.n3::before { content: ""; position: absolute; left: 7%; right: 7%; bottom: -5px; height: 18px; border-radius: 0 0 12px 12px;
+  background: color-mix(in srgb, var(--fill) 70%, transparent); z-index: 1; }
+.auw-stack.n3::before { left: 14%; right: 14%; bottom: -10px; background: color-mix(in srgb, var(--fill) 40%, transparent); z-index: 0; }
+.auw-note-k { display: flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.auw-note-t { font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--text); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.auw-empty { flex: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 7px; font-size: 13.5px; font-weight: 600; color: var(--text); }
+.auw-ok { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
+.au-w-advice .auw-sub { margin-top: 4px; font-size: 11.5px; color: var(--text3); }
+/* «Заметка» квадратом: листок бумаги, как в «Заметках» iOS — линовка под каждой строкой и загнутый уголок; бумага не жёлтая, а в цвете системы */
+.auw-paper { position: relative; flex: 1; min-height: 0; margin: 9px -3px -2px; padding: 5px 11px 0; border-radius: 13px 4px 15px 15px; overflow: hidden; display: flex; flex-direction: column;
+  font-size: 12.5px; line-height: 21px; color: var(--text2);
+  background: repeating-linear-gradient(transparent 0 20px, color-mix(in srgb, var(--accent) 30%, transparent) 20px 21px) 0 5px, color-mix(in srgb, var(--accent) 13%, var(--card-solid));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 24%, transparent), 0 1px 2px rgba(0,0,0,.05); }
+.auw-paper > * { flex: none; height: 21px; }
+.auw-paper b { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.auw-paper.empty { color: var(--text3); }
+.auw-paper::after { content: ""; position: absolute; top: 0; right: 0; width: 17px; height: 17px; border-bottom-left-radius: 6px;
+  background: linear-gradient(225deg, var(--card-solid) 50%, color-mix(in srgb, var(--accent) 36%, var(--card-solid)) 50%); box-shadow: -1px 1px 2px rgba(0,0,0,.14); }
+html[data-look="aurora"] .mini-note { background: color-mix(in srgb, var(--accent) 13%, var(--card-solid));
+  background-image: repeating-linear-gradient(transparent 0 19px, color-mix(in srgb, var(--accent) 30%, transparent) 19px 20px); }
+/* «Оплата» квадратом: листок календаря (месяц полоской цвета системы, день крупно) и сколько дней осталось */
+.auw-pay { flex: 1; min-height: 0; display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.auw-cal { width: clamp(50px, 34cqw, 64px); aspect-ratio: 1 / 1.05; border-radius: 13px; overflow: hidden; display: flex; flex-direction: column; flex: none;
+  background: var(--fill); box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent) inset; }
+.auw-cal i { font-style: normal; text-align: center; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; line-height: 18px; color: #fff; background: color-mix(in srgb, var(--accent) 55%, #8e8e93); }
+.auw-cal.soon i { background: var(--accent); } .auw-cal.late i { background: #8e8e93; }
+.auw-cal b { flex: 1; display: grid; place-items: center; font: 600 clamp(22px, 16cqw, 30px)/1 ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; color: var(--text); font-variant-numeric: tabular-nums; }
+.auw-when { min-width: 0; font: 600 clamp(17px, 12cqw, 22px)/1.05 ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; color: var(--accent); letter-spacing: -.02em; }
+.auw-when small { font-size: .62em; margin-left: 2px; color: var(--text2); }
+.au-w-pay .auw-sub { margin-top: 6px; }
+/* серверов несколько — сменяют друг друга: прежний уходит вверх и тает, новый поднимается снизу; точки в шапке — который сейчас */
+.auw-roll { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.auw-slide { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.auw-slide.in { animation: auw-in .65s cubic-bezier(.2,1.1,.3,1) both; }
+.auw-slide.out { position: absolute; inset: 0; pointer-events: none; animation: auw-out .5s cubic-bezier(.4,0,.2,1) both; }
+@keyframes auw-in { from { opacity: 0; transform: translateY(18px) scale(.95); filter: blur(5px); } }
+@keyframes auw-out { to { opacity: 0; transform: translateY(-16px) scale(.95); filter: blur(5px); } }
+.auw-dots { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
+.auw-dots i { width: 5px; height: 5px; border-radius: 3px; background: var(--fill2); transition: width .4s cubic-bezier(.3,1.3,.5,1), background .3s; }
+.auw-dots i.on { width: 13px; background: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .auw-slide.in, .auw-slide.out { animation: none; } .auw-slide.out { display: none; } }
+/* «Клиенты VPN» квадратом: кто подключён — портретами внахлёст (как «Новые в сети»), зелёная точка «на связи», число онлайн и запас сервера */
+.auw-people { flex: 1; min-height: 0; display: flex; align-items: center; padding: 6px 0 0 3px; }
+.auw-face { position: relative; z-index: calc(1 + var(--i, 0)); width: clamp(34px, 28cqw, 48px); aspect-ratio: 1; border-radius: 50%; overflow: hidden; flex: none; display: grid; place-items: center;
+  margin-left: -12px; box-shadow: 0 0 0 2.5px var(--card-solid); background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 62%, #fff), var(--accent));
+  animation: auw-face .55s cubic-bezier(.2,1.4,.4,1) calc(var(--i, 0) * 90ms) both; }
+.auw-face:first-child { margin-left: 0; }
+.auw-face svg { width: 100%; height: 100%; display: block; }
+.auw-face.f1 { background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 18%, #cdbfff), color-mix(in srgb, var(--accent) 22%, #7a5cf0)); }
+.auw-face.f2 { background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 15%, #9aecd9), color-mix(in srgb, var(--accent) 20%, #22b3a6)); }
+.auw-face.more { background: var(--card-solid); color: var(--text); font: 600 clamp(12px, 8.5cqw, 15px)/1 ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; }
+.auw-face.more::before { content: ""; position: absolute; inset: 0; background: var(--fill2); z-index: -1; }
+.auw-face.off { background: var(--fill); animation: none; }
+.auw-face.off svg :is(circle, path) { fill: color-mix(in srgb, var(--text) 20%, transparent); }
+.auw-live { align-self: center; margin: 32px 0 0 -12px; position: relative; z-index: 7; width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--green);
+  box-shadow: 0 0 0 2.5px var(--card-solid); animation: auw-livep 2.2s ease-in-out infinite; }
+@keyframes auw-face { from { opacity: 0; transform: translateX(-12px) scale(.5); } }
+@keyframes auw-livep { 50% { transform: scale(.78); } }
+.auw-pill.dim { color: var(--text2); background: var(--fill); }
+.au-w-vpn .auw-foot { margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .auw-face, .auw-live { animation: none; } }
+/* расстановка виджетов: пустая прозрачная плитка «+» всегда последней, под виджетами — нажали и выбрали, что добавить */
+.wg-add { padding-bottom: 38px; }
+.wg-add > button { display: grid; place-items: center; width: 100%; padding: 0; border-radius: 26px; cursor: pointer; color: var(--accent);
+  border: 1.5px dashed color-mix(in srgb, var(--text) 24%, transparent); background: color-mix(in srgb, var(--fill) 40%, transparent);
+  transition: transform .2s cubic-bezier(.3,1.4,.6,1), background .2s, border-color .2s; }
+.wg-add > button > span { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 14%, var(--fill)); transition: transform .3s cubic-bezier(.3,1.5,.5,1); }
+.wg-add > button:hover { border-color: var(--accent); } .wg-add > button:hover > span { transform: rotate(90deg); }
+.wg-add > button:active { transform: scale(.94); }
+.wg-add.in { animation: wg-add-in .5s cubic-bezier(.2,1.35,.4,1) .08s both; } .wg-add.out { animation: wg-add-out .26s ease-in both; pointer-events: none; }
+@keyframes wg-add-in { from { opacity: 0; transform: scale(.55); } } @keyframes wg-add-out { to { opacity: 0; transform: scale(.55); } }
+/* меню мест (шкафы, щитки, комнаты) — в самом названии; раскрывается от левого края */
+.au-menu.l { transform-origin: top left; } .au-menu.l.up { transform-origin: bottom left; }
+html[data-look="aurora"] .btn.au-place { height: auto; min-height: 34px; max-width: min(62vw, 320px); margin: -3px 0 1px -10px; padding: 4px 11px 4px 10px; gap: 7px; border: 0; border-radius: 17px; box-shadow: none;
+  background: var(--fill); color: var(--text); font: inherit; font-weight: 600; }
+html[data-look="aurora"] .btn.au-place > svg:first-child { color: var(--accent); }
+html[data-look="aurora"] .btn.au-place.on { background: var(--au-lens); }
+
+/* Frank — и приложение /frank, и окно внутри Rack Live: круглые кнопки и капсула ввода из того же жидкого стекла, что док; холст с точками */
+html[data-look="aurora"] .fr-circle { width: 48px; height: 48px; background: var(--au-glass); border: .5px solid var(--au-rim);
+  backdrop-filter: blur(22px) saturate(190%) brightness(1.04); -webkit-backdrop-filter: blur(22px) saturate(190%) brightness(1.04);
+  box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.55), inset 0 -1px 1px var(--au-hair); transition: transform .18s cubic-bezier(.3,1.4,.6,1); }
+html[data-look="aurora"][data-theme="dark"] .fr-circle { box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.14), inset 0 -1px 1px rgba(0,0,0,.3); }
+html[data-look="aurora"] .fr-circle:active { transform: scale(.9); }
+html[data-look="aurora"] .fr-circle.eye .frank-mono { width: 100% !important; height: 100% !important; }
+html[data-look="aurora"] .fr-title b { font-weight: 600; letter-spacing: -.01em; }
+html[data-look="aurora"] :is(.fr-dock, .fr-quick, .fr-menu) { background: var(--au-menu); border: .5px solid var(--au-rim); backdrop-filter: blur(30px) saturate(190%); -webkit-backdrop-filter: blur(30px) saturate(190%);
+  box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.4); }
+html[data-look="aurora"][data-theme="dark"] :is(.fr-dock, .fr-quick, .fr-menu) { box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.12); }
+html[data-look="aurora"] .fr-dock { border-radius: 30px; }
+html[data-look="aurora"] :is(.fr-dbtn, .fr-model, .fr-bal) { background: var(--au-lens); }
+html[data-look="aurora"] .fr-dbtn { transition: transform .18s cubic-bezier(.3,1.4,.6,1), background .2s; } html[data-look="aurora"] .fr-dbtn:active { transform: scale(.9); }
+html[data-look="aurora"] .fr-dbtn.on { background: var(--accent); color: #fff; }
+html[data-look="aurora"] .fr-dbtn.on svg { transform: rotate(45deg); transition: transform .3s cubic-bezier(.3,1.4,.5,1); }
+html[data-look="aurora"] .fr-send { transition: transform .22s cubic-bezier(.3,1.5,.5,1), background .2s, color .2s, box-shadow .25s; }
+html[data-look="aurora"] .fr-send.on { box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 42%, transparent), inset 0 1px 1px rgba(255,255,255,.35); }
+html[data-look="aurora"] .fr-send.on:active { transform: scale(.88); }
+html[data-look="aurora"] .ai-panel.standalone .ai-bubble { border-radius: 21px; font-size: 15.5px; padding: 10px 14px; }
+html[data-look="aurora"] .ai-panel.standalone .ai-msg.assistant .ai-bubble { background: var(--card-solid); box-shadow: var(--shadow); border-bottom-left-radius: 7px; }
+html[data-look="aurora"][data-theme="light"] .ai-panel.standalone .ai-msg.assistant .ai-bubble { background: #f2f2f7; box-shadow: none; }
+html[data-look="aurora"] .ai-panel.standalone .ai-msg.user .ai-bubble { border-bottom-right-radius: 7px; }
+html[data-look="aurora"] .ai-panel.standalone .ai-msg { animation: fr-msg .4s cubic-bezier(.2,1.1,.3,1) both; }
+@keyframes fr-msg { from { opacity: 0; transform: translateY(10px) scale(.97); } }
+html[data-look="aurora"] .ai-panel.standalone .ai-suggest .chip { background: var(--au-glass); border: .5px solid var(--au-rim); border-radius: 18px; padding: 9px 14px; color: var(--text); font-size: 14px; box-shadow: var(--shadow); }
+html[data-look="aurora"] .ai-panel.standalone .ai-chat-item { border-radius: 16px; }
+@media (min-width: 761px) { html[data-look="aurora"] .ai-panel.standalone.inapp { border: .5px solid var(--au-rim) !important; box-shadow: var(--shadow-lg) !important; border-radius: 30px; } }
+@media (prefers-reduced-motion: reduce) { html[data-look="aurora"] .ai-panel.standalone .ai-msg { animation: none; } }
+
+/* «Сканер» (QR-карточки) и вид устройства: системный шрифт вместо моноширинного, карточки iOS, цвет системы вместо красного / оранжевого */
+html[data-look="aurora"] { --vt-fg: var(--text); --vt-dim: var(--text2); --vt-line: var(--line); --vt-card: var(--card); --vt-solid: var(--card-solid); }
+html[data-look="aurora"] .cd-sheet2 { background: var(--bg); }
+html[data-look="aurora"][data-theme="light"] .cd-sheet2 { background: #f2f2f7; }
+html[data-look="aurora"] :is(.vt-k, .vt-state, .vt-facts b, .vt-facts span, .vt-pop small, .vt-pop .n, .vt .card-title) { font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; letter-spacing: 0; text-transform: none; }
+html[data-look="aurora"] .vt-k { font-size: 13px; font-weight: 600; color: var(--accent); }
+html[data-look="aurora"] .vt-head h3 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+html[data-look="aurora"] .vt-m { font-size: 14px; }
+html[data-look="aurora"] .vt-state { font-size: 13px; font-weight: 600; color: var(--text2); padding: 4px 10px; border-radius: 12px; background: var(--fill); }
+html[data-look="aurora"] .vt-state i { box-shadow: none !important; }
+html[data-look="aurora"] .vt-facts { border: 0; gap: 8px; }
+html[data-look="aurora"] .vt-facts div { background: var(--card); border-radius: 16px; padding: 12px 6px; border: 0 !important; }
+html[data-look="aurora"] .vt-facts b { font: 600 19px/1.1 ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; }
+html[data-look="aurora"] .vt-facts span { font-size: 12px; margin-top: 3px; }
+html[data-look="aurora"] .vt-pop { border: 0; border-radius: 18px; background: var(--card); }
+html[data-look="aurora"] .vt-pop .n { border-radius: 12px; background: var(--fill2); color: var(--text2); font-weight: 700; }
+html[data-look="aurora"] .vt-pop .n.on { background: var(--accent); color: #fff; }
+html[data-look="aurora"] .vt-pop small { font-size: 12.5px; }
+html[data-look="aurora"] .vt .card { background: var(--card); border: 0; border-radius: 20px; }
+html[data-look="aurora"] .vt .card-title { font-size: 15px; font-weight: 600; color: var(--text); }
+html[data-look="aurora"] .cd-ring svg circle:nth-child(2) { filter: none; }
+html[data-look="aurora"] { --hint-ico: var(--accent); --hint-ico-bg: color-mix(in srgb, var(--accent) 16%, transparent); }
+html[data-look="aurora"] .ups-curve .line { stroke: var(--accent); } html[data-look="aurora"] .ups-curve .area { fill: color-mix(in srgb, var(--accent) 14%, transparent); }
+html[data-look="aurora"] :is(.s3-hint, .m3-tool) { font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; letter-spacing: 0; text-transform: none; }
+html[data-look="aurora"] .s3-hint { font-size: 12px; color: var(--text3); }
+html[data-look="aurora"] .m3-tool { font-size: 13px; font-weight: 600; border: 0; border-radius: 16px; background: var(--fill); color: var(--text); }
+html[data-look="aurora"] .m3-tool.pri { background: var(--accent); color: #fff; }
+html[data-look="aurora"] .vt .card b.mono { font-family: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; }
+html[data-look="aurora"] .cd-ups-time .big { font-family: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; font-weight: 600; }
+html[data-look="aurora"] .cd-x { border: 0; background: var(--fill); color: var(--text2); }
+html[data-look="aurora"] .cd-grab { opacity: .2; }
+html[data-look="aurora"] .cd-pn.y, html[data-look="aurora"] .cd-pn.o { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+/* камера: уголки как в «Камере» iPhone, подсказка и кнопки — стеклянные капсулы */
+html[data-look="aurora"] .cd-frame i { border-width: 4px; border-radius: 14px; border-color: #fff; }
+html[data-look="aurora"] .cd-frame { animation: au-cdbreath 2.4s ease-in-out infinite; }
+@keyframes au-cdbreath { 50% { transform: translate(-50%, -50%) scale(.965); } }
+html[data-look="aurora"] .cd-cam-hint { left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 40px); padding: 10px 18px; border-radius: 22px; font-size: 14px; text-shadow: none;
+  background: rgba(30,30,32,.55); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); }
+html[data-look="aurora"] .cd-pill { background: rgba(30,30,32,.55); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); }
+html[data-look="aurora"] .cd-pill.solid { background: var(--accent); }
+html[data-look="aurora"] .cd-cam-err { background: rgba(30,30,32,.7); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+@media (prefers-reduced-motion: reduce) { html[data-look="aurora"] .cd-frame { animation: none; } }
+/* «Новые в сети» как «Клиенты» UniFi: крупное число, кружки устройств внахлёст, пилюля состояния */
+.auw-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 9px; min-width: 0; }
+.auw-faces { display: flex; align-items: center; min-width: 0; }
+.auw-faces > span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; margin-left: -7px; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--card-solid)); box-shadow: 0 0 0 2px var(--card-solid); position: relative; }
+.auw-faces > span:first-child { margin-left: 0; }
+.auw-faces > span.more { color: var(--text2); background: var(--fill2); font-size: 10.5px; font-weight: 700; z-index: 0; }
+.auw-pill { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 11.5px; font-weight: 600; flex: none; }
+.auw-pill.ok { color: var(--green); background: color-mix(in srgb, var(--green) 15%, transparent); }
+.auw-pill.warn { color: var(--orange); background: color-mix(in srgb, var(--orange) 15%, transparent); }
+.auw-pill.warn i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 25%, transparent); animation: auw-pulse 1.8s ease-in-out infinite; }
+@keyframes auw-pulse { 50% { box-shadow: 0 0 0 5px transparent; } }
+
+/* тест скорости: дуга как в iOS / macOS — скруглённая, бегунок на конце, крупная цифра в центре */
+.au-g { position: relative; }
+.au-g svg { display: block; width: 100%; max-width: 300px; margin: 0 auto; overflow: visible; }
+.aug-track { fill: none; stroke: var(--fill2); stroke-width: 14; stroke-linecap: round; }
+.aug-fill { fill: none; stroke-width: 14; stroke-linecap: round; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 45%, transparent)); }
+.aug-tick { stroke: var(--text3); stroke-width: 1.2; stroke-linecap: round; opacity: .55; }
+.aug-tick.b { stroke-width: 1.8; opacity: .8; }
+.aug-tick.on { stroke: var(--accent); opacity: 1; }
+.aug-num { fill: var(--text3); font-size: 9.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.aug-knob { fill: #fff; stroke: color-mix(in srgb, var(--accent) 35%, transparent); stroke-width: 1; filter: drop-shadow(0 1px 3px rgba(0,0,0,.35)); }
+.aug-val { position: absolute; left: 0; right: 0; top: 37%; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+.aug-val b { font-size: 46px; font-weight: 300; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; font-family: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif; }
+.aug-val span { font-size: 13px; color: var(--text2); margin-top: 4px; }
+
+/* меню вместо россыпи кнопок — как контекстное меню iOS / macOS */
+.au-menu-btn { gap: 6px; }
+.au-menu-btn.on { background: var(--au-lens, var(--fill)); }
+.au-menu { position: fixed; z-index: 400; min-width: 230px; max-width: calc(100vw - 16px); padding: 6px; border-radius: 16px; display: flex; flex-direction: column;
+  background: var(--au-menu, var(--card-solid)); border: .5px solid var(--au-rim, var(--line)); box-shadow: 0 18px 50px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
+  backdrop-filter: blur(30px) saturate(190%); -webkit-backdrop-filter: blur(30px) saturate(190%); transform-origin: top right; animation: au-menu-in .22s cubic-bezier(.2,1.2,.4,1); }
+.au-menu.up { transform-origin: bottom right; }
+@keyframes au-menu-in { from { opacity: 0; transform: scale(.86); } }
+.au-menu-head { font-size: 12px; color: var(--text3); padding: 7px 12px 3px 36px; }
+.au-menu-sep { display: block; height: .5px; background: var(--line); margin: 5px 8px; }
+.au-menu-it { display: flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 12px 0 8px; border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.au-menu-it:hover, .au-menu-it:active { background: var(--au-lens, var(--fill)); }
+.au-menu-it > svg { color: var(--text2); }
+.au-menu-chk { width: 24px; display: grid; place-items: center; color: var(--accent); flex: none; }
+html[data-look="aurora"] :is(.set-ic, .tool-ic, .wg-opt-ic, .mi, .newdev-ic, .kind-ic) svg { stroke: currentColor !important; stroke-width: 1.7px !important; width: 20px; height: 20px; }
+html[data-look="aurora"] :is(.set-item.on, .ios-cell.on) .set-ic { color: var(--accent) !important; }
+html[data-look="aurora"] .wg-tile-ic { background: var(--fill) !important; }
+html[data-look="aurora"] .wg-tile-ic svg { stroke: var(--text) !important; }
+html[data-look="aurora"] .set-item.on { background: var(--au-lens); }
+/* виджеты и приборы «Витрины» — системным шрифтом Apple, без моноширинных подписей */
+html[data-look="aurora"] :is(.dash, .wg-full, .r3-wrap) { --mono: var(--font); }
+html[data-look="aurora"] .frank-mono { color: inherit; }
+
+/* содержимое: холст с точками, как в «Заметках» и Freeform */
+html[data-look="aurora"] .app-bg { background: radial-gradient(circle at 1.5px 1.5px, var(--au-dots) 1.2px, transparent 1.6px) 0 0 / 26px 26px, var(--bg); }
+html[data-look="aurora"] .card, html[data-look="aurora"] .wg-in { background: var(--card); border: 0; border-radius: var(--r-lg); box-shadow: var(--shadow); backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-look="aurora"] .wg-in { border-radius: 26px; }
+html[data-look="aurora"] .wg-body > .card, html[data-look="aurora"] .wg-full > .card { box-shadow: none; border-radius: 0; background: none; }
+html[data-look="aurora"] .stat { border-radius: 14px; background: var(--bg2); }
+html[data-look="aurora"][data-theme="dark"] .stat { background: rgba(118,118,128,.18); }
+html[data-look="aurora"] .page-title { font-size: 34px; font-weight: 700; letter-spacing: .37px; }
+html[data-look="aurora"] .page-sub { color: var(--text2); }
+
+/* стекло навигации: размытие + блик по краю (как .glassEffect()) */
+html[data-look="aurora"] .au-glass, html[data-look="aurora"] .topbar::before {
+  background: var(--au-glass); backdrop-filter: blur(22px) saturate(190%) brightness(1.04); -webkit-backdrop-filter: blur(22px) saturate(190%) brightness(1.04);
+  border: .5px solid var(--au-rim); box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.55), inset 0 -1px 1px var(--au-hair); }
+html[data-look="aurora"][data-theme="dark"] .au-glass, html[data-look="aurora"][data-theme="dark"] .topbar::before { box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.14), inset 0 -1px 1px rgba(0,0,0,.3); }
+/* жидкое стекло во всех меню, окнах, шторках и панелях поверх карты и плана: размытие и прозрачность, блик по краю */
+html[data-look="aurora"][data-theme="light"] { --au-menu: rgba(255,255,255,.64); }
+html[data-look="aurora"][data-theme="dark"] { --au-menu: rgba(34,34,38,.6); }
+html[data-look="aurora"] :is(.modal, .sheet, .hdr-menu, .toast, .wm-panel, .map-panel, .node-info, .health-panel, .rack-jump, .plan-ctx, .plan-floor-picker, .map-legend, .plan-hint, .plan-survey-card, .ai-panel, .work-menu, .tl-nav) {
+  background: var(--au-menu) !important; border: .5px solid var(--au-rim) !important; backdrop-filter: blur(30px) saturate(190%) !important; -webkit-backdrop-filter: blur(30px) saturate(190%) !important;
+  box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.4) !important; }
+html[data-look="aurora"] .page-full .zoom-btns .btn { background: var(--au-glass); border: .5px solid var(--au-rim); box-shadow: var(--au-float); border-radius: 50%;
+  backdrop-filter: blur(22px) saturate(190%); -webkit-backdrop-filter: blur(22px) saturate(190%); }
+html[data-look="aurora"] .page-full .zoom-btns .btn.primary { background: var(--accent); }
+html[data-look="aurora"] :is(.plan-ctx, .plan-floor-picker, .map-legend, .plan-hint) { border-radius: 999px !important; }
+html[data-look="aurora"] .plan-floor-picker select { background-color: transparent; }
+html[data-look="aurora"] .overlay { background: rgba(0,0,0,.18); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+html[data-look="aurora"] .modal { border-radius: 34px; } html[data-look="aurora"] .toast { border-radius: 999px; }
+html[data-look="aurora"] .sheet { border-radius: 34px 0 0 34px; } html[data-look="aurora"] .sheet.popup { border-radius: 34px; }
+html[data-look="aurora"] .modal-head, html[data-look="aurora"] .modal-foot, html[data-look="aurora"] .sheet-head { background: var(--au-menu); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
+html[data-look="aurora"] .hdr-menu { border-radius: 30px; }
+
+/* элементы управления */
+html[data-look="aurora"] .btn { border-radius: 999px; }
+html[data-look="aurora"] .btn.sm, html[data-look="aurora"] .btn.icon { border-radius: 999px; }
+html[data-look="aurora"] .seg, html[data-look="aurora"] .tabs { border-radius: 999px; }
+html[data-look="aurora"] .seg button, html[data-look="aurora"] .tab { border-radius: 999px; }
+html[data-look="aurora"] .input, html[data-look="aurora"] .select, html[data-look="aurora"] .textarea { border-radius: 12px; border: 0; background: var(--bg2); }
+html[data-look="aurora"][data-theme="dark"] .input, html[data-look="aurora"][data-theme="dark"] .select, html[data-look="aurora"][data-theme="dark"] .textarea { background: rgba(118,118,128,.24); }
+html[data-look="aurora"] .badge { border-radius: 999px; }
+html[data-look="aurora"] .tab::before { content: none; }
+
+/* планшет и узкое окно: стеклянная капсула сверху */
+html[data-look="aurora"] .topbar { top: calc(env(safe-area-inset-top) + 10px); left: 12px; right: 12px; padding: 7px 10px; border-radius: 999px; }
+html[data-look="aurora"] main.page { padding-top: calc(env(safe-area-inset-top) + 88px); }
+
+/* ПК: стеклянная боковая панель */
+@media (min-width: 1000px) {
+  html[data-look="aurora"] { --tb-h: var(--au-gap) !important; }
+  html[data-look="aurora"] .topbar { top: var(--au-gap); bottom: var(--au-gap); left: var(--au-gap); right: auto; width: var(--au-side); flex-direction: column; align-items: stretch; gap: 12px;
+    padding: 50px 10px 12px; border-radius: 26px; }
+  html[data-look="aurora"] .topbar::after { content: ""; position: absolute; top: 19px; left: 20px; width: 12px; height: 12px; border-radius: 50%; background: #ff5f57;
+    box-shadow: 20px 0 0 #febc2e, 40px 0 0 #28c840; pointer-events: none; }
+  html[data-look="aurora"] .brand { max-width: none; padding: 6px 8px; }
+  html[data-look="aurora"] .brand .live { display: inline-flex !important; }
+  html[data-look="aurora"] .topbar .tabs { flex-direction: column; background: none; padding: 0; gap: 2px; border-radius: 0; }
+  html[data-look="aurora"] .topbar .tab { width: 100%; padding: 9px 12px; gap: 12px; font-size: 15px; font-weight: 500; border-radius: 12px; color: var(--text); }
+  html[data-look="aurora"] .topbar .tab .tab-label { display: inline !important; }
+  html[data-look="aurora"] .topbar .tab svg { width: 20px; height: 20px; flex: none; stroke: var(--text2); }
+  html[data-look="aurora"] .topbar .tab.on { background: var(--au-lens); box-shadow: none; }
+  html[data-look="aurora"] .topbar .tab.on svg { stroke: var(--accent); }
+  html[data-look="aurora"] .topbar .tab .count { margin-left: auto; }
+  html[data-look="aurora"] .topbar .grow { flex: 1 1 auto; }
+  html[data-look="aurora"] .topbar .hdr-tools { flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
+  html[data-look="aurora"] .topbar .hdr-tools .seg { width: 100%; }
+  html[data-look="aurora"] .topbar .hdr-tools .seg button { flex: 1 1 0; min-width: 0; justify-content: center; padding: 7px 6px; font-size: 12.5px; white-space: nowrap; }
+  html[data-look="aurora"] .topbar .hdr-tools .seg-label { display: inline !important; }
+  html[data-look="aurora"] .topbar .hdr-tools .arrange-sw { width: 100%; }
+  html[data-look="aurora"] main.page { margin: 0 auto 0 calc(var(--au-side) + var(--au-gap) * 2); padding: 26px 30px 40px 24px; }
+  html[data-look="aurora"] .page-full .map-wrap, html[data-look="aurora"] .page-full .plan-canvas, html[data-look="aurora"] .page-full .live-map {
+    left: calc(var(--au-side) + var(--au-gap) * 2); right: 0; top: 0; bottom: 0; }      /* справа от боковой панели: кнопки карты и плана не прячутся под ней */
+  html[data-look="aurora"] .wm-editpill { left: calc(var(--au-side) + var(--au-gap) * 2 + 10px); top: calc(var(--au-gap) + 8px); }
+}
+
+/* телефон: верх — круглая кнопка и капсула, низ — маленький док по центру и две круглые кнопки */
+.au-top, .au-dock, .au-tuck, .au-sbar { display: none; }
+/* ПК: полосы прокрутки невидимы (как в macOS), прокрутка колесом и тачпадом остаётся */
+@media (min-width: 761px) {
+  html[data-look="aurora"], html[data-look="aurora"] * { scrollbar-width: none; }
+  html[data-look="aurora"] ::-webkit-scrollbar { display: none; width: 0; height: 0; }
+}
+@media (max-width: 760px) {
+  html[data-look="aurora"] { --tb-h: calc(env(safe-area-inset-top) + 62px) !important; }
+  html[data-look="aurora"] .topbar, html[data-look="aurora"] .bottombar { display: none !important; }
+  html[data-look="aurora"] .au-top, html[data-look="aurora"] .au-dock { display: flex; position: fixed; z-index: 50; left: calc(env(safe-area-inset-left) + 16px); right: calc(env(safe-area-inset-right) + 16px);
+    align-items: center; justify-content: space-between; gap: 10px; pointer-events: none; }
+  html[data-look="aurora"] .au-top { top: calc(env(safe-area-inset-top) + 8px); }
+  html[data-look="aurora"] .au-dock { bottom: calc(env(safe-area-inset-bottom) + 10px); }
+  html[data-look="aurora"] .au-top > *, html[data-look="aurora"] .au-dock > * { pointer-events: auto; }
+  html[data-look="aurora"] .au-circle { width: 50px; height: 50px; border-radius: 50%; flex: none; display: grid; place-items: center; padding: 0; color: var(--text); cursor: pointer; position: relative; }
+  html[data-look="aurora"] .au-circle > button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: none; color: inherit; display: grid; place-items: center; cursor: pointer; position: relative; padding: 0; }
+  html[data-look="aurora"] .au-pill { height: 50px; border-radius: 25px; display: flex; align-items: center; gap: 0; padding: 0 3px; }
+  html[data-look="aurora"] .au-pill > button { height: 44px; min-width: 50px; padding: 0 10px; border-radius: 22px; border: 0; background: none; color: var(--text); display: grid; place-items: center; cursor: pointer; position: relative; }
+  /* док-кнопки живые: выделение-линза переезжает между разделами, нажатие пружинит, при прокрутке вниз док сжимается до открытого раздела */
+  html[data-look="aurora"] .au-tabs { position: relative; }
+  html[data-look="aurora"] .au-tabs > button { width: 54px; min-width: 0; padding: 0; z-index: 1; overflow: hidden;
+    transition: width .42s cubic-bezier(.3,1.2,.5,1), opacity .25s, transform .18s cubic-bezier(.3,1.4,.6,1), color .25s; }
+  html[data-look="aurora"] .au-lens { position: absolute; top: 3px; bottom: 3px; left: 3px; width: 54px; border-radius: 22px; background: var(--au-lens);
+    box-shadow: inset 0 1px 1px rgba(255,255,255,.35); transform: translateX(calc(var(--i, 0) * 54px)); transition: transform .5s cubic-bezier(.3,1.3,.45,1); }
+  html[data-look="aurora"] .au-dock button.on { color: var(--accent); }
+  html[data-look="aurora"] .au-side button.on { background: var(--au-lens); }
+  html[data-look="aurora"] .au-side { transition: transform .4s cubic-bezier(.3,1.2,.5,1), opacity .3s; }
+  html[data-look="aurora"] .au-dock.mini .au-side { transform: scale(.6); opacity: 0; pointer-events: none; }
+  html[data-look="aurora"] .au-dock.mini .au-tabs > button:not(.on) { width: 0; opacity: 0; }
+  html[data-look="aurora"] .au-dock.mini .au-lens { transform: none; }
+  html[data-look="aurora"] .au-tabs > button.au-side-mini { width: 0; opacity: 0; }
+  html[data-look="aurora"] .au-dock.mini .au-tabs > button.au-side-mini { width: 54px; opacity: 1; }
+  html[data-look="aurora"] .au-dock:not(.mini) .au-lens-side { opacity: 0; }
+  html[data-look="aurora"] .au-lens-side { transition: opacity .3s; }
+  html[data-look="aurora"] .au-morph { animation: au-pop .42s cubic-bezier(.3,1.45,.5,1); }
+  @keyframes au-pop { from { transform: scale(.55) rotate(-8deg); opacity: 0; } to { transform: none; opacity: 1; } }
+  /* подмена кнопок (useAuSwap): прежняя сжимается и тает, новая выпрыгивает. Так капсула сверху становится «Готово», а «Инструменты» — «Как было» */
+  html[data-look="aurora"] .au-sw.in { animation: au-pop .46s cubic-bezier(.3,1.45,.5,1); }
+  html[data-look="aurora"] .au-sw.out { animation: au-out .18s ease-in forwards; pointer-events: none; }
+  @keyframes au-out { to { transform: scale(.5); opacity: 0; } }
+  html[data-look="aurora"] .au-done { border: 0; background: var(--accent); color: #fff; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 45%, transparent), inset 0 1px 1px rgba(255,255,255,.4); }
+  html[data-look="aurora"] .au-done svg { animation: au-tick .55s cubic-bezier(.4,0,.2,1); }
+  @keyframes au-tick { from { stroke-dasharray: 30; stroke-dashoffset: 30; } to { stroke-dasharray: 30; stroke-dashoffset: 0; } }
+  /* расстановка: панель кнопок, подсказка и значок «Режим редактирования» не нужны — всё в «+», «Готово» и «Как было» */
+  html[data-look="aurora"] .dash-bar, html[data-look="aurora"] main.au-arr > .hint-box, html[data-look="aurora"] main.au-arr > .row > .badge.warning { display: none; }
+  /* значок главной кнопки играет по нажатию (auFx в 90_app.jsx ставит data-go): у каждой кнопки своё движение */
+  html[data-look="aurora"] :is(.au-dock, .au-top) button > svg { transform-box: fill-box; transform-origin: 50% 50%; }
+  html[data-look="aurora"] [data-go][data-fx="spin"] > svg { animation: aufx-spin .75s cubic-bezier(.3,1.25,.4,1); }
+  html[data-look="aurora"] [data-go][data-fx="wiggle"] > svg { animation: aufx-wiggle .6s ease-in-out; }
+  html[data-look="aurora"] [data-go][data-fx="ring"] > svg { transform-origin: 50% 8%; animation: aufx-ring .75s ease-in-out; }
+  html[data-look="aurora"] [data-go][data-fx="hop"] > svg { transform-origin: 50% 100%; animation: aufx-hop .55s cubic-bezier(.3,1.3,.5,1); }
+  html[data-look="aurora"] [data-go][data-fx="fold"] > svg { animation: aufx-fold .65s ease-in-out; }
+  html[data-look="aurora"] [data-go][data-fx="draw"] > svg { animation: aufx-draw .55s cubic-bezier(.3,1.4,.5,1); }
+  html[data-look="aurora"] [data-go][data-fx="blink"] > svg { animation: aufx-blink .55s ease-in-out; }
+  html[data-look="aurora"] [data-go][data-fx="rev"] > svg { transform-origin: 50% 62%; animation: aufx-rev .7s cubic-bezier(.3,1.2,.4,1); }
+  html[data-look="aurora"] [data-go][data-fx="dots"] > svg { animation: aufx-dots .5s cubic-bezier(.3,1.4,.5,1); }
+  html[data-look="aurora"] [data-go][data-fx="stack"] > svg { transform-origin: 50% 100%; animation: aufx-stack .5s cubic-bezier(.3,1.4,.5,1); }
+  html[data-look="aurora"] [data-go][data-fx="nudge"] > svg { animation: aufx-nudge .45s cubic-bezier(.3,1.4,.5,1); }
+  html[data-look="aurora"] [data-go][data-fx="back"] > svg { animation: aufx-back .6s cubic-bezier(.3,1.3,.4,1); }
+  @keyframes aufx-spin { to { transform: rotate(180deg); } }
+  @keyframes aufx-wiggle { 20% { transform: rotate(-30deg); } 45% { transform: rotate(22deg); } 70% { transform: rotate(-12deg); } 88% { transform: rotate(5deg); } }
+  @keyframes aufx-ring { 15% { transform: rotate(20deg); } 32% { transform: rotate(-18deg); } 50% { transform: rotate(13deg); } 68% { transform: rotate(-8deg); } 84% { transform: rotate(4deg); } }
+  @keyframes aufx-hop { 30% { transform: translateY(-6px) scale(.94, 1.08); } 62% { transform: translateY(0) scale(1.1, .88); } 82% { transform: scale(.97, 1.03); } }
+  @keyframes aufx-fold { 30% { transform: perspective(70px) rotateY(-55deg); } 62% { transform: perspective(70px) rotateY(24deg); } 84% { transform: perspective(70px) rotateY(-8deg); } }
+  @keyframes aufx-draw { 30% { transform: scale(.72) rotate(-12deg); } 65% { transform: scale(1.14) rotate(5deg); } }
+  @keyframes aufx-blink { 18% { transform: scaleY(.1); } 40% { transform: scaleY(1.08); } 60% { transform: scaleY(.1); } 82% { transform: scaleY(1.04); } }
+  @keyframes aufx-rev { 28% { transform: rotate(-38deg); } 62% { transform: rotate(30deg); } 84% { transform: rotate(-8deg); } }
+  @keyframes aufx-dots { 35% { transform: scaleX(1.4); } 70% { transform: scaleX(.85); } }
+  @keyframes aufx-stack { 35% { transform: scaleY(.74); } 68% { transform: scaleY(1.12); } }
+  @keyframes aufx-nudge { 35% { translate: -6px 0; } 70% { translate: 2px 0; } }
+  @keyframes aufx-back { 35% { transform: rotate(-75deg) scale(.9); } 72% { transform: rotate(12deg); } }
+  /* сжатый док живёт от прокрутки (переменные ставит AuDock): значок открытого раздела наклоняется по ходу пальца и пружинит назад, шестерёнка катится,
+     а по кромке капсулы бежит кольцо — сколько страницы пролистано */
+  html[data-look="aurora"] .au-dock.mini .au-tabs > button.on > svg { transform: translateY(calc(var(--au-sv, 0) * -5px)) rotate(calc(var(--au-sv, 0) * 18deg)) scale(calc(1 + var(--au-sv, 0) * var(--au-sv, 0) * .14));
+    transition: transform .5s cubic-bezier(.3,1.9,.5,1); }
+  html[data-look="aurora"] .au-dock.mini .au-tabs > button.on[data-fx="spin"] > svg { transform: rotate(calc(var(--au-sy, 0) * .5deg)); transition: transform .22s linear; }
+  html[data-look="aurora"] .au-dock.mini .au-tabs > button.on[data-fx="ring"] > svg { transform-origin: 50% 8%; transform: rotate(calc(var(--au-sv, 0) * -26deg)); }
+  html[data-look="aurora"] .au-tabs::after { content: ""; position: absolute; inset: -1.5px; border-radius: 27px; padding: 2.5px; pointer-events: none; opacity: 0; transition: opacity .35s;
+    background: conic-gradient(from 0deg, var(--accent) calc(var(--au-sp, 0) * 360deg), transparent 0);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+  html[data-look="aurora"] .au-dock.mini .au-tabs::after { opacity: .95; }
+  @media (prefers-reduced-motion: reduce) { html[data-look="aurora"] [data-go] > svg, html[data-look="aurora"] .au-sw { animation: none !important; }
+    html[data-look="aurora"] .au-dock.mini .au-tabs > button.on > svg { transform: none !important; } }
+  /* «Назад» теперь у верхней левой кнопки — свои кнопки «Назад» в разделах не нужны */
+  html[data-look="aurora"] .au-inpage-back { display: none !important; }
+  html[data-look="aurora"] .ios-nav .ios-back { visibility: hidden; }
+  html[data-look="aurora"] .plan-ctx:has(> .au-inpage-back) { padding-left: 14px; }
+  html[data-look="aurora"] .au-dock button:active, html[data-look="aurora"] .au-top button:active { transform: scale(.92); }
+  html[data-look="aurora"] .au-dock button, html[data-look="aurora"] .au-top button { transition: transform .18s cubic-bezier(.3,1.4,.6,1), background .2s; }
+  html[data-look="aurora"] .au-dock .count { position: absolute; top: 3px; right: 6px; font-size: 10px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--red); color: #fff; display: grid; place-items: center; font-weight: 700; }
+  html[data-look="aurora"] .au-brand .au-live { position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 2px var(--bg); }
+  html[data-look="aurora"] .au-brand .au-live.stale { background: var(--orange); }
+  html[data-look="aurora"] .au-spacer { width: 50px; flex: none; }
+  html[data-look="aurora"] main.page { padding: calc(env(safe-area-inset-top) + 70px) calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 90px) calc(env(safe-area-inset-left) + 16px); }
+  html[data-look="aurora"] .page-title { font-size: 34px; }
+  /* карта и план — во весь экран под стеклом; их собственные кнопки отодвигаются от верхних кнопок и дока и плавно едут на место */
+  html[data-look="aurora"] { --au-in-top: calc(env(safe-area-inset-top) + 66px + var(--au-shift, 0px));--au-in-bot: calc(env(safe-area-inset-bottom) + 74px); }
+  /* iOS 26 заливает зону под часами цветом закреплённого (fixed) слоя у верхнего края — отсюда «чёлка» на карте и плане.
+     Поэтому здесь холст не закреплён, а лежит на странице во весь экран (как содержимое других вкладок): карта видна и под часами */
+  /* высота — ровно видимая (--au-vh, мерит AuFullFit; 100lvh на iPhone выше экрана), плюс запас сверху --au-shift, на который страница прокручена */
+  html[data-look="aurora"] main.page.page-full { position: relative; padding: 0 !important; height: calc(var(--au-vh, 100dvh) + var(--au-shift, 0px)); overflow: hidden; }
+  html[data-look="aurora"]:has(main.page-full), html[data-look="aurora"]:has(main.page-full) body { overflow: hidden; overscroll-behavior: none; }
+  html[data-look="aurora"] .page-full .map-wrap, html[data-look="aurora"] .page-full .plan-canvas, html[data-look="aurora"] .page-full .live-map {
+    position: absolute; top: 0; bottom: 0; left: 0; right: 0; height: calc(var(--au-vh, 100dvh) + var(--au-shift, 0px)) !important; }
+  /* всё, что внизу (карточка дома и узла, колонка кнопок, легенда, подсказка), закреплено на экране: даже если iOS сдвинет страницу, оно не уедет вниз */
+  html[data-look="aurora"] .page-full :is(.live-card, .live-bar, .node-info, .plan-survey-card, .zoom-btns, .plan-edit-dock, .map-legend, .plan-hint) { position: fixed; }
+  html[data-look="aurora"] .page-full :is(.maplibregl-ctrl-top-left, .maplibregl-ctrl-top-right) { top: calc(var(--au-in-top) + 100px); }
+  html.au-tucked[data-look="aurora"] .page-full .maplibregl-ctrl-top-left { visibility: hidden; }
+  html[data-look="aurora"] .page-full :is(.plan-ctx, .plan-floors, .plan-tool-current, .map-tools, .health-panel, .rack-jump, .zoom-btns, .map-legend, .plan-hint, .node-info, .plan-survey-card) {
+    transition: top .45s cubic-bezier(.2,.9,.3,1), bottom .45s cubic-bezier(.2,.9,.3,1), opacity .3s; }
+  html[data-look="aurora"] .page-full .plan-ctx { top: calc(var(--au-in-top) + 2px); max-width: calc(100% - 76px); }
+  html[data-look="aurora"] .page-full .plan-floors { top: calc(var(--au-in-top) + 50px); }
+  html[data-look="aurora"] .page-full .plan-tool-current { top: calc(var(--au-in-top) + 92px); }
+  html[data-look="aurora"] .page-full .map-tools { top: calc(var(--au-in-top) + 2px); }
+  html[data-look="aurora"] .page-full :is(.health-panel, .rack-jump) { top: calc(var(--au-in-top) + 52px); }
+  html[data-look="aurora"] .page-full .zoom-btns { bottom: calc(var(--au-in-bot) + 60px); }
+  html[data-look="aurora"] .page-full :is(.map-legend, .plan-hint, .node-info, .plan-survey-card) { bottom: calc(var(--au-in-bot) + 4px); }
+  /* свёрнуто в одну кнопку (как окно в Dock macOS): кнопки карты и плана прячутся, остаётся маленький стеклянный круг */
+  html[data-look="aurora"] .au-tuck { display: grid; position: fixed; z-index: 52; right: calc(env(safe-area-inset-right) + 16px); bottom: calc(var(--au-in-bot) + 4px); width: 46px; height: 46px;
+    border-radius: 50%; place-items: center; color: var(--text); cursor: pointer; padding: 0; transition: transform .2s cubic-bezier(.3,1.4,.6,1); }
+  html[data-look="aurora"] .au-tuck:active { transform: scale(.9); }
+  html[data-look="aurora"] .au-tuck .au-tuck-n { position: absolute; top: -2px; right: -2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: grid; place-items: center; }
+  /* «+» инструментов плана — круглая, над кнопками масштаба (а не на них), и сворачивается в «⋯» вместе со всеми */
+  html[data-look="aurora"] .page-full .plan-edit-dock { right: calc(env(safe-area-inset-right) + 16px); bottom: calc(var(--au-in-bot) + 222px); transition: bottom .45s cubic-bezier(.2,.9,.3,1); }
+  html[data-look="aurora"] .page-full .plan-edit-fab { width: 46px; height: 46px; border-radius: 50%; border: .5px solid var(--au-rim); box-shadow: var(--au-float); }
+  /* одна ровная колонка справа: масштаб, «+», «⋯» и настройки — круги 46px по одной оси */
+  html[data-look="aurora"] .page-full .zoom-btns { right: calc(env(safe-area-inset-right) + 16px); gap: 8px; align-items: center; }
+  html[data-look="aurora"] .page-full .zoom-btns .btn { width: 46px; height: 46px; }
+  html.au-tucked[data-look="aurora"] .page-full :is(.plan-ctx, .plan-floors, .plan-tool-current, .map-tools, .zoom-btns, .map-legend, .plan-hint, .rack-jump, .plan-edit-dock),
+  html.au-tucked[data-look="aurora"] .wm-fab { visibility: hidden; pointer-events: none; }
+  /* нажали на дом / узел — снизу выезжает его карточка: док и круг «⋯» красиво уходят вниз, уступая ей место, и возвращаются, когда карточку закрыли */
+  html[data-look="aurora"] .au-dock { transition: transform .5s cubic-bezier(.3,1.15,.4,1), opacity .35s; }
+  html[data-look="aurora"] .au-tuck { transition: transform .45s cubic-bezier(.3,1.2,.5,1), opacity .3s; }
+  html[data-look="aurora"]:has(.page-full :is(.live-card, .live-bar, .node-info, .plan-survey-card, .plan-testcard)) .au-dock { transform: translateY(calc(100% + env(safe-area-inset-bottom) + 24px)) scale(.7); opacity: 0; pointer-events: none; }
+  html[data-look="aurora"]:has(.page-full :is(.live-card, .live-bar, .node-info, .plan-survey-card, .plan-testcard)) .au-dock > * { pointer-events: none; }
+  html[data-look="aurora"]:has(.page-full :is(.live-card, .live-bar, .node-info, .plan-survey-card, .plan-testcard)) .au-tuck { transform: translateY(40px) scale(.3); opacity: 0; pointer-events: none; }
+  html[data-look="aurora"] .page-full :is(.live-card, .live-bar) { bottom: calc(env(safe-area-inset-bottom) + 12px); animation: au-rise .5s cubic-bezier(.2,.9,.3,1); }
+  html[data-look="aurora"] .page-full :is(.node-info, .plan-survey-card, .plan-testcard) { bottom: calc(env(safe-area-inset-bottom) + 12px); right: 12px; left: 12px; animation: au-rise .5s cubic-bezier(.2,.9,.3,1); }
+  @keyframes au-rise { from { transform: translateY(60px) scale(.94); opacity: 0; } to { transform: none; opacity: 1; } }
+  /* полоса под строкой статуса iOS красится фоном страницы — на карте и плане он того же цвета, что их холст, без чёрной «чёлки» */
+  html[data-look="aurora"]:has(main.page-full), html[data-look="aurora"]:has(main.page-full) body, html[data-look="aurora"]:has(main.page-full) .app-bg { background: var(--bg2); }
+  html[data-look="aurora"][data-theme="dark"]:has(.page-full .live-map), html[data-look="aurora"][data-theme="dark"]:has(.page-full .live-map) :is(body, .app-bg) { background: #1b1c20; }
+  html[data-look="aurora"][data-theme="light"]:has(.page-full .live-map), html[data-look="aurora"][data-theme="light"]:has(.page-full .live-map) :is(body, .app-bg) { background: #f6f6f6; }
+  html[data-look="aurora"] .toast-wrap { bottom: calc(env(safe-area-inset-bottom) + 76px); }
+  html[data-look="aurora"] .wm-fab { top: calc(env(safe-area-inset-top) + 68px); right: calc(env(safe-area-inset-right) + 16px); }
+}
+/* кнопка настроек карты и плана — тоже стеклянный круг */
+html[data-look="aurora"] .wm-fab:not(.on) { width: 46px; height: 46px; border-radius: 50%; background: var(--au-glass); border: .5px solid var(--au-rim); box-shadow: var(--au-float);
+  backdrop-filter: blur(22px) saturate(190%); -webkit-backdrop-filter: blur(22px) saturate(190%); }
+html[data-look="aurora"] .wm-fab.on { width: 46px; height: 46px; border-radius: 50%; }
+
+/* ── 2.51: настройки — то, что оставалось в прежнем виде ── */
+/* подсказка: без рамки, мягкая подложка цветом системы */
+html[data-look="aurora"] .hint-box { border: 0; border-radius: 20px; padding: 13px 14px; background: color-mix(in srgb, var(--accent) 9%, var(--card-solid)); box-shadow: none; }
+html[data-look="aurora"] .hint-ico { background: none; color: var(--accent); width: 24px; height: 24px; }
+html[data-look="aurora"] .hint-close { border: 0; border-radius: 999px; padding: 6px 12px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+/* раскрывающиеся пояснения: серая плитка, стрелка-шеврон вместо треугольника */
+html[data-look="aurora"] .guide { border: 0; border-radius: 16px; padding: 0; background: var(--fill); overflow: hidden; }
+html[data-look="aurora"] .guide > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px; color: var(--text); font-weight: 600; }
+html[data-look="aurora"] .guide > summary::-webkit-details-marker { display: none; }
+html[data-look="aurora"] .guide > summary::after { content: ""; margin-left: auto; flex: none; width: 8px; height: 8px; border-right: 2px solid var(--text3); border-bottom: 2px solid var(--text3); transform: translateY(-2px) rotate(45deg); transition: transform .25s cubic-bezier(.3,.7,.3,1); }
+html[data-look="aurora"] .guide[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
+html[data-look="aurora"] .guide > :not(summary) { margin-left: 14px; margin-right: 14px; }
+html[data-look="aurora"] .guide > :last-child:not(summary) { margin-bottom: 12px; }
+html[data-look="aurora"] .guide > ol, html[data-look="aurora"] .guide > ul { padding-left: 20px; margin-top: 2px; }
+/* выпадающие списки: свой шеврон вместо системной стрелки */
+html[data-look="aurora"] select:is(.input, .select) { -webkit-appearance: none; appearance: none; padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%238e8e93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.5 1.5 6 6l4.5-4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 13px center; background-size: 12px 8px; }
+/* ползунки как в iOS: тонкая дорожка, белая круглая ручка */
+html[data-look="aurora"] input[type="range"]:not(.plain) { -webkit-appearance: none; appearance: none; height: 28px; background: none; border: 0; padding: 0; accent-color: var(--accent); }
+html[data-look="aurora"] input[type="range"]:not(.plain)::-webkit-slider-runnable-track { height: 5px; border-radius: 3px; background: var(--fill2); border: 0; }
+html[data-look="aurora"] input[type="range"]:not(.plain)::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -10.5px; border-radius: 50%; border: 0; background: #fff; box-shadow: 0 .5px 4px rgba(0,0,0,.14), 0 3px 9px rgba(0,0,0,.16), 0 0 0 .5px rgba(0,0,0,.05); }
+html[data-look="aurora"] input[type="range"]:not(.plain)::-moz-range-track { height: 5px; border-radius: 3px; background: var(--fill2); border: 0; }
+html[data-look="aurora"] input[type="range"]:not(.plain)::-moz-range-progress { height: 5px; border-radius: 3px; background: var(--accent); }
+html[data-look="aurora"] input[type="range"]:not(.plain)::-moz-range-thumb { width: 26px; height: 26px; border-radius: 50%; border: 0; background: #fff; box-shadow: 0 .5px 4px rgba(0,0,0,.14), 0 3px 9px rgba(0,0,0,.16); }
+/* выбор оформления: без серых рамок, выбранное — кольцо цветом системы */
+html[data-look="aurora"] .look-skin { border: 0; border-radius: 24px; padding: 8px 8px 14px; background: var(--fill); gap: 8px; transition: box-shadow .25s, transform .2s cubic-bezier(.3,.7,.3,1); }
+html[data-look="aurora"] .look-skin:active { transform: scale(.985); }
+html[data-look="aurora"] .look-skin.on { background: color-mix(in srgb, var(--accent) 9%, var(--card-solid)); box-shadow: 0 0 0 2px var(--accent); }
+html[data-look="aurora"] .look-skin > :not(.look-cover):not(.look-prev) { padding: 0 8px; }
+html[data-look="aurora"] .look-cover, html[data-look="aurora"] .look-prev { border: 0; border-radius: 17px; box-shadow: 0 0 0 .5px var(--line); }
+html[data-look="aurora"] .look-dot { width: 40px; height: 40px; border: 0; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12); transition: transform .2s cubic-bezier(.3,.7,.3,1), box-shadow .2s; }
+html[data-look="aurora"] .look-dot.on { box-shadow: 0 0 0 2.5px var(--card-solid), 0 0 0 5px var(--accent); transform: scale(.9); }
+/* остальное: плитки и строки со старыми рамками и углами */
+html[data-look="aurora"] .apps-router { border: 0; background: var(--fill); border-radius: 18px; }
+html[data-look="aurora"] .apps-addr, html[data-look="aurora"] .inst-steps { border-radius: 16px; }
+html[data-look="aurora"] .plug-row { border-radius: 16px; padding: 11px 14px; }
+html[data-look="aurora"] .warn-box, html[data-look="aurora"] .ok-box { border-radius: 16px; padding: 12px 14px; }
+html[data-look="aurora"] .cam-warn, html[data-look="aurora"] .cam-err { border: 0; border-radius: 16px; padding: 12px 14px; background: var(--fill); }
+html[data-look="aurora"] .inst-go { border-radius: 999px; } html[data-look="aurora"] .inst-url { border-radius: 12px; }
+html[data-look="aurora"] .guide code, html[data-look="aurora"] .card code { border-radius: 6px; }
+
+/* ── 2.51: «Терминал» отдельным приложением — шапка стеклянной капсулой ── */
+html[data-look="aurora"] .term-app { padding-left: 14px; padding-right: 14px; display: flex; flex-direction: column; gap: 10px; }
+html[data-look="aurora"] .term-app-top { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 5; padding: 7px 8px 7px 9px; border-radius: 28px; background: var(--au-glass); border: .5px solid var(--au-rim); box-shadow: var(--au-float);
+  backdrop-filter: blur(22px) saturate(190%); -webkit-backdrop-filter: blur(22px) saturate(190%); }
+html[data-look="aurora"] .term-app-top > b { font-size: 16px; }
+html[data-look="aurora"] .term-app-top .btn { border-radius: 999px; border: 0; background: var(--fill); font-weight: 600; }
+html[data-look="aurora"] .term-app-top select.input { border-radius: 999px; height: 36px; background-color: var(--fill); }
+html[data-look="aurora"] .term-app .term-box { border-radius: 22px; overflow: hidden; }
+html[data-look="aurora"] :is(.apps-addr, .apps-router, .inst-url) { --mono: var(--font); }
+
+/* «Раздельный VPN»: ticks of site lists */
+.split-lists { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; }
+.split-lists .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.35; padding: 4px 0; cursor: pointer; }
+.split-lists .check-row input { margin-top: 2px; flex-shrink: 0; }
+
+/* Settings → «Пароли» and «Бэкапы» (60b_vault.jsx): iOS-like lists, the lock screen, secret fields */
+.vault-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.vault-stats > div { background: var(--fill); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vault-stats b { font-size: 20px; font-weight: 700; }
+.vault-stats span { font-size: 12px; color: var(--text2); }
+.vault-search { position: relative; display: flex; align-items: center; }
+.vault-search > svg { position: absolute; left: 11px; pointer-events: none; }
+.vault-search .input { padding-left: 34px; width: 100%; }
+.vault-list { display: flex; flex-direction: column; }
+.vault-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 9px 14px; border: 0; background: none; color: var(--text);
+  font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; position: relative; }
+.vault-row + .vault-row::before { content: ''; position: absolute; top: 0; left: 60px; right: 0; border-top: .5px solid var(--line); }
+button.vault-row:hover { background: var(--fill); }
+button.vault-row:active { background: var(--fill2); }
+.vault-main { min-width: 0; }
+.vault-name { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-sub { font-size: 12.5px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-tag { font-size: 12px; color: var(--text3); white-space: nowrap; flex-shrink: 0; }
+.vault-lock { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 4px 8px; text-align: center; }
+.vault-lock .input { width: 100%; }
+.vault-lock-ic { width: 64px; height: 64px; border-radius: 16px; background: linear-gradient(160deg, #40c8e0, #30a2c7); display: grid; place-items: center; }
+.vault-lock-t { font-size: 19px; font-weight: 700; }
+.vault-group { background: var(--fill); border-radius: 12px; padding: 2px 12px; display: flex; flex-direction: column; }
+.vault-group + .vault-group { margin-top: 8px; }
+.vault-field { padding: 9px 0; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.vault-field + .vault-field { border-top: .5px solid var(--line); }
+.vault-k { font-size: 12px; color: var(--text2); }
+.vault-v { font-size: 14.5px; word-break: break-all; min-width: 0; line-height: 1.4; padding-top: 3px; }
+.vault-pre { margin: 0; white-space: pre-wrap; font-size: 11.5px; max-height: 220px; overflow: auto; }
+.vault-imp { position: relative; margin-top: 10px; padding: 10px 34px 10px 12px; background: var(--fill); border-radius: 12px; font-size: 13.5px; }
+.vault-x { position: absolute; top: 8px; right: 8px; border: 0; background: none; color: var(--text3); cursor: pointer; padding: 2px; }
+.vault-warn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: rgba(255,149,0,.12); font-size: 13px; line-height: 1.45; }
+.vault-warn svg { color: var(--orange); flex-shrink: 0; margin-top: 1px; }
+.vault-opt { display: flex; gap: 12px; align-items: flex-start; text-align: left; width: 100%; padding: 12px 14px; border-radius: 12px; border: .5px solid var(--line2);
+  background: var(--card-solid); color: var(--text); font: inherit; cursor: pointer; }
+.vault-opt:hover { background: var(--fill); }
+.vault-opt .dim3 { font-size: 12.5px; line-height: 1.45; margin-top: 3px; }
+@media (max-width: 600px) { .vault-tag { display: none; } }
+/* «Face ID» (61b_faceid.jsx) */
+.faceid-btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 13px; }
+.faceid-ic { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(160deg, #3ddc84, #28b463); display: grid; place-items: center; flex-shrink: 0; }
+.faceid-ic.big { width: 52px; height: 52px; border-radius: 13px; }
+.faceid-sub { padding: 12px 14px 4px; font-size: 12px; color: var(--text3); text-transform: uppercase; letter-spacing: .3px; }
+/* a long window title (a device name) never pushes the close button off the screen */
+.modal-head h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-head > .btn { flex-shrink: 0; }

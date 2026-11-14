@@ -64,6 +64,7 @@ function ToolsView() {
   const listMode = phone && !open;
   const content = cur.id === 'devices' ? <DevicesView /> : cur.id === 'plugins' ? <PluginsOverview /> : cur.id === 'doctor' ? <DoctorTool /> : cur.id === 'vpncheck' ? <VpnCheckTool /> : cur.id === 'cameras' ? <CameraTool /> : cur.id === 'sites' ? <SitesTool /> : cur.id === 'apps' ? <AppsTool /> : cur.id === 'learn' ? <LearnTool /> : cur.id === 'localplug' ? <LocalPlugTool /> : cur.id === 'add' ? <CommunityToolsView onChange={loadMine} /> : String(cur.id).startsWith('x-') ? <CommunityTool id={cur.id.slice(2)} /> : null;
   return <div className={'set-layout' + (phone ? ' ios' : '')}>
+    <AuBack active={phone && !!open} fn={back} label="Инструменты" />
     {listMode ? <div className="ios-list">{TOOLS_GROUPS.map((g, gi) => { const items = g[0] === 'tools' ? toolRows : g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
       return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" onClick={() => pick(x.id)}>
         <span className="ios-ico"><span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span></span>

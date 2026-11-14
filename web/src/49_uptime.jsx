@@ -4,7 +4,8 @@ const fmtDur = s => { s = Math.round(s || 0);
   const h = Math.floor(m / 60); if (h < 24) return h + ' ч' + (m % 60 ? ' ' + (m % 60) + ' мин' : '');
   const d = Math.floor(h / 24); return d + ' д' + (h % 24 ? ' ' + (h % 24) + ' ч' : ''); };
 const pctText = p => p == null ? '—' : p >= 100 ? '100%' : (p >= 99.99 ? '99,99' : p.toFixed(p >= 99 ? 2 : 1).replace('.', ',')) + '%';
-const pctColor = p => p == null ? 'var(--fill2)' : p >= 99.9 ? 'var(--green)' : p >= 99 ? '#7bd88f' : p >= 95 ? 'var(--yellow)' : p >= 80 ? 'var(--orange)' : 'var(--red)';
+const pctColor = p => p == null ? 'var(--fill2)' : isAurora() ? (p >= 99.9 ? 'var(--accent)' : p >= 99 ? 'color-mix(in srgb, var(--accent) 75%, #8e8e93)' : p >= 95 ? 'color-mix(in srgb, var(--accent) 50%, #8e8e93)' : '#8e8e93')      // «Аврора»: без красного — хуже = тусклее
+  : p >= 99.9 ? 'var(--green)' : p >= 99 ? '#7bd88f' : p >= 95 ? 'var(--yellow)' : p >= 80 ? 'var(--orange)' : 'var(--red)';
 
 function UptimeBars({ days, now }) {
   return <div className="up-bars">{days.map((p, i) => {

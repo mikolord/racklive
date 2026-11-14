@@ -371,7 +371,7 @@ function frame(now) {
       octx.font = '600 ' + Math.max(8, Math.min(12, w * 0.2)) + 'px -apple-system,Segoe UI,sans-serif'; octx.fillStyle = '#fff'; octx.shadowColor = 'rgba(0,0,0,.9)'; octx.shadowBlur = 3; octx.fillText(nm, o.mid.x, o.mid.y + w * 0.36); octx.shadowBlur = 0; }
   });
   octx.globalAlpha = 1;
-  if (!frozen) { octx.strokeStyle = 'rgba(255,255,255,.75)'; octx.lineWidth = 1.5; octx.beginPath(); octx.arc(aim.x, aim.y, 14, 0, 6.2832); octx.moveTo(aim.x - 20, aim.y); octx.lineTo(aim.x - 8, aim.y); octx.moveTo(aim.x + 8, aim.y); octx.lineTo(aim.x + 20, aim.y); octx.stroke(); }
+  if (!frozen) { octx.strokeStyle = 'rgba(255,255,255,.75)'; octx.lineWidth = 1.5; octx.beginPath(); octx.rect(aim.x - 14, aim.y - 10, 28, 20); octx.moveTo(aim.x - 22, aim.y); octx.lineTo(aim.x - 14, aim.y); octx.moveTo(aim.x + 14, aim.y); octx.lineTo(aim.x + 22, aim.y); octx.moveTo(aim.x, aim.y - 16); octx.lineTo(aim.x, aim.y - 10); octx.moveTo(aim.x, aim.y + 10); octx.lineTo(aim.x, aim.y + 16); octx.stroke(); }
   if (hit) { var p2 = hit.c.p; setCard(dev.id + ':' + p2.n + ':' + (p2.link ? p2.speed : 'x') + ':' + (p2.poeW || 0) + ':' + ((p2.peers || []).map(function (x) { return x.mac; }).join()) + ':' + (p2.label || ''), portCard(dev, hit.c)); }
   else setCard((frozen ? 'tap:' : 'aim:') + dev.id, '<div class="dev">' + esc(dev.name) + '</div><div class="big">' + (frozen ? 'Коснитесь порта на снимке' : 'Наведите перекрестие на порт') + '</div><div class="sub">' + (frozen ? 'Снимок можно рассматривать сколько угодно. «Переснять» вернёт камеру.' : 'или коснитесь порта на экране') + '</div>');
 }

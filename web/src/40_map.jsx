@@ -273,6 +273,7 @@ function MapNode({ n, p, sel, dim, mark, phase, onDown, onClick, onDoubleClick }
   const room = p.w - (is + 18) - 24, capL = Math.max(8, Math.floor(room / 7.4)), capS = Math.max(10, Math.floor(room / 6.2)) - (n.remoteClients ? Math.ceil((pw - 6) / 6.2) : 0);      // characters that fit the card (the other map views have wider cards)
   const cc = flagOf(n.label);            // a name starting with «🇩🇪 …» or «/abh …»: the picture of the flag instead of the icon, the name without the prefix
   const [badFlag, setBadFlag] = useState('');
+  const brand = tagBrand(n.label) || (!spec ? brandOf(n.label, n.kind, n.mac || (String(n.id).startsWith('h:') ? String(n.id).slice(2) : '')) : ''), B = brand && BRANDS[brand];            // the maker's logo (01_brands.jsx) when the name says whose device it is
   const flag = cc && badFlag !== cc, label = nameNoFlag(n.label, n.kind), clipId = 'fc-' + String(n.id).replace(/[^\w-]/g, '_');
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}
     transform={`translate(${p.x},${p.y})`} onPointerDown={onDown} onClick={onClick} onDoubleClick={onDoubleClick}>
@@ -285,6 +286,11 @@ function MapNode({ n, p, sel, dim, mark, phase, onDown, onClick, onDoubleClick }
     {flag ? <g>
       <clipPath id={clipId}><rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} /></clipPath>
       <image href={'/flags/' + cc + '.svg'} x={9} y={(p.h - is) / 2} width={is} height={is} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} onError={() => setBadFlag(cc)} />
+      <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill="none" stroke="var(--text)" strokeOpacity=".16" /></g>
+    : B ? <g>
+      <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={B.c} />
+      {B.d ? <path d={B.d} fill={B.i} transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2}) scale(${is * .6 / 24})`} />
+        : <text x={9 + is / 2} y={p.h / 2} textAnchor="middle" dominantBaseline="central" fill={B.i} fontSize={brandTextSize(B.t) * is} fontWeight="800" style={{ letterSpacing: '-.02em' }}>{B.t}</text>}
       <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill="none" stroke="var(--text)" strokeOpacity=".16" /></g>
     : <>
       <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
@@ -440,7 +446,8 @@ function MapView({ scope }) {
     }
     if (Math.abs(x - v.x) > 1 || Math.abs(y - v.y) > 1 || Math.abs(k - v.k) > .001) glideTo({ k, x, y });
   }, [L]);
-  const commitView = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } if (liveV.current) { setView(liveV.current); liveV.current = null; } if (wrap.current) wrap.current.classList.remove('moving'); };
+  // viewRef is set at once: the next wheel / finger event may come before React re-renders, and then it must not start from the old view (that was the jump back)
+  const commitView = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } if (liveV.current) { viewRef.current = liveV.current; setView(liveV.current); liveV.current = null; } if (wrap.current) wrap.current.classList.remove('moving'); };
   const baseline = () => {
     stopGlide(); const pts = Object.values(ptrs.current); const v = { ...(liveV.current || viewRef.current) };
     if (!pts.length) return null;
@@ -448,17 +455,29 @@ function MapView({ scope }) {
       return { pinch: true, dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1, cx: (pts[0].x + pts[1].x) / 2 - r.left, cy: (pts[0].y + pts[1].y) / 2 - r.top, v }; }
     return { pinch: false, sx: pts[0].x, sy: pts[0].y, v };
   };
+  const panMoved = useRef(false);
   const onBgDown = e => {
-    if (e.target.closest('.node, .rackbox .u, .edge-hit')) return;
-    ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { }
+    const onItem = !!e.target.closest('.node, .rackbox .u, .edge-hit');
+    if (e.button > 0) return;                                                // right / middle button: not a pan (the context menu swallowed the release and the map then followed the mouse)
+    if (onItem && (edit || linking)) return;                                 // in the edit mode a card is dragged by itself
+    if (e.pointerType === 'mouse') Object.keys(ptrs.current).forEach(id => { delete ptrs.current[id]; });   // there is one mouse: an old press whose release was lost is not a «second finger» (that was a pinch to a random place)
+    if (!Object.keys(ptrs.current).length) panMoved.current = false;
+    ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, item: onItem };
+    if (!onItem) try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { }      // on a card: captured only once it moves, or the tap would not reach the card
     panRef.current = baseline();
-    if (Object.keys(ptrs.current).length === 1) { setSel(null); setFocus(null); }
+    if (Object.keys(ptrs.current).length === 1 && !onItem) { setSel(null); setFocus(null); }
   };
   const onBgMove = e => {
-    if (!ptrs.current[e.pointerId] || !panRef.current) return;
+    const p0 = ptrs.current[e.pointerId];
+    if (!p0 || !panRef.current) return;
+    if (e.pointerType === 'mouse' && e.buttons === 0) { onBgUp(e); return; }       // the button was let go outside the map: the pan is over
+    if (!panMoved.current) {
+      if (Math.hypot(e.clientX - p0.sx, e.clientY - p0.sy) < 4) return;       // a tap's tiny wobble is not a pan
+      panMoved.current = true;
+      Object.keys(ptrs.current).forEach(id => { try { e.currentTarget.setPointerCapture(+id); } catch (_) { } });
+    }
     e.preventDefault();
-    ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY };
+    ptrs.current[e.pointerId] = { ...p0, x: e.clientX, y: e.clientY };
     const pts = Object.values(ptrs.current); const b = panRef.current;
     if (b.pinch && pts.length >= 2) {
       const r = wrap.current.getBoundingClientRect();
@@ -468,7 +487,37 @@ function MapView({ scope }) {
       applyView({ k, x: cx - (b.cx - b.v.x) * k / b.v.k, y: cy - (b.cy - b.v.y) * k / b.v.k });
     } else if (!b.pinch) applyView({ ...b.v, x: b.v.x + e.clientX - b.sx, y: b.v.y + e.clientY - b.sy });
   };
-  const onBgUp = e => { delete ptrs.current[e.pointerId]; if (!Object.keys(ptrs.current).length) { commitView(); panRef.current = null; return; } panRef.current = baseline(); };
+  const onBgUp = e => { if (!ptrs.current[e.pointerId]) return; delete ptrs.current[e.pointerId]; if (!Object.keys(ptrs.current).length) { if (panMoved.current) dragEnd.current = Date.now(); commitView(); panRef.current = null; return; } panRef.current = baseline(); };
+  const upRef = useRef(null); upRef.current = onBgUp;
+  useEffect(() => {                                         // a release anywhere ends the gesture (over a panel, outside the window, after a card opened)
+    const up = e => upRef.current && upRef.current(e);
+    const gone = () => { if (!Object.keys(ptrs.current).length) return; Object.keys(ptrs.current).forEach(id => { delete ptrs.current[id]; }); upRef.current && upRef.current({ pointerId: -1 }); commitView(); panRef.current = null; };
+    window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up); window.addEventListener('blur', gone);
+    return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); window.removeEventListener('blur', gone); };
+  }, []);
+  /* the list of devices changes on its own (a phone joins Wi-Fi, a device goes offline, a client list opens): the cards move inside the layer.
+     The view is moved by the same step, so the card in the middle of the screen stays where it was — before, the whole map seemed to jump somewhere */
+  const prevPos = useRef(null);                            // where the cards were drawn last time (with a card being dragged in the edit mode)
+  useLayoutEffect(() => {
+    const pp = prevPos.current, np = L.pos;
+    const el = wrap.current, v = liveV.current || viewRef.current;
+    if (!pp || pp === np || !el || !v || animRef.current) return;
+    const cx = (el.clientWidth / 2 - v.x) / v.k, cy = (el.clientHeight / 2 - v.y) / v.k;
+    let id = revealRef.current && pp[revealRef.current] && np[revealRef.current] ? revealRef.current : null;
+    if (!id) { let bd = Infinity; for (const k in np) { const a = pp[k]; if (!a) continue; const d = Math.hypot(a.x + a.w / 2 - cx, a.y + a.h / 2 - cy); if (d < bd) { bd = d; id = k; } } }
+    if (!id) return;
+    const dx = (np[id].x - pp[id].x) * v.k, dy = (np[id].y - pp[id].y) * v.k;
+    if (Math.abs(dx) < .5 && Math.abs(dy) < .5) return;
+    const nv = { ...v, x: v.x - dx, y: v.y - dy };
+    if (liveV.current) {                                    // a gesture is going on: move it along, it goes on from the new place
+      liveV.current = nv; const tr = `translate(${nv.x},${nv.y}) scale(${nv.k})`;
+      if (gRef.current) gRef.current.setAttribute('transform', tr);
+      const gp = document.getElementById('mapgrid'); if (gp) gp.setAttribute('patternTransform', tr);
+      if (panRef.current) panRef.current = baseline();
+    } else { viewRef.current = nv; setView(nv); }
+  }, [L0]);
+  useLayoutEffect(() => { prevPos.current = L.pos; });
+  const wheelT = useRef(0);
   const zoomAt = (factor, cx, cy) => setView(v => {
     const W = wrap.current.clientWidth, H = wrap.current.clientHeight; cx = cx == null ? W / 2 : cx; cy = cy == null ? H / 2 : cy;
     const k = clampK(v.k * factor); return { k, x: cx - (cx - v.x) * k / v.k, y: cy - (cy - v.y) * k / v.k };
@@ -477,16 +526,34 @@ function MapView({ scope }) {
   const inPanel = e => e.target && e.target.closest && e.target.closest('.health-panel, .node-info, .rack-jump');
   const onWheel = e => {
     if (inPanel(e)) return;
-    e.preventDefault(); const r = wrap.current.getBoundingClientRect();
-    zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0025)), e.clientX - r.left, e.clientY - r.top);
+    e.preventDefault(); stopGlide(); const r = wrap.current.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top;
+    // the wheel / trackpad sends dozens of events a second: only the layer's transform per frame, the state once the wheel stops
+    const v = liveV.current || viewRef.current; if (!v) return;
+    const px = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1, dx = e.deltaX * px, dy = e.deltaY * px;
+    // a trackpad's two-finger swipe moves the map (small, smooth, often sideways deltas); a pinch (ctrl) and a mouse wheel's notches zoom
+    const pad = !e.ctrlKey && e.deltaMode === 0 && (dx !== 0 || Math.abs(dy) < 50 || !Number.isInteger(dy));
+    if (pad) applyView({ ...v, x: v.x - dx, y: v.y - dy });
+    else { const k = clampK(v.k * Math.exp(-Math.max(-300, Math.min(300, dy)) * (e.ctrlKey ? .01 : .0022)));
+      applyView({ k, x: cx - (cx - v.x) * k / v.k, y: cy - (cy - v.y) * k / v.k }); }
+    clearTimeout(wheelT.current); wheelT.current = setTimeout(() => { if (!panRef.current) commitView(); }, 220);
+  };
+  const gest = useRef(null);                                // Safari on a Mac: the trackpad pinch comes as gesture events, not ctrl+wheel
+  const onGesture = ev => {
+    if (inPanel(ev)) return; ev.preventDefault();
+    if (Object.keys(ptrs.current).length) return;           // on a phone the fingers are already handled as pointers
+    const r = wrap.current.getBoundingClientRect(), cx = ev.clientX - r.left, cy = ev.clientY - r.top;
+    if (ev.type === 'gesturestart') { stopGlide(); gest.current = { ...(liveV.current || viewRef.current) }; return; }
+    const b = gest.current; if (!b) return;
+    if (ev.type === 'gestureend') { gest.current = null; commitView(); return; }
+    const k = clampK(b.k * ev.scale); applyView({ k, x: cx - (cx - b.x) * k / b.k, y: cy - (cy - b.y) * k / b.k });
   };
   useEffect(() => {
     const el = wrap.current; if (!el) return;
-    const stop = ev => { if (!inPanel(ev)) ev.preventDefault(); };     // block Safari page zoom gestures on the map
+    const stop = ev => { if (!inPanel(ev)) ev.preventDefault(); };     // block page scroll / zoom on the map
     el.addEventListener('wheel', onWheel, { passive: false });
-    el.addEventListener('gesturestart', stop); el.addEventListener('gesturechange', stop);
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => el.addEventListener(t, onGesture));
     el.addEventListener('touchmove', stop, { passive: false });
-    return () => { el.removeEventListener('wheel', onWheel); el.removeEventListener('gesturestart', stop); el.removeEventListener('gesturechange', stop); el.removeEventListener('touchmove', stop); };
+    return () => { el.removeEventListener('wheel', onWheel); ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => el.removeEventListener(t, onGesture)); el.removeEventListener('touchmove', stop); };
   }, [wrap.current, !!view]);
 
   // node drag in edit mode
@@ -506,9 +573,11 @@ function MapView({ scope }) {
       });
       return { np: [nx, ny], gx, gy };
     };
-    const move = ev => { moved = true; const r = at(ev); setDragPos(d => ({ ...d, [id]: r.np })); setGuides({ x: r.gx, y: r.gy }); };
+    let raf = 0, lastEv = null;
+    const move = ev => { moved = true; lastEv = ev; if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; const r = at(lastEv); setDragPos(d => ({ ...d, [id]: r.np })); setGuides({ x: r.gx, y: r.gy }); }); };
     const up = ev => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setGuides(null);
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); cancelAnimationFrame(raf); setGuides(null);
       if (moved) dragEnd.current = Date.now();
       if (moved) saveMap({ positions: { ...(data.map.positions || {}), [id]: at(ev).np } });
     };
@@ -573,6 +642,7 @@ function MapView({ scope }) {
   const [racksOpen, setRacksOpen] = useState(false);
   const anyCollapsedOpen = Object.values(collapsed).some(v => v === false);
   if (!view) return <div className="map-wrap" ref={wrap} />;
+  const tv = liveV.current || (animRef.current && animV.current) || view;      // the view the layer is really at (a gesture or a glide may be running)
   return <div className={'map-wrap' + (scope ? ' scoped' : '')} ref={wrap}>
     <WorkMenu title={scope ? 'Сеть дома' : 'Карта сети'}>
       <WorkSec title="Найти и перейти">
@@ -595,7 +665,8 @@ function MapView({ scope }) {
       <div className="map-search"><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" autoFocus /></div>
       <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFindOpen(false); }} /></div></div> : null}
     {scope && !Object.keys(L.nodes).length ? <div className="live-msg hint plan-ovl">В этом доме пока нет устройств. Откройте дом и поставьте на этажи оборудование и шкафы — они появятся здесь вместе с цепочкой до роутера и интернета.</div> : null}
-    {scope ? <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" onClick={scope.back}>{scope.backLabel || 'К дому'}</Btn><b className="ellipsis">Сеть дома · {scope.title}</b>
+    {scope ? <AuBack fn={scope.back} label={scope.backLabel || 'К дому'} /> : null}
+    {scope ? <div className="plan-ctx plan-ovl"><Btn size="sm" icon="chevronLeft" className="au-inpage-back" onClick={scope.back}>{scope.backLabel || 'К дому'}</Btn><b className="ellipsis">Сеть дома · {scope.title}</b>
       {scope.openHouse ? <Btn size="sm" icon="home" onClick={scope.openHouse}>Дом</Btn> : null}</div> : null}
     {racksOpen && ((L.racks || []).length + (L.rooms || []).length) > 1 ? <div className="map-panel rack-jump">
       <span className="rack-jump-title">Шкафы и места</span>
@@ -607,10 +678,10 @@ function MapView({ scope }) {
     </div> : null}
     {linking ? <div className="toast" style={{ position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }}>
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
-    <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} className={panRef.current ? 'panning' : ''}>
-      {edit ? <><defs><pattern id="mapgrid" width={MAP_GRID} height={MAP_GRID} patternUnits="userSpaceOnUse" patternTransform={`translate(${view.x},${view.y}) scale(${view.k})`}><circle cx="1" cy="1" r="1" fill="var(--text3)" opacity=".35" /></pattern></defs>
+    <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} onLostPointerCapture={onBgUp} className={panRef.current ? 'panning' : ''}>
+      {edit ? <><defs><pattern id="mapgrid" width={MAP_GRID} height={MAP_GRID} patternUnits="userSpaceOnUse" patternTransform={`translate(${tv.x},${tv.y}) scale(${tv.k})`}><circle cx="1" cy="1" r="1" fill="var(--text3)" opacity=".35" /></pattern></defs>
         <rect width="100%" height="100%" fill="url(#mapgrid)" pointerEvents="none" /></> : null}
-      <g ref={gRef} transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+      <g ref={gRef} transform={`translate(${tv.x},${tv.y}) scale(${tv.k})`}>
         {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={setSel} /> : null}
         {(L.headers || []).map(h => <g key={h.label} pointerEvents="none"><text x={h.x + 4} y={h.y + 16} fontSize="15" fontWeight="700" fill="var(--text)">{trunc(h.label, 28)}</text>
           <text x={h.x + 4} y={h.y + 34} fontSize="11.5" fill="var(--text3)">{h.count} {ruPlural(h.count, 'устройство', 'устройства', 'устройств')}</text><rect x={h.x} y={h.y + 40} width={h.w} height={2} rx={1} fill="var(--accent)" opacity=".5" /></g>)}

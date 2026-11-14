@@ -240,7 +240,120 @@ function InstallerPlugin({ p, device, reload, openPlugin }) {
     </div>
     {!ready && !p.installed ? <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка станет активной, когда все пункты выше будут отмечены зелёным.</div> : null}
     {result ? <PluginResult r={result} openPlugin={openPlugin} /> : null}
+    {['forkop', 'tachyon', 'podkop'].includes(p.id) && p.installed ? <ForkopSplit device={device} pid={p.id} title={p.title} /> : null}
   </>;
+}
+
+/* «Раздельный VPN» for Forkop / Tachyon / Podkop (rackd/forkop_split.py, rackd/vpn_engines.py): paste an AmneziaWG / WireGuard config,
+   server links or a subscription. Mode «split» — Russian sites straight, everything else of the router's network through it;
+   mode «sites» — only the ticked lists (blocked in Russia, YouTube…) and own domains through it. Several servers — auto pick of the fastest.
+   Keys and links are not kept by Rack Live. */
+function ForkopSplit({ device, pid = 'forkop', title = 'Forkop' }) {
+  const toast = useToast(); const confirm = useConfirm(); const { refresh } = useApp();
+  const [st, setSt] = useState(null);
+  const [text, setText] = useState('');
+  const [net, setNet] = useState('');
+  const [replace, setReplace] = useState(true);
+  const [mode, setMode] = useState('split');
+  const [lists, setLists] = useState(['russia_inside']);
+  const [domains, setDomains] = useState('');
+  const [auto, setAuto] = useState(true);
+  const [prev, setPrev] = useState(null);
+  const [job, setJob] = useState(null);
+  const [res, setRes] = useState(null);
+  const fileRef = useRef(null);
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: pid, ...body } });
+  const load = () => call({ op: 'split_status' }).then(setSt).catch(e => setSt({ error: e.message }));
+  useEffect(() => { load(); }, [device.id, pid]);
+  const allLists = (st && st.lists) || [];
+  const ruAll = lists.includes('russia_inside');
+  const PODKOP_RU = ['russia_inside', 'meta', 'twitter', 'discord', 'telegram', 'cloudflare', 'google_ai', 'google_play', 'roblox'];
+  const inside = id => pid === 'podkop' && ruAll && !PODKOP_RU.includes(id);       // Podkop: already in «всё заблокированное»
+  const tick = id => setLists(l => l.includes(id) ? l.filter(x => x !== id) : [...l, id]);
+  const many = prev && !prev.error && (prev.type === 'subscription' || (prev.type === 'links' && prev.count > 1));
+  const preview = async (v, n = net) => { setText(v); setRes(null); if (!v.trim()) return setPrev(null);
+    try { setPrev((await call({ op: 'split_preview', text: v, net: n })).preview); } catch (e) { setPrev({ error: e.message }); } };
+  const onFile = e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; const r = new FileReader(); r.onload = () => preview(String(r.result || '')); r.readAsText(f); };
+  useEffect(() => {
+    if (!job || job.done) return;
+    const t = setInterval(async () => {
+      try { const j = await call({ op: 'job', job: job.id }); setJob(x => ({ ...x, ...j }));
+        if (j.done) { toast(j.error ? 'Не получилось: ' + j.error : j.result.message, !!j.error); setRes(j.error ? { error: j.error } : j.result);
+          if (!j.error) { setText(''); setPrev(null); if (j.result.split) setSt(j.result.split); } refresh(); } } catch (e) { }
+    }, 2500);
+    return () => clearInterval(t);
+  }, [job && job.id, job && job.done]);
+  const others = (st && st.sections || []).filter(s => !s.ours);
+  const apply = async () => {
+    const what = prev.type === 'tunnel' ? `туннель ${prev.kind === 'amneziawg' ? 'AmneziaWG' : 'WireGuard'} «${prev.name}» (${prev.server})`
+      : prev.type === 'links' ? `серверы по ссылкам (${prev.count})` : `подписку ${prev.host}`;
+    const picked = allLists.filter(x => lists.includes(x.id) && !inside(x.id)).map(x => x.label);
+    const doms = domains.split(/[\s,;]+/).filter(Boolean).length;
+    const how = mode === 'split' ? `российские сайты — напрямую, всё остальное для сети ${net || (st && st.lan) || 'роутера'} — через ${what}`
+      : `через ${what} пойдут: ${[...picked, ...(doms ? [`свои сайты (${doms})`] : [])].join(', ')}; остальное — напрямую`;
+    const txt = `Настроить ${title}: ${how}?`
+      + (replace && others.length ? ` Текущие секции ${title} будут заменены: ${others.map(s => '«' + s.name + '»').join(', ')}.` : '')
+      + (pid === 'podkop' && prev.type === 'tunnel' ? ` Rack Live создаст на роутере интерфейс rl_awg${!st.awgProto && prev.kind === 'amneziawg' ? ' и попробует поставить пакеты AmneziaWG' : ''}.` : '')
+      + ` Копия прежних настроек останется на роутере; если ${title} не запустится, Rack Live вернёт их сам. Интернет мигнёт на несколько секунд.`;
+    if (!(await confirm(txt, { title: 'Раздельный VPN', ok: 'Настроить' }))) return;
+    setRes(null);
+    try { const r = await call({ op: 'split_apply', text, net, replace, mode, lists, domains, auto });
+      if (r.job) setJob({ id: r.job, stage: 'Запуск…', done: false });
+      else { toast(r.message); setRes(r); setText(''); setPrev(null); if (r.split) setSt(r.split); }
+    } catch (e) { toast(e.message, true); setRes({ error: e.message }); }
+  };
+  const running = job && !job.done;
+  return <div className="awg-form" style={{ marginTop: 14 }}>
+    <div className="card-title">Раздельный VPN</div>
+    <div className="dim" style={{ fontSize: 12.5 }}>Вставьте конфиг AmneziaWG / WireGuard, ссылки на серверы (vless://, vmess://, trojan://, ss://, hysteria2://, tuic:// — по одной в строке)
+      или ссылку на подписку и выберите, что пускать через VPN. Ключи и ссылки Rack Live у себя не хранит.</div>
+    <Seg value={mode} onChange={setMode} options={[{ value: 'split', label: 'Россия напрямую, остальное через VPN' }, { value: 'sites', label: 'Через VPN только выбранные сайты' }]} />
+    {st && st.error ? <div className="err-note">{st.error}</div> : null}
+    {st && st.applied ? <div className="plugin-result"><div className="row" style={{ gap: 8 }}><Icon name="check" size={18} />
+      <div className="grow"><b>Уже настроено Rack Live</b>{st.running ? ` · ${title} работает` : ` · ${title} не запущен`}
+        <div className="dim" style={{ fontSize: 12.5 }}>Вставьте новый конфиг или ссылки ниже, чтобы заменить VPN.</div></div></div></div> : null}
+    {others.length ? <div className="dim3" style={{ fontSize: 12.5 }}>Сейчас в {title}: {others.map(s => `«${s.name}»${s.action === 'bypass' ? ' (напрямую)' : s.action === 'connection' ? ' (через сервер)' : ''}`).join(', ')}</div> : null}
+    {mode === 'sites' ? <div className="col" style={{ gap: 6 }}>
+      <div className="dim" style={{ fontSize: 12.5 }}>Что пойдёт через VPN (всё остальное — напрямую):</div>
+      <div className="split-lists">{allLists.map(x => <label key={x.id} className={'check-row' + (inside(x.id) ? ' dim3' : '')}>
+        <input type="checkbox" checked={lists.includes(x.id) || inside(x.id)} disabled={inside(x.id)} onChange={() => tick(x.id)} />
+        <span><b style={{ fontWeight: x.id === 'russia_inside' ? 700 : 500 }}>{x.label}</b>{x.hint ? <span className="dim3"> — {x.hint}</span> : null}
+          {inside(x.id) ? <span className="dim3"> · уже входит</span> : null}</span></label>)}</div>
+      <Field label="Свои сайты" hint="По одному в строке или через пробел: example.com — со всеми поддоменами.">
+        <textarea className="input mono" rows={3} value={domains} placeholder={'chatgpt.com\nopenai.com'} onChange={e => setDomains(e.target.value)} style={{ fontSize: 12 }} /></Field>
+    </div> : <div className="dim3" style={{ fontSize: 12.5 }}>Российские сайты (.ru .su .рф и российские сервисы на других доменах) — напрямую, всё остальное от устройств сети — через VPN.</div>}
+    <div className="row wrap" style={{ gap: 8 }}>
+      <Btn icon="upload" onClick={() => fileRef.current.click()}>Файл .conf</Btn>
+      <span className="dim3" style={{ fontSize: 12.5 }}>или вставьте текст ниже</span>
+      <input ref={fileRef} type="file" accept=".conf,.txt,text/plain" style={{ display: 'none' }} onChange={onFile} />
+    </div>
+    <textarea className="input mono" rows={5} value={text} placeholder={'[Interface]\nPrivateKey = …\n[Peer]\nEndpoint = …\n\nили vless://…  или https://подписка'}
+      onChange={e => setText(e.target.value)} onBlur={() => preview(text)} style={{ fontSize: 12 }} />
+    {prev && prev.error ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{prev.error}</div> : null}
+    {prev && !prev.error ? <div className="awg-prev">
+      {prev.type === 'tunnel' ? <KV rows={[['Тип', prev.kind === 'amneziawg' ? `AmneziaWG (параметров обфускации: ${prev.awgFields})` : 'WireGuard'], ['Название', prev.name],
+        ['Сервер', <span className="mono">{prev.server}</span>], ['Адрес в туннеле', <span className="mono">{prev.address}</span>], ...(prev.mtu ? [['MTU', prev.mtu]] : []),
+        ...(prev.psk ? [['Общий ключ (PSK)', 'есть']] : []), ...(prev.dns ? [['DNS из конфига', <span className="dim">не используется — DNS остаётся у {title}</span>]] : [])]} />
+        : prev.type === 'links' ? <KV rows={prev.links.map(l => [l.name, <span className="mono">{l.scheme}://{l.host}</span>])} />
+        : <KV rows={[['Подписка', <span className="mono">{prev.host}</span>], ['Обновление', pid === 'podkop' ? 'Podkop подписки не умеет — Rack Live прочитает её один раз и запишет серверы' : pid === 'tachyon' ? 'каждые 12 часов' : 'раз в сутки']]} />}
+      {pid === 'podkop' && prev.type === 'tunnel' ? <div className="dim3" style={{ fontSize: 12 }}>Podkop работает с AmneziaWG / WireGuard через отдельный интерфейс — Rack Live создаст его (rl_awg){prev.kind === 'amneziawg' && st && !st.awgProto ? '; пакетов AmneziaWG на роутере нет — попробую поставить' : ''}.</div> : null}
+      {prev.ipv6Skipped ? <div className="dim3" style={{ fontSize: 12 }}>IPv6-адрес из конфига пропущен — туннель будет работать по IPv4.</div> : null}
+    </div> : null}
+    {many ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={pid === 'forkop' || auto} onChange={v => pid !== 'forkop' && setAuto(v)} disabled={pid === 'forkop'} />
+      <div className="grow"><div>Авто — самый быстрый сервер</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>{pid === 'forkop' || auto ? `${title} сам проверяет серверы каждые 3 минуты, берёт самый быстрый и переключается, если он упадёт.`
+          : `Серверы будут списком — какой включить, выберете в панели ${title}.`}</div></div></div> : null}
+    {mode === 'split' ? <Field label="Сеть, которая пойдёт через VPN" hint={`Пусто — вся сеть роутера${st && st.lan ? ' (' + st.lan + ')' : ''}. Можно указать свою, например 192.168.1.0/24.`}>
+      <input className="input mono" value={net} placeholder={(st && st.lan) || '192.168.1.0/24'} onChange={e => setNet(e.target.value)} onBlur={() => text.trim() && preview(text, net)} /></Field> : null}
+    {others.length ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={replace} onChange={setReplace} />
+      <div className="grow"><div>Заменить текущие секции {title}</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>{replace ? `Старые секции, туннели и ссылки уберутся — останется только эта схема (общие настройки ${title} не трогаются).`
+          : 'Старые секции останутся — они могут перехватывать трафик раньше новых.'}</div></div></div> : null}
+    <Btn kind="primary" busy={running} disabled={!prev || !!prev.error || running || (mode === 'sites' && !lists.length && !domains.trim())} onClick={apply} style={{ padding: 12 }}>
+      {running ? (job.stage || 'Настраиваю…') : st && st.applied ? 'Заменить VPN' : 'Настроить VPN'}</Btn>
+    {res ? res.error ? <div className="err-note">{res.error}</div>
+      : <div className="plugin-result"><div className="row" style={{ gap: 8 }}><Icon name="check" size={18} /><div className="grow">{res.message}</div></div></div> : null}
+  </div>;
 }
 
 /* VLESS on a Keenetic from a pasted link (rackd/keenetic_vless.py): XKeen or AWG Manager. The link is not stored: after a change it is pasted again. */
@@ -475,7 +588,19 @@ function ModemPlugin({ p, device, reload }) {
     finally { setBusy(''); }
   };
   const sug = (p.profiles || []).find(m => m.suggested);
+  const modeswitch = async () => {
+    setBusy('ms'); setResult(null);
+    try { const r = await api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'modem', op: 'modeswitch' } });
+      setResult({ ...r, kept: true }); toast(r.message || r.error, !r.ok); reload(); }
+    catch (e) { setResult({ error: e.message, kept: true }); toast(e.message, true); }
+    finally { setBusy(''); }
+  };
   return <>
+    {(p.storage || []).length ? <div className="awg-prev" style={{ padding: '10px 12px', fontSize: 13.5, lineHeight: 1.45, borderColor: 'var(--orange, #ff9f0a)' }}>
+      <b>Модем включился как флешка</b> ({p.storage.map(s => s.name).join('; ')}). Так многие 4G-модемы показывают диск с драйверами,
+      сетевой карты пока нет — интерфейс создать не на чем. Rack Live переключит его в режим модема и запишет правило, чтобы после перезагрузки это происходило само.
+      <div style={{ marginTop: 8 }}><Btn size="sm" kind="primary" icon="refresh" busy={busy === 'ms'} disabled={!!busy} onClick={modeswitch}>Переключить в режим модема</Btn></div>
+    </div> : null}
     <div className="awg-prev" style={{ padding: '10px 12px', fontSize: 13.5, lineHeight: 1.45 }}>
       {(p.usb || []).length ? <><b>Подключено к USB:</b> {p.usb.join('; ')}
         {(p.drivers || []).length ? <div className="dim" style={{ fontSize: 12.5 }}>Работающие драйверы: {p.drivers.join(', ')}{(p.devs || []).length ? ' · ' + p.devs.join(', ') : ''}</div> : null}
@@ -494,7 +619,90 @@ function ModemPlugin({ p, device, reload }) {
     <div className="row"><Btn size="sm" icon="refresh" onClick={reload}>Обновить</Btn>
       <span className="dim3" style={{ fontSize: 12.5 }}>Не заработало — удалите вариант и попробуйте следующий; иногда помогает переподключить модем.</span></div>
     {result ? <PluginResult r={result} /> : null}
+    {p.net ? <ModemNet key={(p.net.iface || {}).name + ':' + p.net.prio + ':' + p.net.pick} p={p} device={device} reload={reload} /> : null}
   </>;
+}
+
+/* USB-modem add-on: the router interface for the modem (by the installed driver variant) and who wins the internet — the modem or the cable */
+const MODEM_PROTO_T = { hilink: 'DHCP-клиент', mm: 'ModemManager', qmi: 'QMI', ppp: 'UMTS/3G (PPP)' };
+const MODEM_DEV_T = { hilink: 'Сетевая карта модема', mm: 'Модем (USB-устройство)', qmi: 'Порт управления', ppp: 'Последовательный порт' };
+function ModemNet({ p, device, reload }) {
+  const toast = useToast(); const confirm = useConfirm(); const { refresh } = useApp();
+  const n = p.net, cur = n.iface, wan = n.wan;
+  const inst = (p.profiles || []).filter(m => m.installed);
+  const [prof, setProf] = useState(n.pick || (inst[0] || {}).id || '');
+  const cands = (n.cands || {})[prof] || [];
+  const devOf = pf => (cur && cur.profile === pf && cur.device) || ((n.cands || {})[pf] || [])[0] || '';
+  const [dev, setDev] = useState(devOf(n.pick));
+  const [apn, setApn] = useState((cur && cur.apn) || '');
+  const [pin, setPin] = useState('');
+  const [prio, setPrio] = useState(n.prio === 'main' ? 'main' : 'backup');
+  const [busy, setBusy] = useState('');
+  const [stage, setStage] = useState('');
+  const [result, setResult] = useState(null);
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'modem', ...body } });
+  const pickProf = v => { setProf(v); setDev(devOf(v)); };
+  const go = async (op, body, text, ok, danger) => {
+    if (!(await confirm(text, { title: 'Интерфейс модема', ok, danger }))) return;
+    setBusy(op); setResult(null); setStage('');
+    try {
+      let r = await call({ op, ...body });
+      if (r.job) {
+        const id = r.job; r = { ok: false, error: 'роутер долго не отвечает — нажмите «Обновить»' };
+        for (let i = 0; i < 60; i++) {
+          await new Promise(res => setTimeout(res, 2000));
+          let j; try { j = await call({ op: 'job', job: id }); } catch (e) { continue; }
+          if (j.stage) setStage(j.stage);
+          if (j.done) { r = j.error ? { ok: false, error: j.error, message: j.error } : { ...(j.result || {}), ok: (j.result || {}).ok !== false }; break; }
+        }
+      }
+      setResult(r); toast(r.message || 'Готово', r.ok === false); reload(); refresh();
+    } catch (e) { setResult({ error: e.message }); toast(e.message, true); }
+    finally { setBusy(''); setStage(''); }
+  };
+  const needApn = prof && prof !== 'hilink';
+  const save = () => go('iface', { profile: prof, device: dev, apn: needApn ? apn : '', pin: needApn ? pin : '', prio },
+    `${cur ? 'Перенастроить' : 'Создать'} интерфейс «${(cur && cur.name) || 'modem'}»: ${MODEM_PROTO_T[prof]}, ${dev}${needApn ? ', APN ' + apn : ''}, зона wan. `
+    + (prio === 'main' ? 'Модем станет основным каналом, кабель — запасным. ' : 'Кабель останется основным, модем — запасной. ')
+    + 'Сеть роутера перезапустится — интернет пропадёт на несколько секунд.', cur ? 'Сохранить' : 'Создать');
+  const setOnlyPrio = () => go('prio', { prio }, prio === 'main' ? 'Сделать модем основным каналом, а кабель — запасным? Интернет мигнёт на пару секунд.'
+    : 'Сделать кабель основным, а модем — запасным? Интернет мигнёт на пару секунд.', 'Применить');
+  const remove = () => go('iface_remove', {}, `Удалить интерфейс «${cur.name}»? Драйверы останутся, проводной WAN вернётся к прежнему приоритету.`, 'Удалить', true);
+  const live = x => x ? (x.up ? <span className="badge online">в сети{x.ip ? ' · ' + x.ip : ''}</span> : <span className="badge offline">не в сети</span>) : null;
+  if (!inst.length) return null;
+  return <div className="card pad" style={{ background: 'var(--fill)', border: 0, marginTop: 4 }}>
+    <div className="card-title" style={{ marginBottom: 6 }}>Дополнение: интерфейс и приоритет</div>
+    <div className="col" style={{ gap: 4, fontSize: 13.5 }}>
+      <div className="row wrap" style={{ gap: 6 }}><span className="dim" style={{ minWidth: 92 }}>Модем</span>
+        {cur ? <><b>{cur.name}</b><span className="dim">{MODEM_PROTO_T[cur.profile] || cur.proto} · {cur.ifname || cur.device} · метрика {cur.metric}</span>{live(cur)}</>
+          : <span className="dim">интерфейса ещё нет</span>}</div>
+      <div className="row wrap" style={{ gap: 6 }}><span className="dim" style={{ minWidth: 92 }}>Кабель (WAN)</span>
+        {wan ? <><b>wan</b><span className="dim">{wan.device} · метрика {wan.metric}</span>{live(wan)}</> : <span className="dim">интерфейса wan нет</span>}</div>
+      {cur && wan ? <div style={{ marginTop: 2 }}>Сейчас: <b>{n.prio === 'main' ? 'модем — основной, кабель — запасной' : n.prio === 'backup' ? 'кабель — основной, модем — запасной' : 'приоритет одинаковый — роутер выберет сам'}</b></div> : null}
+    </div>
+    <div className="col" style={{ gap: 10, marginTop: 10 }}>
+      {inst.length > 1 ? <Field label="Драйверы"><Seg value={prof} onChange={pickProf} options={inst.map(m => ({ value: m.id, label: MODEM_PROTO_T[m.id] }))} /></Field> : null}
+      <Field label={MODEM_DEV_T[prof] || 'Устройство'} hint={cands.length ? null : 'Rack Live не нашёл подходящее устройство — модем вставлен? Можно вписать вручную.'}>
+        {cands.length ? <select className="select" value={dev} onChange={e => setDev(e.target.value)}>
+          {[...new Set([...cands, ...(dev && !cands.includes(dev) ? [dev] : [])])].map(c => <option key={c} value={c}>{c}</option>)}</select>
+          : <input className="input mono" value={dev} onChange={e => setDev(e.target.value.trim())} placeholder={prof === 'hilink' ? 'usb0' : prof === 'qmi' ? '/dev/cdc-wdm0' : prof === 'ppp' ? '/dev/ttyUSB0' : '/sys/devices/…'} />}
+      </Field>
+      {needApn ? <Field label="APN оператора" hint="Точка доступа SIM-карты. Не знаете — выберите оператора.">
+        <input className="input mono" value={apn} onChange={e => setApn(e.target.value.trim())} placeholder="internet" />
+        <div className="row wrap" style={{ gap: 4, marginTop: 6 }}>{(n.apns || []).map(a => <Btn key={a.id} size="sm" kind={apn === a.id ? 'primary' : ''} onClick={() => setApn(a.id)}>{a.label}</Btn>)}</div>
+      </Field> : null}
+      {needApn ? <Field label="PIN SIM-карты" hint="Только если на SIM включён PIN-код; обычно пусто."><input className="input mono" style={{ maxWidth: 140 }} inputMode="numeric" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))} /></Field> : null}
+      <Field label="Приоритет" hint={wan ? 'Работает основной канал; пропал он (кабель вынут, модем отключён) — роутер сам уходит на запасной и возвращается, когда основной снова в сети. Если кабель воткнут, но у провайдера нет интернета, переключения не будет.' : 'Проводного WAN нет — приоритет ни на что не влияет.'}>
+        <Seg value={prio} onChange={setPrio} options={[{ value: 'main', label: 'Модем выше кабеля' }, { value: 'backup', label: 'Модем ниже кабеля' }]} /></Field>
+      {stage ? <div className="dim" style={{ fontSize: 12.5 }}>{stage}</div> : null}
+      <div className="row wrap" style={{ gap: 6 }}>
+        <Btn kind="primary" icon={cur ? 'check' : 'plus'} busy={busy === 'iface'} disabled={!!busy || !prof || !dev || (needApn && !apn)} onClick={save}>{cur ? 'Сохранить интерфейс' : 'Создать интерфейс'}</Btn>
+        {cur && wan && prio !== n.prio ? <Btn icon="refresh" busy={busy === 'prio'} disabled={!!busy} onClick={setOnlyPrio}>Только приоритет</Btn> : null}
+        {cur ? <Btn kind="danger" icon="trash" busy={busy === 'iface_remove'} disabled={!!busy} onClick={remove}>Удалить интерфейс</Btn> : null}
+      </div>
+    </div>
+    {result ? <PluginResult r={result} /> : null}
+  </div>;
 }
 
 /* VPS panels (3x-ui, Remnawave): optional domain (waits for the A record), optional inbounds + test user; installs as a background job */

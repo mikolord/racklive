@@ -13,6 +13,7 @@ import ipaddress, re, socket, threading, time
 
 from . import plugins
 
+HUB_CACHE = {}          # device id -> (time, its hubs): the last good answer
 HUBS_WAIT = 20        # seconds the plugin card waits for the Keenetic routers it can use as a hub
 
 STATUS = r'''command -v wg >/dev/null 2>&1 && echo "@@wg 1"
@@ -108,6 +109,9 @@ def apply_script(ip, hub_pub, ep_ip, port, domain, allowed, alt=''):
              'uci set network.rl_wg=interface', 'uci set network.rl_wg.proto=wireguard', 'uci set network.rl_wg.private_key="$K"',
              f'uci add_list network.rl_wg.addresses={_q(ip + "/32")}', f'uci set network.rl_wg.rl_domain={_q(domain or "")}',
              f'uci set network.rl_wg.rl_public={_q(ep_ip)}', f'uci set network.rl_wg.rl_alt={_q(alt or "")}', f'uci set network.rl_wg.ip4table={TABLE}',
+             # no pinned route to the hub: with two uplinks (cable + USB modem) netifd would tie it to whichever came up first, and a stale
+             # 192.168.1.1-via-modem route cut the router off its home gateway after a reboot (Matiz, 12.11.2026)
+             'uci set network.rl_wg.nohostroute=1',
              # start with the home address when the router sits right behind the hub (its gateway IS the hub): the public one does not loop back from inside
              f"EP={_q(ep_ip)}; GW=$(ip -4 route show default | awk '{{print $3; exit}}'); [ -n {_q(alt or '')} ] && [ \"$GW\" = {_q(alt or '-')} ] && EP={_q(alt or '')}",
              'uci -q delete network.rl_wgrule || true',             # (older version) — with ip4table the network service adds «from <tunnel address> lookup TABLE» itself
@@ -243,8 +247,12 @@ def hubs(app):
         try:
             found[k['id']] = [dict(h, id=f"{k['id']}:{h['iface']}", device=k['id'], deviceName=k.get('name') or 'Keenetic', kind='keenetic', used=len(h['used']),
                                    peers=len(h['peers']), reach=h['domain'] or h['wan']) for h in REGISTRY['keenetic'].wg_hubs(k)]
+            HUB_CACHE[k['id']] = (time.time(), found[k['id']])
         except Exception as e:
-            found[k['id']] = [{'id': f"{k['id']}:", 'device': k['id'], 'deviceName': k.get('name') or 'Keenetic', 'kind': 'keenetic', 'error': str(e)[:160]}]
+            # a router that answered a minute ago is still offered (a login hiccup must not hide the hub); connecting asks it live and reports the real reason
+            last = HUB_CACHE.get(k['id'])
+            found[k['id']] = [dict(h, stale=True) for h in last[1]] if last and time.time() - last[0] < 86400 else \
+                [{'id': f"{k['id']}:", 'device': k['id'], 'deviceName': k.get('name') or 'Keenetic', 'kind': 'keenetic', 'error': str(e)[:160]}]
     # together and with a limit: a slow or silent router is one line in the card, it must not leave every OpenWrt's plugins loading forever
     ts = [threading.Thread(target=ask, args=(k,), daemon=True) for k in routers]
     for t in ts:

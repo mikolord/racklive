@@ -23,11 +23,15 @@ function coverageRatio(v, scale) {
   if(v==null || scale.best==null) return null;
   return Math.max(0,Math.min(1,scale.metric==='signal' ? 1-(scale.best-v)/30 : scale.best>0 ? v/scale.best : 0));
 }
+/* weak → strong: white on a dark theme / near-black on a light one (it stands out from the background), then light blue, then bright blue */
+const coverageDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+function coverageStops() { return [[0, coverageDark() ? [244,246,250] : [38,40,48]], [.5, [120,200,255]], [1, [10,110,255]]]; }
 function coverageColor(v, scale) {
     const k=coverageRatio(v,scale); if(k==null)return [142,142,147];
-    const a=k<.5?[255,69,58]:[255,214,10], b=k<.5?[255,214,10]:[48,209,88], t=k<.5?k*2:(k-.5)*2;
-    return a.map((c,i)=>Math.round(c+(b[i]-c)*t));
+    const S=coverageStops(), i=Math.max(1,S.findIndex(s=>k<=s[0])), [k0,a]=S[i-1], [k1,b]=S[i], t=Math.max(0,Math.min(1,(k-k0)/(k1-k0)));
+    return a.map((c,j)=>Math.round(c+(b[j]-c)*t));
 }
+const coverageInk = rgb => (rgb[0]*.299+rgb[1]*.587+rgb[2]*.114) < 150 ? '#ffffff' : '#101820';      // text on a dark blue label is white
 const coverageCross = (a,b,p) => (b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);
 function coverageWeights(p,a,b,c) {
   const den=coverageCross(a,b,c);
@@ -110,4 +114,34 @@ function coverageRaster(mesh, metric) {
   });
   ctx.putImageData(img,0,0);
   return {x,y,w:width*step,h:height*step,url:canvas.toDataURL('image/png')};
+}
+
+/* «Waves»: the signal spreads from every measured point in circles and fills the WHOLE room it was measured in (the walls stop it).
+   The field is the best of the points (a point's value minus what the distance costs), cut into bands — each band edge is a ring. */
+function coverageWaveRasters(mesh, metric, rooms) {
+  const scale=coverageScale(mesh,metric), BANDS=6, out=[];
+  if(!mesh.samples.length) return out;
+  const est=(s,d)=>metric==='signal' ? s.v-.1*d : s.v/(1+d/220);
+  rooms.forEach((room,ri)=>{
+    const own=mesh.samples.filter(s=>coverageRoom(s,rooms)===ri); if(!own.length) return;
+    const step=Math.max(room.w,room.h)/240, width=Math.max(1,Math.ceil(room.w/step)), height=Math.max(1,Math.ceil(room.h/step));
+    const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+    const ctx=canvas.getContext('2d');if(!ctx)return;
+    const band=new Int8Array(width*height);
+    for(let iy=0;iy<height;iy++)for(let ix=0;ix<width;ix++){
+      const px=room.x+(ix+.5)*step, py=room.y+(iy+.5)*step; let best=-Infinity;
+      own.forEach(s=>{const v=est(s,Math.hypot(px-s.x,py-s.y)); if(v>best)best=v});
+      const k=coverageRatio(best,scale); band[iy*width+ix]=Math.max(0,Math.min(BANDS-1,Math.floor((k==null?0:k)*BANDS)));
+    }
+    const img=ctx.createImageData(width,height), at=(ix,iy)=>ix<0||iy<0||ix>=width||iy>=height?-1:band[iy*width+ix];
+    for(let iy=0;iy<height;iy++)for(let ix=0;ix<width;ix++){
+      const b=band[iy*width+ix], i=(iy*width+ix)*4, rgb=coverageColor((b+.5)/BANDS,{best:1,metric:'speed'});
+      const edge=at(ix+1,iy)!==b||at(ix,iy+1)!==b;
+      rgb.forEach((c,j)=>img.data[i+j]=edge?Math.round(c+(255-c)*.3):c);
+      img.data[i+3]=edge?225:Math.round(70+b*16);
+    }
+    ctx.putImageData(img,0,0);
+    out.push({key:room.id||ri,x:room.x,y:room.y,w:room.w,h:room.h,url:canvas.toDataURL('image/png')});
+  });
+  return out;
 }

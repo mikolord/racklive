@@ -142,7 +142,8 @@ function BackupsTab({ device }) {
       <div className="list backup-list">{vers.map(v => <div role="button" tabIndex={0} key={v.t} className={'li backup-v' + (sel === v.t ? ' on' : '')} onClick={() => setSel(v.t)}>
         <div className="grow" style={{ textAlign: 'left' }}><b style={{ fontSize: 13.5 }}>{fmt.time(v.t)}</b>
           <div className="dim" style={{ fontSize: 12 }}>{v.first ? `первая копия · ${v.lines} строк` : <><span style={{ color: 'var(--green)' }}>+{v.added}</span> <span style={{ color: 'var(--red)' }}>−{v.removed}</span></>}</div></div>
-        <a className="btn sm icon" href={`/api/backups/${device.id}/${v.t}?raw=1`} onClick={e => e.stopPropagation()} title="Скачать эту версию"><Icon name="download" size={15} /></a>
+        <span onClick={e => e.stopPropagation()}><Btn size="sm" icon="download" title="Скачать эту версию"
+          onClick={() => downloadFile(`/api/backups/${device.id}/${v.t}?raw=1`, 'config.txt').catch(e => toast(e.message, true))} /></span>
       </div>)}</div>
       <div className="diff mono">{diff == null ? <span className="dim">…</span> : !diff.length ? <span className="dim">Нет отличий</span>
         : diff.map((l, i) => <div key={i} className={l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : l.startsWith('@@') ? 'hunk' : ''}>{l || ' '}</div>)}</div>

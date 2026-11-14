@@ -10,7 +10,12 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/modeler-apple-touch-icon.png?v=2">
 <link rel="manifest" href="/modeler-manifest.json">
 <title>Создать модель</title>
-<script>try{var sk=localStorage.getItem('rl_skin')||'test';if(sk==='test'){var lt=function(q,v){var e=document.querySelector(q);if(e)e.setAttribute('href',v)};lt('link[rel="apple-touch-icon"]','/look-test/modeler-180.png?v=2');lt('link[rel~="icon"]','/look-test/modeler.svg?v=2');lt('link[rel="manifest"]','/modeler-manifest-test.json')}}catch(e){}</script>
+<script>try{var H=document.documentElement,L=localStorage,qs=location.search;var q=(qs.match(/theme=(light|dark)/)||[])[1];if(q)L.setItem('rl_theme',q);var qk=(qs.match(/skin=(classic|graphite|net|test|aurora)/)||[])[1];if(qk)L.setItem('rl_skin',qk);
+var sk=L.getItem('rl_skin')||'test',lt=function(q,v){var e=document.querySelector(q);if(e)e.setAttribute('href',v)};
+if(sk==='test'){lt('link[rel="apple-touch-icon"]','/look-test/modeler-180.png?v=2');lt('link[rel~="icon"]','/look-test/modeler.svg?v=2');lt('link[rel="manifest"]','/modeler-manifest-test.json')}
+else if(sk==='aurora'){var t=L.getItem('rl_theme')||'auto',r=t==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t,ac=L.getItem('rl_accent');H.setAttribute('data-look','aurora');H.setAttribute('data-theme',r);if(ac)H.setAttribute('data-accent',ac);
+lt('link[rel="apple-touch-icon"]','/look-aurora/modeler-180.png?v=2');lt('link[rel~="icon"]','/look-aurora/modeler.svg?v=2');lt('link[rel="manifest"]','/modeler-manifest.json?skin=aurora');
+var m=document.createElement('meta');m.name='theme-color';m.content=r==='dark'?'#000000':'#ffffff';document.head.appendChild(m)}}catch(e){}</script>
 <style>
 :root { --bg: #f4f5f7; --card: #fff; --text: #17181a; --text2: #5b6168; --line: #d9dce1; --accent: #2f6fed; --ok: #1f9d55; --bad: #d63a3a; --warn: #b7791f; --port: #2f6fed; --zoom: #e08a00; --chk: #e6e8ec; --chk2: #f7f8fa; }
 @media (prefers-color-scheme: dark) { :root { --bg: #121315; --card: #1b1d20; --text: #eceef1; --text2: #9aa1a9; --line: #2e3136; --accent: #6b9bff; --ok: #3ac779; --bad: #ff6b6b; --warn: #f0b04b; --port: #6b9bff; --zoom: #ffb347; --chk: #2a2d31; --chk2: #202326; } }
@@ -61,13 +66,77 @@ input[type=range] { width: 100%; }
 pre.ai { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px; font-size: 12.5px; max-height: 220px; overflow: auto; }
 .okmsg { color: var(--ok); font-weight: 600; } .errmsg { color: var(--bad); }
 .hidden { display: none !important; } .note { font-size: 12.5px; color: var(--text2); }
+/* ── «Аврора»: холст с точками, стекло только у парящих кнопок, карточки без рамок ── */
+html[data-look="aurora"] { --bg: #fff; --bg2: #f2f2f7; --card: #fff; --text: #000; --text2: rgba(60,60,67,.6); --line: rgba(60,60,67,.12); --fill: rgba(120,120,128,.12); --fill2: rgba(120,120,128,.2); --accent: #1f6feb;
+  --ok: #34c759; --bad: #8e8e93; --warn: color-mix(in srgb, var(--accent) 55%, #8e8e93); --port: var(--accent); --zoom: var(--text); --chk: #e9e9ee; --chk2: #f7f7fa;
+  --glass: rgba(255,255,255,.52); --rim: rgba(255,255,255,.85); --dots: rgba(60,60,67,.2); --float: 0 8px 28px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.06); --soft: 0 0 0 .5px rgba(0,0,0,.06), 0 2px 6px rgba(0,0,0,.04), 0 10px 30px rgba(0,0,0,.05); --seg: #fff; }
+html[data-look="aurora"][data-theme="dark"] { --bg: #000; --bg2: #1c1c1e; --card: #1c1c1e; --text: #fff; --text2: rgba(235,235,245,.6); --line: rgba(84,84,88,.6); --fill: rgba(118,118,128,.24); --fill2: rgba(118,118,128,.36); --accent: #3d8bff;
+  --ok: #30d158; --chk: #2a2a2e; --chk2: #1f1f22; --glass: rgba(40,40,44,.5); --rim: rgba(255,255,255,.16); --dots: rgba(255,255,255,.11); --float: 0 8px 28px rgba(0,0,0,.5); --soft: 0 0 0 .5px rgba(255,255,255,.06); --seg: rgba(255,255,255,.16); }
+html[data-look="aurora"][data-accent="blue"] { --accent: #0a84ff; } html[data-look="aurora"][data-accent="green"] { --accent: #30b455; } html[data-look="aurora"][data-accent="purple"] { --accent: #a259e6; }
+html[data-look="aurora"][data-accent="orange"] { --accent: #f5870a; } html[data-look="aurora"][data-accent="red"] { --accent: #f2453d; } html[data-look="aurora"][data-accent="teal"] { --accent: #20b4cc; } html[data-look="aurora"][data-accent="pink"] { --accent: #ee3d73; }
+html[data-look="aurora"] { color-scheme: light; background: var(--bg); } html[data-look="aurora"][data-theme="dark"] { color-scheme: dark; }
+html[data-look="aurora"] body { font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased;
+  background: radial-gradient(circle at 1.5px 1.5px, var(--dots) 1.2px, transparent 1.6px) 0 0 / 26px 26px, var(--bg); min-height: 100vh; padding: 0 14px calc(40px + env(safe-area-inset-bottom, 0px)); }
+.au-back, .au-title, .au-sub { display: none; }
+html[data-look="aurora"] .au-head { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top, 0px) + 10px) 0 10px; pointer-events: none; }
+html[data-look="aurora"] .au-head > * { pointer-events: auto; }
+html[data-look="aurora"] .au-back { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 50%; color: var(--text); background: var(--glass); border: .5px solid var(--rim); box-shadow: var(--float);
+  backdrop-filter: blur(22px) saturate(190%); -webkit-backdrop-filter: blur(22px) saturate(190%); transition: transform .2s cubic-bezier(.3,.7,.3,1); }
+html[data-look="aurora"] .au-back:active { transform: scale(.9); }
+html[data-look="aurora"] h1, html[data-look="aurora"] .back-old { display: none; }
+html[data-look="aurora"] .au-title { display: block; font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 6px 2px 4px; }
+html[data-look="aurora"] .au-sub { display: block; margin: 0 2px 14px; font-size: 13.5px; }
+/* шаги — стеклянная капсула, как переключатель в iOS */
+html[data-look="aurora"] .tabs { flex: 1; min-width: 0; margin: 0; flex-wrap: nowrap; gap: 2px; overflow-x: auto; scrollbar-width: none; padding: 4px; border-radius: 999px; background: var(--glass); border: .5px solid var(--rim); box-shadow: var(--float);
+  backdrop-filter: blur(22px) saturate(190%); -webkit-backdrop-filter: blur(22px) saturate(190%); }
+html[data-look="aurora"] .tabs::-webkit-scrollbar { display: none; }
+html[data-look="aurora"] .tab { flex: none; border: 0; background: none; height: 40px; padding: 0 14px; font-size: 14px; font-weight: 600; color: var(--text2); white-space: nowrap; transition: background .25s, color .25s, transform .2s cubic-bezier(.3,.7,.3,1); }
+html[data-look="aurora"] .tab.on { background: var(--seg); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.1), 0 0 0 .5px rgba(0,0,0,.04); }
+html[data-look="aurora"] .tab:active:not(:disabled) { transform: scale(.94); }
+html[data-look="aurora"] .card { border: 0; border-radius: 26px; padding: 18px; box-shadow: var(--soft); }
+html[data-look="aurora"] .card .card { border-radius: 18px; background: var(--fill); box-shadow: none; padding: 14px !important; }
+html[data-look="aurora"] .card h2 { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text2); margin: 0 0 10px; }
+html[data-look="aurora"] .btn { border: 0; border-radius: 999px; padding: 10px 16px; background: var(--fill); font-weight: 600; transition: transform .2s cubic-bezier(.3,.7,.3,1), filter .2s; }
+html[data-look="aurora"] .btn:active:not(:disabled) { transform: scale(.95); filter: brightness(.94); }
+html[data-look="aurora"] .btn.pri { background: var(--accent); color: #fff; } html[data-look="aurora"] .btn.bad { color: var(--text2); }
+html[data-look="aurora"] input:not([type=checkbox]):not([type=range]):not([type=file]), html[data-look="aurora"] select, html[data-look="aurora"] textarea { border: 0 !important; border-radius: 12px !important; background-color: var(--bg2) !important; padding: 10px 12px !important; outline: none; }
+html[data-look="aurora"][data-theme="dark"] input:not([type=checkbox]):not([type=range]):not([type=file]), html[data-look="aurora"][data-theme="dark"] select, html[data-look="aurora"][data-theme="dark"] textarea { background-color: rgba(118,118,128,.24) !important; }
+html[data-look="aurora"] :is(input, select, textarea):focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+html[data-look="aurora"] select { -webkit-appearance: none; appearance: none; padding-right: 34px !important; background-repeat: no-repeat; background-position: right 13px center; background-size: 12px 8px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%238e8e93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.5 1.5 6 6l4.5-4.5'/%3E%3C/svg%3E"); }
+html[data-look="aurora"] .row > select { border-radius: 999px !important; font-weight: 600; }
+html[data-look="aurora"] label.f { margin: 12px 0; } html[data-look="aurora"] label.f > span { display: flex; align-items: center; color: var(--text); font-size: 15px; line-height: 1.3; }
+/* галочки — переключатели */
+html[data-look="aurora"] label.f input[type=checkbox] { -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 48px; height: 29px; margin: 0 12px 0 0; border-radius: 999px; background: var(--fill2); cursor: pointer; transition: background .25s; }
+html[data-look="aurora"] label.f input[type=checkbox]::after { content: ""; position: absolute; left: 2px; top: 2px; width: 25px; height: 25px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.22); transition: transform .28s cubic-bezier(.3,.7,.3,1); }
+html[data-look="aurora"] label.f input[type=checkbox]:checked { background: #34c759; } html[data-look="aurora"] label.f input[type=checkbox]:checked::after { transform: translateX(19px); }
+html[data-look="aurora"] input[type=range] { -webkit-appearance: none; appearance: none; height: 28px; background: none; margin-top: 6px; }
+html[data-look="aurora"] input[type=range]::-webkit-slider-runnable-track { height: 5px; border-radius: 3px; background: var(--fill2); }
+html[data-look="aurora"] input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -10.5px; border-radius: 50%; background: #fff; box-shadow: 0 .5px 4px rgba(0,0,0,.14), 0 3px 9px rgba(0,0,0,.16), 0 0 0 .5px rgba(0,0,0,.05); }
+html[data-look="aurora"] input[type=range]::-moz-range-track { height: 5px; border-radius: 3px; background: var(--fill2); }
+html[data-look="aurora"] input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 .5px 4px rgba(0,0,0,.14), 0 3px 9px rgba(0,0,0,.16); }
+html[data-look="aurora"] input[type=file] { max-width: 100%; font-size: 13.5px; color: var(--text2); }
+html[data-look="aurora"] input[type=file]::file-selector-button { border: 0; border-radius: 999px; padding: 10px 16px; margin-right: 12px; background: var(--accent); color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+html[data-look="aurora"] .stagewrap { border-radius: 18px; }
+html[data-look="aurora"] .pt { border-radius: 5px; border-width: 1.5px; }
+html[data-look="aurora"] .pt.sel { border-color: #fff; background: color-mix(in srgb, var(--accent) 38%, transparent); box-shadow: 0 0 0 2px var(--accent), 0 4px 14px rgba(0,0,0,.35); }
+html[data-look="aurora"] .pt i { border-radius: 999px; padding: 2px 5px; } html[data-look="aurora"] .pt.sel i { background: #fff; color: #000; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+html[data-look="aurora"] .pt b { background: #fff; border-color: var(--accent); } html[data-look="aurora"] .zn { border-width: 1.5px; border-radius: 8px; }
+html[data-look="aurora"] .list { border: 0; border-radius: 16px; background: var(--fill); }
+html[data-look="aurora"] .li { padding: 10px 14px; border-bottom: .5px solid var(--line); } html[data-look="aurora"] .li.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+html[data-look="aurora"] .chk li { padding: 5px 0 5px 26px; } html[data-look="aurora"] .chk li.bad { color: var(--text2); } html[data-look="aurora"] .chk li.bad::before { color: var(--text2); }
+html[data-look="aurora"] pre.ai { border: 0; border-radius: 14px; background: var(--fill); }
+html[data-look="aurora"] .errmsg { color: var(--text); font-weight: 600; } html[data-look="aurora"] .lp { border-color: var(--rim); }
+@media (min-width: 801px) { html[data-look="aurora"] .au-head { justify-content: flex-start; } html[data-look="aurora"] .tabs { flex: 0 1 auto; } }
 </style>
 </head>
 <body>
 <main>
   <h1>Создать модель</h1>
-  <p class="sub"><a href="/?section=apps" style="color:var(--accent)">← в Rack Live</a> · Фото устройства, порты, границы приближения — и публикация в магазин моделей. Фото обрабатывается у вас в браузере и уходит только при нажатии «Опубликовать».</p>
-  <div class="tabs" id="tabs"></div>
+  <p class="sub back-old"><a href="/?section=apps" style="color:var(--accent)">← в Rack Live</a> · Фото устройства, порты, границы приближения — и публикация в магазин моделей. Фото обрабатывается у вас в браузере и уходит только при нажатии «Опубликовать».</p>
+  <div class="au-head"><a class="au-back" href="/?section=apps" aria-label="В Rack Live"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a><div class="tabs" id="tabs"></div></div>
+  <div class="au-title">Создать модель</div>
+  <p class="sub au-sub">Фото устройства, порты, границы приближения — и публикация в магазин моделей. Фото обрабатывается у вас в браузере и уходит только при нажатии «Опубликовать».</p>
   <div class="grid">
     <div class="card"><div class="stagewrap" id="stagewrap"><div class="zoomer" id="zoomer"><canvas id="cv" width="10" height="10"></canvas><div class="ov" id="ov"></div></div></div>
       <p class="dim" id="hint" style="margin-bottom:0"></p></div>

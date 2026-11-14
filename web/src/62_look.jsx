@@ -7,6 +7,7 @@
    the page applies it before the first paint (index.html). */
 const SKINS = [
   { id: 'test', name: 'Витрина', text: 'Строгий стиль приборной панели: в тёмной теме чёрный алюминий, в светлой белый, тонкие линии вместо теней, моно-подписи, монохромные иконки, приборы вместо кругов. Основное оформление.', rows: ['Сводка', 'Роутер'] },
+  { id: 'aurora', name: 'Аврора', text: 'Как в iOS 26 и macOS: стекло только у кнопок и панелей, они парят над содержимым. На телефоне — круглые кнопки и маленький док снизу, на компьютере — стеклянная боковая панель. Холст с точками, как в «Заметках».', rows: ['Сводка', 'Роутер'] },
   { id: 'net', name: 'Лазурь', text: 'Яркий синий акцент как у сетевых контроллеров, без оранжевого (жёлтый вместо него) и фиолетового, плоские иконки без картинок на плитках.', rows: ['Сводка', 'Роутер'] },
   { id: 'classic', name: 'Стекло', text: 'Прозрачные карточки, мягкие градиенты и синий акцент — как в iOS. Первое оформление Rack Live.', rows: ['Сводка', 'Роутер'] },
   { id: 'graphite', name: 'Графит', text: 'Чёрный фон, плоские серые карточки, тонкие рамки, зелёный акцент — без размытия и теней.', rows: ['Сводка', 'Роутер'] },
@@ -14,19 +15,28 @@ const SKINS = [
 const ACCENTS = [['', 'По умолчанию у оформления', null], ['blue', 'Синий', '#0a84ff'], ['green', 'Зелёный', '#30b455'], ['purple', 'Фиолетовый', '#a259e6'],
   ['orange', 'Оранжевый', '#f5870a'], ['red', 'Красный', '#f2453d'], ['teal', 'Бирюзовый', '#20b4cc'], ['pink', 'Розовый', '#ee3d73']];
 
-const BUILTIN_SKINS = ['classic', 'graphite', 'net', 'test'];
+const BUILTIN_SKINS = ['classic', 'graphite', 'net', 'test', 'aurora'];
 const DEFAULT_SKIN = 'test';                                    // the flagship look: shown on a fresh device and after a custom look goes away
 const getSkin = () => lsGet('rl_skin', DEFAULT_SKIN) || DEFAULT_SKIN;
 const getAccent = () => { const a = lsGet('rl_accent', ''); return ACCENTS.some(x => x[0] === a) ? a : ''; };
 const themeMeta = () => { try { return JSON.parse(lsGet('rl_theme_meta', '') || 'null'); } catch (e) { return null; } };
 function applyLook(skin, accent) {                              // built-in looks only (a custom look needs its css: a page reload does it, see pickCustom)
   const h = document.documentElement;
-  if (skin && skin !== 'classic') h.setAttribute('data-skin', skin === 'test' ? 'net' : skin); else h.removeAttribute('data-skin');
-  if (skin === 'test') h.setAttribute('data-look', 'test'); else h.removeAttribute('data-look');      // «Test» = «Контроллер» + the «Витрина» look
+  if (skin && skin !== 'classic' && skin !== 'aurora') h.setAttribute('data-skin', skin === 'test' ? 'net' : skin); else h.removeAttribute('data-skin');      // «Аврора» sits on the «Стекло» base
+  if (skin === 'test') h.setAttribute('data-look', 'test'); else if (skin === 'aurora') h.setAttribute('data-look', 'aurora'); else h.removeAttribute('data-look');      // «Test» = «Контроллер» + the «Витрина» look
   h.removeAttribute('data-theme-id');
   if (accent) h.setAttribute('data-accent', accent); else h.removeAttribute('data-accent');
   const fav = document.querySelector('link[rel~="icon"]'); if (fav) fav.setAttribute('href', skin === 'graphite' ? 'icon-graphite.svg?v=1' : 'icon.svg?v=27');
 }
+/* The administrator's choice is the look of the whole installation: the server keeps it (settings.look) and every page — Rack Live on another device, Frank, the speed test,
+   the terminal and the other apps put on the home screen, each with a storage of its own — takes it over at its next start (rackd/server.py look_script). */
+const pushLook = async () => {
+  try {
+    const skin = getSkin();
+    const r = await api('/api/look', { method: 'PUT', body: { skin, accent: getAccent(), meta: BUILTIN_SKINS.includes(skin) ? '' : lsGet('rl_theme_meta', '') } });
+    if (r && r.look) { lsSet('rl_look_rev', String(r.look.rev)); window.RL_LOOK = r.look; }
+  } catch (e) {}
+};
 const skinName = () => { const s = getSkin(); const b = SKINS.find(x => x.id === s); if (b) return b.name; const m = themeMeta(); return m && m.id === s ? m.name : s; };
 
 /* at start: a custom look's texts, icons and colours of kinds are read (they live in a global, so the page is rendered after this); a look that was switched off
@@ -83,6 +93,21 @@ function ThemeCover({ id }) {
       <text x="170" y="95" fontSize="7" fill="#8d939b" fontFamily="ui-monospace,Menlo,Consolas,monospace" letterSpacing="1.6">В СЕТИ</text>
       <rect x="170" y="104" width="130" height="1" fill="#fff" fillOpacity=".25" /><rect x="170" y="103" width="94" height="3" fill="#3d8bff" />
       {Array.from({ length: 14 }, (_, i) => <rect key={i} x={170 + i * 9.3} y="107" width=".6" height="3" fill="#fff" fillOpacity=".3" />)}</>;
+  } else if (id === 'aurora') {
+    const glass = { fill: '#fff', fillOpacity: .78, stroke: '#fff', strokeWidth: 1 };
+    body = <>
+      <defs><filter id={p + 's'} x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="#000" floodOpacity=".16" /></filter></defs>
+      <rect width="320" height="132" fill="#f7f7fa" />
+      <path d={Array.from({ length: 25 }, (_, i) => Array.from({ length: 11 }, (_, j) => `M${6 + i * 13} ${6 + j * 13}h.01`).join('')).join('')} stroke="#3c3c43" strokeOpacity=".22" strokeWidth="1.8" strokeLinecap="round" />
+      <rect x="96" y="30" width="128" height="40" rx="12" fill="#fff" filter={`url(#${p}s)`} />
+      <rect x="106" y="40" width="54" height="7" rx="3.5" fill="#1c1c1e" fillOpacity=".8" /><rect x="106" y="53" width="80" height="5" rx="2.5" fill="#3c3c43" fillOpacity=".3" />
+      <g filter={`url(#${p}s)`}><circle cx="24" cy="22" r="13" {...glass} /><rect x="232" y="9" width="76" height="26" rx="13" {...glass} />
+        <circle cx="24" cy="110" r="13" {...glass} /><rect x="102" y="97" width="116" height="26" rx="13" {...glass} /><circle cx="296" cy="110" r="13" {...glass} /></g>
+      <path d="M27 17l-5 5 5 5" fill="none" stroke="#1c1c1e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="252" cy="22" r="1.8" fill="#1c1c1e" /><circle cx="270" cy="22" r="1.8" fill="#1c1c1e" /><circle cx="288" cy="22" r="1.8" fill="#1c1c1e" />
+      <rect x="106" y="100" width="34" height="20" rx="10" fill="#787880" fillOpacity=".18" />
+      {[123, 160, 196].map((x, i) => <circle key={i} cx={x} cy="110" r="5" fill="none" stroke={i ? '#1c1c1e' : '#007aff'} strokeWidth="1.8" />)}
+      <rect x="19" y="105" width="10" height="10" rx="2.5" fill="none" stroke="#1c1c1e" strokeWidth="1.6" /><path d="M291 115l9-9M293 106h6v6" fill="none" stroke="#1c1c1e" strokeWidth="1.6" strokeLinecap="round" /></>;
   } else if (id === 'net') {
     const nodes = [[60, 34], [92, 104], [236, 28], [268, 96], [200, 112], [30, 80]];
     body = <>
@@ -134,9 +159,10 @@ function LookCard() {
   useEffect(() => { reload(); }, []);
   const th = document.documentElement.getAttribute('data-theme') || 'dark';
   const customNow = !BUILTIN_SKINS.includes(skin);
-  const pickBuiltin = id => {
+  const pickBuiltin = async id => {
     lsSet('rl_skin', id); lsSet('rl_theme_meta', ''); setSkin(id);
-    if (customNow || id === 'test' || skin === 'test') { applyLook(id, accent); location.reload(); return; }      // leaving a custom look (its texts and icons are in memory) or «Test» (another shell): a clean start
+    if (admin) await pushLook();
+    if (customNow || id === 'test' || skin === 'test' || id === 'aurora' || skin === 'aurora') { applyLook(id, accent); location.reload(); return; }      // leaving a custom look (its texts and icons are in memory), «Test» or «Аврора» (other shells: «Аврора» has its own phone controls): a clean start
     applyLook(id, accent);
   };
   const pickCustom = async t => {
@@ -145,10 +171,11 @@ function LookCard() {
       if (d.off) { toast('Это оформление отключено: ' + ((t.problems || [])[0] || 'не подходит'), true); return reload(); }
       const pw = o => ({ fav: (o || {}).favicon || '', touch: (o || {}).appleTouch || '', pwa: !!((o || {}).icon192 && (o || {}).icon512) });       // home-screen pictures of each of the three apps
       lsSet('rl_skin', t.id); lsSet('rl_theme_meta', JSON.stringify({ id: t.id, name: t.name, base: d.base, ...pw(d.pwa), frank: pw(d.pwaFrank), speed: pw(d.pwaSpeed), plan: pw(d.pwaPlan), rev: d.installed || d.rev }));
+      if (admin) await pushLook();
       location.reload();
     } catch (e) { toast('Не удалось применить: ' + e.message, true); }
   };
-  const pickAccent = a => { setAccent(a); lsSet('rl_accent', a); const h = document.documentElement; if (a) h.setAttribute('data-accent', a); else h.removeAttribute('data-accent'); };
+  const pickAccent = a => { setAccent(a); lsSet('rl_accent', a); const h = document.documentElement; if (a) h.setAttribute('data-accent', a); else h.removeAttribute('data-accent'); if (admin) pushLook(); };
   const [glass, setGlass] = useState(() => lsGet('rl_glass', '1') !== '0');
   const pickGlass = on => { setGlass(on); lsSet('rl_glass', on ? '1' : '0'); const h = document.documentElement; if (on) h.removeAttribute('data-glass'); else h.setAttribute('data-glass', 'off'); };
   const upload = async f => {
@@ -184,7 +211,7 @@ function LookCard() {
         {SKINS.map(x => card(x.id, x.name, x.text))}
         {customs.map(t => card(t.id, t.name, [t.author, t.version && 'v' + t.version, t.description].filter(Boolean).join(' · ') || 'Своё оформление', t.ok, t.base, t))}
       </div>
-      <div className="dim3" style={{ fontSize: 12.5, marginTop: 10 }}>Оформление запоминается на этом устройстве: на телефоне и на компьютере можно выбрать разное. Frank и «Тест скорости» подхватывают его тоже.
+      <div className="dim3" style={{ fontSize: 12.5, marginTop: 10 }}>{admin ? 'Ваш выбор — общий: его подхватывают все устройства и все приложения на экране «Домой» (Frank, «Тест скорости», «Терминал», «План», «Сканер», «Создать модель») при следующем запуске.' : 'Оформление запоминается на этом устройстве.'} Светлая или тёмная тема — у каждого устройства своя.
         Если оформление стало нечитаемым, откройте адрес панели с добавкой <b>?skin=classic</b> — вернётся стандартное.</div>
     </Card>
     {admin ? <Card title="Своё оформление">

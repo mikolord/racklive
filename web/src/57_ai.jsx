@@ -69,9 +69,20 @@ function CmdHint({ q, onPick }) {
 /* Frank's avatar: an eye that blinks and glances around. While he works the mood shows how hard the question is:
    1 — calm (blue, looks around), 2 — straining (yellow, squints), 3 — heavy (red, frowns, glows and trembles). */
 const EYE = 'M3 20C8 11 14 7.5 20 7.5S32 11 37 20C32 29 26 32.5 20 32.5S8 29 3 20Z';
+/* «Аврора»: Frank — линия, как остальные кнопки, но живая: зрачок цвета системы оглядывается, глаз моргает; пока Frank думает — зрачок «дышит» */
+function AuEye({ size = 22, busy, tight }) {         // tight: the frame hugs the eye (a big picture in a widget), size = its width
+  const delay = React.useMemo(() => -(Math.random() * 9).toFixed(2) + 's', []);          // every eye on the screen looks around in its own rhythm
+  return <svg className={'au-eye' + (busy ? ' busy' : '')} viewBox={tight ? '1 3.6 22 16.8' : '0 0 24 24'} width={size} height={tight ? Math.round(size * 16.8 / 22) : size} style={{ '--ae-d': delay }} aria-hidden="true">
+    <g className="ae-lid">
+      <path d="M2.2 12C4.9 7.3 8.3 5 12 5s7.1 2.3 9.8 7c-2.7 4.7-6.1 7-9.8 7s-7.1-2.3-9.8-7Z" fill="none" stroke="currentColor" strokeWidth={size > 40 ? 1.3 : 1.7} strokeLinejoin="round" />
+      <g className="ae-look"><circle cx="12" cy="12" r="3.5" className="ae-pupil" /><circle cx="13.25" cy="10.75" r=".95" fill="#fff" opacity=".9" /></g>
+    </g>
+  </svg>;
+}
 function FrankEye({ size = 34, busy, mood, round }) {
   const id = React.useId().replace(/:/g, '');
   const m = mood != null ? mood : busy ? 1 : 0;
+  if (!THEME.frankAvatar && isAurora()) return <span className="frank-mono" style={{ width: size, height: size, display: 'inline-grid', placeItems: 'center', flex: 'none' }}><AuEye size={Math.max(14, Math.round(size * (size > 40 ? .86 : .8)))} busy={m > 0} /></span>;      // «Аврора»: the living line eye at every size
   if (THEME.frankAvatar) return <div className={'frank m' + m + (m ? ' busy' : '')} style={{ width: size, height: size, borderRadius: round != null ? round : size * .32 }}><img className="frank-img" src={THEME.frankAvatar} alt="" draggable="false" /></div>;      // the look brings its own picture
   return <div className={'frank m' + m + (m ? ' busy' : '')} style={{ width: size, height: size, borderRadius: round != null ? round : size * .32 }}>
     <svg viewBox="0 0 40 40" width={size * .8} height={size * .8}>
@@ -363,7 +374,7 @@ function AiPanel({ initial, onClose, standalone }) {
     else if (cid && ai.ready) open(cid);
   }, []);
   const del = async c => {
-    if (!(await confirm(`Удалить разговор «${c.title}»? Восстановить его будет нельзя.`, { title: 'Удалить разговор', ok: 'Удалить', danger: true }))) return;
+    if (!(await confirm(`Удалить разговор «${String(c.title).slice(0, 48)}»? Восстановить его будет нельзя.`, { title: 'Удалить разговор', ok: 'Удалить', danger: true }))) return;
     try { await api('/api/ai/chats/' + c.id, { method: 'DELETE' }); setChats(x => x.filter(y => y.id !== c.id)); if (c.id === cid) { setCid(null); setMsgs([]); setBusy(null); } }
     catch (e) { toast(e.message, true); }
   };
@@ -375,7 +386,6 @@ function AiPanel({ initial, onClose, standalone }) {
       send(hit.length === 1 ? hit[0][0] : q);
     }
   };
-  const today = ai.today || {};
   const title = view === 'list' ? 'Разговоры' : T('frank.name', 'Frank');
   const [quick, setQuick] = useState(false);
   const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1');
@@ -386,27 +396,23 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   const toggleList = () => { if (view === 'list') setView('chat'); else { setView('list'); setChats(null); loadList(); } };
   const sub = ai.ready ? `${ai.title} · ${ai.effModel}${ai.agent ? ' · агент: ' + ((AGENT_MODES.find(x => x[0] === ai.agentMode) || AGENT_MODES[0])[1]).toLowerCase() : ''}` : 'не настроен';
+  // Frank внутри Rack Live выглядит так же, как отдельное приложение /frank: стеклянные круги сверху, плавающая капсула ввода внизу.
+  // Отличия (класс inapp): есть кнопка «Закрыть», на телефоне окно во весь экран, на компьютере — скруглённая панель справа
   return <div className={standalone ? 'frank-app' : 'overlay ai-overlay'} onMouseDown={e => onClose && e.target === e.currentTarget && onClose()}>
-    <div className={'ai-panel' + (standalone ? ' standalone' : '')}>
-      {standalone ? <div className="fr-blur" /> : null}
-      {standalone ? <div className="fr-top">
-        <div className="fr-side">{ai.ready ? <button type="button" className="fr-circle" title={view === 'list' ? 'К разговору' : 'Все разговоры'} onClick={toggleList}>
-          <Icon name={view === 'list' ? 'chevronLeft' : 'menu'} size={22} stroke={2} /></button> : null}</div>
+    <div className={'ai-panel standalone' + (standalone ? '' : ' inapp')}>
+      <div className="fr-blur" />
+      <div className="fr-top">
+        <div className="fr-side">
+          {standalone ? null : <button type="button" className="fr-circle" title="Закрыть" aria-label="Закрыть" onClick={onClose}><Icon name="x" size={21} stroke={2.2} /></button>}
+          {ai.ready ? <button type="button" className="fr-circle" title={view === 'list' ? 'К разговору' : 'Все разговоры'} onClick={toggleList}>
+            <Icon name={view === 'list' ? 'chevronLeft' : 'menu'} size={22} stroke={2} /></button> : null}</div>
         <div className="fr-title"><b>{title}</b><span>{sub}</span></div>
         <div className="fr-side r">
           <button type="button" className="fr-circle eye" title={busy ? busy.stage : 'Модель и баланс'} onClick={() => ai.ready && setMenu(true)}><FrankEye size={46} mood={frankMood(busy)} round={23} /></button>
+          {ai.ready && view !== 'list' && cid && msgs.length ? <button type="button" className="fr-circle" title="Удалить разговор" aria-label="Удалить разговор" onClick={() => del({ id: cid, title: (chats && (chats.find(y => y.id === cid) || {}).title) || (msgs.find(m => m.role === 'user') || {}).text || 'этот разговор' })}><Icon name="trash" size={20} stroke={2} /></button> : null}
           {ai.ready ? <button type="button" className="fr-circle" title="Новый разговор" onClick={() => open(null)}><Icon name="plus" size={22} stroke={2} /></button> : null}
         </div>
-      </div> : <div className="ai-head">
-        <FrankEye size={36} mood={frankMood(busy)} />
-        <div className="grow" style={{ minWidth: 0 }}><b>{title}</b>
-          <div className="dim3 ellipsis" style={{ fontSize: 12 }}>{ai.ready ? `${ai.title} · ${ai.effModel}${today.q ? ` · сегодня ${today.q} ${ruPlural(today.q, 'вопрос', 'вопроса', 'вопросов')}` : ''}` : 'не настроен'}</div></div>
-        {ai.ready ? <>
-          <Btn size="sm" icon="list" title="Все разговоры" onClick={() => { if (view === 'list') setView('chat'); else { setView('list'); setChats(null); loadList(); } }} />
-          <Btn size="sm" icon="plus" title="Новый разговор" onClick={() => open(null)} />
-        </> : null}
-        <Btn size="sm" icon="x" onClick={onClose} />
-      </div>}
+      </div>
       {view === 'list' ? <div className="ai-list">
         {chats == null ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загружаю…</div>
           : !chats.length ? <div className="ai-empty"><FrankEye size={56} /><div className="dim">Разговоров пока нет — задайте Frank первый вопрос.</div>
@@ -433,7 +439,7 @@ function AiPanel({ initial, onClose, standalone }) {
           <b style={{ fontSize: 17 }}>Привет, я Frank</b>
           <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Я слежу за вашей сетью. Спросите что угодно — сам посмотрю данные Rack Live и отвечу простыми словами. Можно прислать фото или файл (скрепка внизу), попросить «запомни…», а «/» покажет команды.</div>
           <div className="ai-suggest">{AI_SUGGEST.map(s => <button key={s} type="button" className="chip" onClick={() => send(s)}>{s}</button>)}</div>
-          {standalone ? <div className="dim3" style={{ fontSize: 11.5, lineHeight: 1.4, maxWidth: 340 }}>Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div> : null}
+          <div className="dim3" style={{ fontSize: 11.5, lineHeight: 1.4, maxWidth: 340 }}>Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div>
         </div> : msgs.map((m, i) => m.role === 'event' ? null : m.role === 'note' ? <div key={i} className="ai-note-line">{m.text}</div> : <div key={i} className={'ai-msg ' + m.role + (m.err ? ' err' : '')}>
           {m.role === 'user' ? <div className="ai-bubble">{m.files && m.files.length ? <MsgFiles files={m.files} /> : null}{m.text}</div> : <div className="ai-bubble">
             {m.err ? <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}><Icon name="alert" size={16} color="var(--red)" /><span>{m.text}</span></div> : <AiText text={m.text} />}
@@ -447,7 +453,7 @@ function AiPanel({ initial, onClose, standalone }) {
           {busy.tools.length ? <div className="ai-tools">{[...new Set(busy.tools)].map(t => <span key={t}><Icon name="check" size={11} />{t}</span>)}</div> : null}</div></div> : null}
       </div>}
       {menu ? <FrankMenu onClose={() => setMenu(false)} /> : null}
-      {ai.ready && view === 'chat' && standalone ? <div className="fr-dock" ref={dockRef}>
+      {ai.ready && view === 'chat' ? <div className="fr-dock" ref={dockRef}>
         {quick ? <div className="fr-quick">{AI_SUGGEST.map(s => <button key={s} type="button" onClick={() => { setQuick(false); send(s); }}>{s}</button>)}</div> : null}
         <CmdHint q={q} onPick={c => setQ(c + ' ')} />
         <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} />
@@ -466,18 +472,6 @@ function AiPanel({ initial, onClose, standalone }) {
               <Icon name={busy ? 'plus' : 'arrowUp'} size={21} stroke={2.4} /></button>}
         </div>
       </div> : null}
-      {ai.ready && view === 'chat' && !standalone ? <CtxMeter ctx={ctx} busy={busy} onCompact={() => send('/compact')} /> : null}
-      {ai.ready && view === 'chat' && !standalone ? <CmdHint q={q} onPick={c => setQ(c + ' ')} /> : null}
-      {ai.ready && view === 'chat' && !standalone ? <AttachChips files={att} onRemove={dropAtt} /> : null}
-      {ai.ready && view === 'chat' && !standalone ? <QueueList items={queue} onDrop={i => setQ2(x => x.filter((_, k) => k !== i))} /> : null}
-      {ai.ready && view === 'chat' && !standalone ? <div className="ai-foot">
-        <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
-        <Btn icon="clip" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()} />
-        <textarea className="input" rows={1} value={q} placeholder={busy ? 'Frank работает — напишите, встанет в очередь' : 'Спросить Frank… (или /)'} onChange={e => setQ(e.target.value)} onKeyDown={key} onPaste={onPaste} />
-        {busy && !(q.trim() || att.length) ? <Btn kind="danger" icon="x" title="Остановить Frank" onClick={stop}>Стоп</Btn>
-          : <Btn kind="primary" icon={busy ? 'plus' : 'send'} title={busy ? 'Поставить в очередь' : 'Отправить'} disabled={!q.trim() && !att.length} onClick={() => send(q)} />}
-      </div> : null}
-      {ai.ready && view === 'chat' && !standalone ? <div className="ai-note">Данные сети уходят в {ai.title}; пароли и ключи не передаются. Frank может ошибаться — проверяйте важное.</div> : null}
     </div>
   </div>;
 }

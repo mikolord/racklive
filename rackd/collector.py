@@ -136,7 +136,8 @@ class Collector:
         def send(obj):
             out.put(json.dumps(obj, ensure_ascii=False).encode())
         self.link.update(connected=True, since=int(time.time()), error=None)
-        send({'t': 'hello', 'version': self.version, 'level': self.level()})
+        sent_level = self.level()
+        send({'t': 'hello', 'version': self.version, 'level': sent_level})
         last_rx = last_ping = time.time()
         pending = [rest] if rest else []
         try:
@@ -167,8 +168,11 @@ class Collector:
                         except ValueError:
                             pass
                 now = time.time()
+                if self.level() != sent_level:              # the owner changed what the centre may do: tell it now, not at the next reconnect
+                    sent_level = self.level()
+                    send({'t': 'hello', 'version': self.version, 'level': sent_level})
                 if now - last_ping > 25:
-                    send({'t': 'ping'})
+                    send({'t': 'ping', 'level': sent_level})
                     last_ping = now
                 if now - last_rx > 80:
                     raise ConnectionError('главная установка не отвечает')

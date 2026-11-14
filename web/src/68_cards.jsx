@@ -142,9 +142,12 @@ function DayChart({ points, field, unit, color = 'var(--accent)' }) {
 /* an UPS: how long it will last, load, charge, consumption through the day, what is plugged in */
 function CardUps({ device }) {
   const ups = device.state.ups, hist = useHistory(device.id, true);
-  const chargeCol = ups.charge == null ? 'var(--text3)' : ups.charge > 50 ? 'var(--green)' : ups.charge > 20 ? 'var(--orange)' : 'var(--red)';
+  const au = isAurora();                             // «Аврора»: the system colour, growing dim as things get worse — no red / orange
+  const chargeCol = ups.charge == null ? 'var(--text3)' : au ? (ups.charge > 50 ? 'var(--accent)' : ups.charge > 20 ? 'color-mix(in srgb, var(--accent) 55%, #8e8e93)' : '#8e8e93')
+    : ups.charge > 50 ? 'var(--green)' : ups.charge > 20 ? 'var(--orange)' : 'var(--red)';
   const pct = ups.loadPct != null ? ups.loadPct : (ups.nominalW ? Math.round(ups.loadW * 100 / ups.nominalW) : null);
-  const loadCol = pct == null ? 'var(--accent)' : pct > 85 ? 'var(--red)' : pct > 70 ? 'var(--orange)' : 'var(--tc, var(--accent))';
+  const loadCol = au ? 'var(--accent)' : pct == null ? 'var(--accent)' : pct > 85 ? 'var(--red)' : pct > 70 ? 'var(--orange)' : 'var(--tc, var(--accent))';
+  const flow = au ? 'var(--accent)' : 'var(--orange)';
   const conn = [...(ups.connected || [])].sort((a, b) => b.w - a.w), top = Math.max(1, ...conn.map(c => c.w));
   return <>
     <Card className="cd-ups">
@@ -157,11 +160,11 @@ function CardUps({ device }) {
       {ups.lowBattery || ups.replace ? <div className="badge offline" style={{ marginTop: 10 }}>{ups.replace ? 'Пора менять аккумулятор' : 'Батарея почти разряжена'}</div> : null}
       {ups.estimated ? <div className="dim3" style={{ fontSize: 12, marginTop: 10 }}>Время и нагрузка рассчитаны по подключённым устройствам, кабеля данных нет.</div> : null}
     </Card>
-    <Card title="Потребление за сутки"><DayChart points={hist} field="w" unit="Вт" color="var(--orange)" /></Card>
+    <Card title="Потребление за сутки"><DayChart points={hist} field="w" unit="Вт" color={flow} /></Card>
     {ups.runtimeMin ? <Card title="Как будет садиться батарея"><UpsCurve min={ups.runtimeMin} charge={ups.charge} /></Card> : null}
     {conn.length ? <Card title={`Что подключено · ${conn.length}`}><div className="list">{conn.map((c, i) => <div className="li" key={c.id || c.unit || i} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
       <div className="row" style={{ gap: 10 }}><KindIcon kind={c.kind || 'other'} name={nameNoFlag(c.name)} size={30} round={8} /><div className="grow ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(c.name)}</div><b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
-      <div className="bar"><i style={{ width: Math.max(4, c.w * 100 / top) + '%', background: 'var(--orange)' }} /></div></div>)}</div></Card> : null}
+      <div className="bar"><i style={{ width: Math.max(4, c.w * 100 / top) + '%', background: flow }} /></div></div>)}</div></Card> : null}
   </>;
 }
 
@@ -232,7 +235,7 @@ function Model3D({ model, ports, sel, onPick, view, onSaveView, manual, marks, z
   const [sw, setSw] = useState(320); const [risen, setRisen] = useState(false);
   const rest = view || model.view || { rx: -13, ry: -20 };
   const [rot, setRot] = useState(rest);
-  const [zoomed, setZoomedS] = useState(false); const setZoomed = v => { zoomedRef.current = v; setZoomedS(v); }; const zz = isTestLook() ? zoomZone(model, manual, marks, zoom) : null;
+  const [zoomed, setZoomedS] = useState(false); const setZoomed = v => { zoomedRef.current = v; setZoomedS(v); }; const zz = isRichLook() ? zoomZone(model, manual, marks, zoom) : null;
   useEffect(() => { if (zz && new URLSearchParams(location.search).get('zoomports') === '1') { setZoomed(true); setRisen(true); setRot({ rx: 0, ry: zz.face === 'back' ? 180 : 0 }); } }, []);      // for tests
   const zoomedRef = useRef(false);
   useEffect(() => { if (!zoomedRef.current) setRot(rest); }, [rest.rx, rest.ry, model.name, model.size.w, model.size.h]);
@@ -329,7 +332,7 @@ function useZoneDraw(box, onDone) {
 }
 /* only in «Test»: the zone the «Порты крупно» button flies to */
 function ZoneBar({ zone, zmode, setZmode, onReset }) {
-  if (!isTestLook()) return null;
+  if (!isRichLook()) return null;
   return <div className="zn-bar"><div className="grow" style={{ minWidth: 0 }}><b>Область приближения</b>
     <small>{zmode ? 'Обведите пальцем прямоугольник вокруг портов' : zone ? 'задана вручную — кнопка «Порты крупно» приблизит её' : 'не задана — приближается весь блок портов'}</small></div>
     <Btn size="sm" kind={zmode ? 'primary' : undefined} icon="search" onClick={() => setZmode(!zmode)}>{zmode ? 'Отмена' : zone ? 'Изменить' : 'Задать'}</Btn>
@@ -469,7 +472,7 @@ function AppearanceModal({ item, onClose }) {
 
 function PhotoPorts({ url, spots, sel, onPick, zoom }) {
   const [zoomed, setZoomed] = useState(() => new URLSearchParams(location.search).get('zoomports') === '1');
-  const zz = !isTestLook() ? null : zoom || (spots.length ? (() => { const x0 = Math.min(...spots.map(s => s.x - s.w / 2)), y0 = Math.min(...spots.map(s => s.y - s.h / 2)), x1 = Math.max(...spots.map(s => s.x + s.w / 2)), y1 = Math.max(...spots.map(s => s.y + s.h / 2)), m = .03;
+  const zz = !isRichLook() ? null : zoom || (spots.length ? (() => { const x0 = Math.min(...spots.map(s => s.x - s.w / 2)), y0 = Math.min(...spots.map(s => s.y - s.h / 2)), x1 = Math.max(...spots.map(s => s.x + s.w / 2)), y1 = Math.max(...spots.map(s => s.y + s.h / 2)), m = .03;
     return { x: Math.max(0, x0 - m), y: Math.max(0, y0 - m), w: Math.min(1, x1 - x0 + 2 * m), h: Math.min(1, y1 - y0 + 2 * m) }; })() : null);
   const Z = zz ? clampN(Math.min(1 / zz.w, 1 / zz.h), 1, 6) : 1;
   return <div className={'ph-stage' + (zoomed ? ' zoomed' : '')}>

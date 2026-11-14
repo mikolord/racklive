@@ -97,7 +97,7 @@ function MailNeeded({ onClose }) {
 /* the list of one-time recovery codes: shown once, copy or download */
 function RecoveryCodes({ codes, onClose }) {
   const toast = useToast(); const text = codes.map(c => c.slice(0, 5) + '-' + c.slice(5)).join('\n');
-  const save = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([`Rack Live — запасные коды входа\nКаждый работает один раз.\n\n${text}\n`], { type: 'text/plain' })); a.download = 'racklive-recovery-codes.txt'; a.click(); };
+  const save = () => saveBlob(new Blob([`Rack Live — запасные коды входа\nКаждый работает один раз.\n\n${text}\n`], { type: 'text/plain' }), 'racklive-recovery-codes.txt');
   return <Modal title="Запасные коды" onClose={onClose} footer={<Btn kind="primary" onClick={onClose}>Я сохранил</Btn>}>
     <div className="warn-box"><Icon name="alert" size={16} /><div>Сохраните их сейчас — <b>больше они не покажутся</b>. Если потеряете телефон, войти можно будет только с таким кодом. Каждый работает один раз.</div></div>
     <div className="rc-grid">{codes.map(c => <code key={c}>{c.slice(0, 5)}-{c.slice(5)}</code>)}</div>

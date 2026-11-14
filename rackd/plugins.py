@@ -69,7 +69,9 @@ rm -f "${RLI:=$(mktemp /tmp/rl-inst.XXXXXX)}"''',
 # ───────── OpenWrt (over SSH; apk on 25.x, opkg before) ─────────
 CATALOG += [
     {'id': 'forkop', 'drivers': ['openwrt'], 'title': 'Forkop', 'icon': 'globe2', 'kind': 'installer',
-     'description': 'Маршрутизация сайтов через прокси/VPN на sing-box: форк Podkop с sing-box extended (XHTTP) и подписками. Настройка — в LuCI.',
+     'description': 'Маршрутизация сайтов через прокси/VPN на sing-box: форк Podkop с sing-box extended (XHTTP) и подписками. '
+                    'Раздельный VPN в один шаг: вставьте конфиг AmneziaWG / WireGuard, ссылки VLESS и др. или подписку — российские сайты пойдут напрямую, остальное через VPN. '
+                    'Тонкая настройка — в LuCI.',
      'author': 'ushan0v', 'home': 'https://github.com/ushan0v/forkop'},
     {'id': 'podkop', 'drivers': ['openwrt'], 'title': 'Podkop', 'icon': 'globe2', 'kind': 'installer',
      'description': 'Оригинальный Podkop: маршрутизация списков сайтов через прокси/VPN на sing-box. Настройка — в LuCI.',
@@ -128,6 +130,7 @@ echo "@@free $(df /overlay 2>/dev/null | awk 'NR==2{print $4}')"
 echo "@@sb $(sing-box version 2>/dev/null | head -1)"
 for p in forkop luci-app-forkop podkop luci-app-podkop tachyon luci-app-tachyon sing-box sing-box-extended https-dns-proxy %s; do v=$(pv $p); [ -n "$v" ] && echo "@@pkg $p $v"; done
 for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && [ "$(cat $d/bDeviceClass)" != "09" ] && echo "@@usb $(cat $d/idVendor):$(cat $d/idProduct) $(cat $d/manufacturer 2>/dev/null) $(cat $d/product 2>/dev/null)"; done
+for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && [ "$(cat $d/bDeviceClass)" != "09" ] && echo "@@ucls $(cat $d/idVendor):$(cat $d/idProduct) $(cat $d/*:*/bInterfaceClass 2>/dev/null | sort -u | tr '\n' ',')"; done
 for d in rndis_host cdc_ether cdc_ncm huawei_cdc_ncm qmi_wwan cdc_mbim option; do ls /sys/bus/usb/drivers/$d 2>/dev/null | grep -q ':' && echo "@@drv $d"; done
 for f in /dev/ttyUSB* /dev/cdc-wdm*; do [ -e "$f" ] && echo "@@dev $f"; done
 echo @@end
@@ -135,13 +138,13 @@ echo @@end
 
 
 def parse_owrt(out):
-    s = {'pkgs': {}, 'usb': [], 'drv': [], 'dev': [], 'rel': '', 'pm': 'opkg', 'free': None, 'sb': ''}
+    s = {'pkgs': {}, 'usb': [], 'drv': [], 'dev': [], 'ucls': [], 'rel': '', 'pm': 'opkg', 'free': None, 'sb': ''}
     for l in out.splitlines():
         k, _, v = l.partition(' ')
         if k == '@@pkg':
             n, _, ver = v.partition(' ')
             s['pkgs'][n] = ver
-        elif k in ('@@usb', '@@drv', '@@dev'):
+        elif k in ('@@usb', '@@drv', '@@dev', '@@ucls'):
             s[k[2:]].append(v.strip())
         elif k == '@@free':
             s['free'] = int(v) if v.strip().isdigit() else None
@@ -201,6 +204,178 @@ def modem_suggest(st):
     if any(d.startswith('/dev/ttyUSB') for d in st['dev']):
         return 'ppp'
     return None
+
+
+# ── a modem that came up as a «flash drive» (only mass-storage interfaces): switch it with usbmode (StandardEject),
+# by our own rule file + a hotplug script, so it switches again after a reboot / re-plug (the stock /etc/usb-mode.json lacks newer ZXIC etc.)
+MODEM_VENDORS = {'19d2', '12d1', '2c7c', '1e0e', '2001', '1c9e', '05c6', '2020', '1bbb', '0af0', '1410', '19f5', '230d', '2cb7', '1782',
+                 '1d09', '2357', '0e8d', '1e2d', '106c', '1199', '413c', '0b3c', '201e', '22de', '2717', '3566', '05c6', '1508', '1435'}
+MODEM_NAME_RE = re.compile(r'modem|mobile|broad ?band|lte|4g|3g|5g|zxic|hilink|huawei|zte|wwan|usb[- ]?stick', re.I)
+
+
+def modem_storage(st):
+    """USB devices that look like a modem sitting in its CD-ROM («flash drive with drivers») mode."""
+    names = {u.split(' ', 1)[0]: u for u in st.get('usb', [])}
+    out = []
+    for l in st.get('ucls', []):
+        vp, _, cls = l.partition(' ')
+        cl = {c for c in cls.split(',') if c}
+        if cl != {'08'}:
+            continue
+        nm = names.get(vp, vp)
+        if vp.split(':')[0].lower() in MODEM_VENDORS or MODEM_NAME_RE.search(nm.split(' ', 1)[-1]):
+            out.append({'id': vp.lower(), 'name': nm})
+    return out
+
+
+def modeswitch_script(ids):
+    devs = ',\n'.join('\t\t"%s": { "*": { "mode": "StandardEject", "msg": [ ] } }' % i for i in ids if re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{4}', i))
+    return ("cat > /etc/rl-usb-mode.json <<'EOF'\n{\n\t\"messages\" : [ ],\n\t\"devices\" : {\n" + devs + "\n\t}\n}\nEOF\n"
+            "cat > /etc/hotplug.d/usb/15-rl-modeswitch <<'EOF'\n"
+            "# Rack Live: switch USB modems that come up as a flash drive (rules: /etc/rl-usb-mode.json)\n"
+            "[ \"$ACTION\" = add ] && [ \"$DEVTYPE\" = usb_device ] && [ -f /etc/rl-usb-mode.json ] || exit 0\n"
+            "( sleep 3; usbmode -s -c /etc/rl-usb-mode.json ) </dev/null >/dev/null 2>&1 &\nEOF\n"
+            "grep -qx /etc/rl-usb-mode.json /etc/sysupgrade.conf 2>/dev/null || echo /etc/rl-usb-mode.json >> /etc/sysupgrade.conf\n"
+            "grep -qx /etc/hotplug.d/usb/15-rl-modeswitch /etc/sysupgrade.conf 2>/dev/null || echo /etc/hotplug.d/usb/15-rl-modeswitch >> /etc/sysupgrade.conf\n"
+            "command -v usbmode >/dev/null || { echo '@@fail на роутере нет usbmode (пакет usb-modeswitch)'; exit 0; }\n"
+            "usbmode -s -v -c /etc/rl-usb-mode.json 2>&1 | tail -5\nsleep 12\n")
+
+# ── USB modem add-on: an interface for the modem and its priority against the wired WAN (route metrics) ──
+MODEM_IFACE = 'modem'
+MODEM_PROTO = {'hilink': 'dhcp', 'mm': 'modemmanager', 'qmi': 'qmi', 'ppp': '3g'}
+PROTO_PROFILE = {'dhcp': 'hilink', 'modemmanager': 'mm', 'qmi': 'qmi', '3g': 'ppp', 'ncm': 'hilink', 'mbim': 'mm'}
+NET_HILINK, NET_QMI = ('rndis_host', 'cdc_ether', 'cdc_ncm', 'huawei_cdc_ncm'), ('qmi_wwan', 'cdc_mbim')
+MODEM_METRIC = {'main': (10, 20), 'backup': (20, 10)}           # priority → (modem, wired wan); lower metric wins
+APN_PRESETS = [{'id': 'internet.mts.ru', 'label': 'МТС'}, {'id': 'internet', 'label': 'МегаФон'}, {'id': 'internet.beeline.ru', 'label': 'Билайн'},
+               {'id': 'internet.tele2.ru', 'label': 'Tele2 (T2)'}, {'id': 'internet.yota', 'label': 'Yota'}, {'id': 'internet.tinkoff.ru', 'label': 'Т-Мобайл'}]
+
+MODEM_NET = r"""for n in /sys/class/net/*; do [ -e $n/device/driver ] || continue; d=$(basename "$(readlink $n/device/driver)")
+  case $d in rndis_host|cdc_ether|cdc_ncm|huawei_cdc_ncm|qmi_wwan|cdc_mbim) echo "@@net ${n##*/} $d $(readlink -f $n/device/..)";; esac; done
+for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && [ "$(cat $d/bDeviceClass)" != "09" ] && echo "@@usbp $(readlink -f $d) $(cat $d/idVendor):$(cat $d/idProduct)"; done
+for f in /dev/ttyUSB* /dev/cdc-wdm*; do [ -e "$f" ] && echo "@@dev $f"; done
+for s in $(uci -q show network | sed -n "s/^network\.\([^.=]*\)=interface$/\1/p"); do
+  echo "@@if $s|$(uci -q get network.$s.proto)|$(uci -q get network.$s.device)$(uci -q get network.$s.ifname)|$(uci -q get network.$s.metric)|$(uci -q get network.$s.apn)|$(uci -q get network.$s.disabled)"; done
+echo @@dump; ubus call network.interface dump 2>/dev/null; echo; echo @@end
+"""
+
+
+def parse_modem_net(out):
+    import json
+    s = {'net': [], 'usbp': [], 'dev': [], 'ifs': [], 'live': {}}
+    head, _, dump = out.partition('@@dump')
+    for l in head.splitlines():
+        k, _, v = l.partition(' ')
+        a = v.split()
+        if k == '@@net' and len(a) >= 2:
+            s['net'].append({'name': a[0], 'drv': a[1], 'usb': a[2] if len(a) > 2 else ''})
+        elif k == '@@usbp' and a:
+            s['usbp'].append({'path': a[0], 'id': a[1] if len(a) > 1 else ''})
+        elif k == '@@dev' and a:
+            s['dev'].append(a[0])
+        elif k == '@@if':
+            s['ifs'].append(dict(zip(('name', 'proto', 'device', 'metric', 'apn', 'disabled'), (v.split('|') + [''] * 6)[:6])))
+    try:
+        j = json.loads(dump.split('@@end', 1)[0].strip() or '{}')
+    except ValueError:
+        j = {}
+    for i in j.get('interface', []) or []:
+        addr = (i.get('ipv4-address') or [{}])[0]
+        s['live'][i.get('interface')] = {'up': bool(i.get('up')), 'dev': i.get('l3_device') or i.get('device') or '',
+                                         'ip': addr.get('address', ''), 'metric': i.get('metric'), 'uptime': i.get('uptime')}
+    return s
+
+
+def _metric(x):
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return 0
+
+
+def modem_card(ns, profiles, suggest):
+    """The «interface and priority» part of the USB-modem card: what exists, what can be picked, who wins the default route."""
+    hil = [n['name'] for n in ns['net'] if n['drv'] in NET_HILINK]
+    qnet = [n for n in ns['net'] if n['drv'] in NET_QMI]
+    cand = {'hilink': hil,
+            'mm': list(dict.fromkeys([n['usb'] for n in qnet if n['usb']] + [u['path'] for u in ns['usbp']])),
+            'qmi': [d for d in ns['dev'] if 'cdc-wdm' in d],
+            'ppp': [d for d in ns['dev'] if 'ttyUSB' in d]}
+    by = {i['name']: i for i in ns['ifs']}
+    mine = by.get(MODEM_IFACE) or next((i for i in ns['ifs'] if i['proto'] in ('modemmanager', 'qmi', '3g', 'ncm', 'mbim')
+                                        or (i['proto'] == 'dhcp' and i['device'] in hil)), None)
+    live = lambda n: next((ns['live'][x] for x in (n, n + '_4', n + '_6') if x in ns['live'] and ns['live'][x]['up']), ns['live'].get(n) or {})
+    wan = by.get('wan')
+    iface = None
+    if mine:
+        lv = live(mine['name'])
+        iface = {'name': mine['name'], 'proto': mine['proto'], 'device': mine['device'], 'apn': mine['apn'], 'metric': _metric(mine['metric']),
+                 'disabled': mine['disabled'] == '1', 'up': bool(lv.get('up')), 'ip': lv.get('ip', ''), 'ifname': lv.get('dev', ''),
+                 'profile': PROTO_PROFILE.get(mine['proto'], ''), 'ours': mine['name'] == MODEM_IFACE}
+    w = None
+    if wan:
+        lv = live('wan')
+        w = {'name': 'wan', 'proto': wan['proto'], 'device': wan['device'], 'metric': _metric(wan['metric']), 'up': bool(lv.get('up')), 'ip': lv.get('ip', '')}
+    prio = ''
+    if iface and w:
+        prio = 'main' if iface['metric'] < w['metric'] else 'backup' if iface['metric'] > w['metric'] else 'equal'
+    inst = [m['id'] for m in profiles if m['installed']]
+    pick = (iface or {}).get('profile') if (iface or {}).get('profile') in inst else suggest if suggest in inst else (inst[0] if inst else '')
+    return {'iface': iface, 'wan': w, 'prio': prio, 'cands': cand, 'pick': pick, 'apns': APN_PRESETS,
+            'others': [i['name'] for i in ns['ifs'] if i['name'] not in ('loopback', 'lan', (iface or {}).get('name'))]}
+
+
+def _q(v):
+    return "'" + str(v).replace("'", "'\\''") + "'"
+
+
+_ZONE = r"""Z=$(uci -q show firewall | sed -n "s/^firewall\.\([^.]*\)\.name='wan'$/\1/p" | head -1)
+"""
+
+
+def modem_apply_script(name, profile, device, apn, pin, prio, old_rel):
+    """UCI: (re)create the modem interface, put it in the wan zone, set the metrics; reload detached (the WAN may restart)."""
+    proto = MODEM_PROTO[profile]
+    devopt = 'ifname' if profile == 'hilink' and old_rel else 'device'
+    mm, wm = MODEM_METRIC[prio]
+    L = ['I=' + _q(name), 'cp /etc/config/network /etc/config/network.rl-modem.bak 2>/dev/null',
+         '[ -f /etc/rl-modem.orig ] || echo "$(uci -q get network.wan.metric)|$(uci -q get network.wan6.metric)" > /etc/rl-modem.orig',
+         'uci -q get network.$I >/dev/null || uci set network.$I=interface',
+         'for o in proto device ifname apn pincode service auth username password iptype pdptype disabled; do uci -q delete network.$I.$o; done',
+         'uci set network.$I.proto=' + _q(proto), f'uci set network.$I.{devopt}=' + _q(device)]
+    if profile != 'hilink' and apn:
+        L.append('uci set network.$I.apn=' + _q(apn))
+    if profile != 'hilink' and pin:
+        L.append('uci set network.$I.pincode=' + _q(pin))
+    if profile == 'ppp':
+        L.append('uci set network.$I.service=umts')
+    L.append(f'uci set network.$I.metric={mm}')
+    L.append(f'for s in wan wan6; do uci -q get network.$s >/dev/null && uci set network.$s.metric={wm}; done')
+    L.append(_ZONE + 'if [ -n "$Z" ]; then N=$(uci -q get firewall.$Z.network); case " $N " in *" $I "*) ;; *) uci -q delete firewall.$Z.network; '
+             'for x in $N $I; do uci add_list firewall.$Z.network=$x; done;; esac; else echo "@@nozone"; fi')
+    L.append('uci commit network; uci commit firewall; echo @@ok')
+    L.append("setsid sh -c 'sleep 1; /etc/init.d/network reload; sleep 2; /etc/init.d/firewall reload' </dev/null >/dev/null 2>&1 &")
+    return '\n'.join(L) + '\n'
+
+
+def modem_prio_script(name, prio):
+    mm, wm = MODEM_METRIC[prio]
+    return ('I=' + _q(name) + '\nuci -q get network.$I >/dev/null || { echo "@@fail нет интерфейса $I"; exit 0; }\n'
+            '[ -f /etc/rl-modem.orig ] || echo "$(uci -q get network.wan.metric)|$(uci -q get network.wan6.metric)" > /etc/rl-modem.orig\n'
+            f'uci set network.$I.metric={mm}\nfor s in wan wan6; do uci -q get network.$s >/dev/null && uci set network.$s.metric={wm}; done\n'
+            "uci commit network; echo @@ok\nsetsid sh -c 'sleep 1; /etc/init.d/network reload' </dev/null >/dev/null 2>&1 &\n")
+
+
+def modem_remove_script(name):
+    """Drop the interface, take it out of the wan zone, give the wired WAN its metric back (as before the add-on)."""
+    return ('I=' + _q(name) + '\nuci -q delete network.$I\n' + _ZONE +
+            'if [ -n "$Z" ]; then N=$(uci -q get firewall.$Z.network); uci -q delete firewall.$Z.network; '
+            'for x in $N; do [ "$x" = "$I" ] || uci add_list firewall.$Z.network=$x; done; fi\n'
+            'if [ -f /etc/rl-modem.orig ]; then O=$(cat /etc/rl-modem.orig); W=${O%%|*}; W6=${O#*|}\n'
+            '  if [ -n "$W" ]; then uci set network.wan.metric="$W"; else uci -q delete network.wan.metric; fi\n'
+            '  uci -q get network.wan6 >/dev/null && { if [ -n "$W6" ]; then uci set network.wan6.metric="$W6"; else uci -q delete network.wan6.metric; fi; }\n'
+            '  rm -f /etc/rl-modem.orig; fi\n'
+            "uci commit network; uci commit firewall; echo @@ok\n"
+            "setsid sh -c 'sleep 1; /etc/init.d/network reload; sleep 2; /etc/init.d/firewall reload' </dev/null >/dev/null 2>&1 &\n")
 
 
 PKG_CHECK = 'echo @@pkgs; opkg list-installed 2>/dev/null | grep -E "^(hrneo|hrweb|awg-manager) "; echo @@arch; uname -m; echo @@end'

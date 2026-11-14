@@ -305,6 +305,14 @@ class DemoOpenWrt(DemoBase):
                 p.update(usb=['12d1:14dc Huawei E3372h'], drivers=['cdc_ether'], devs=[], suggest='hilink', installed=bool(self._installed),
                          checks=[{'label': 'Модем подключён к USB: 12d1:14dc Huawei E3372h', 'ok': True}],
                          profiles=[dict(m, installed=m['id'] in self._installed, suggested=m['id'] == 'hilink') for m in plugins.MODEM_PROFILES])
+                if self._installed:
+                    mi = getattr(self, '_modem_if', None)
+                    ns = {'net': [{'name': 'usb0', 'drv': 'cdc_ether', 'usb': '/sys/devices/platform/usb/1-1'}], 'usbp': [{'path': '/sys/devices/platform/usb/1-1', 'id': '12d1:14dc'}],
+                          'dev': [], 'live': {'wan': {'up': True, 'ip': '192.168.1.50'}, **({'modem': {'up': True, 'ip': '192.168.8.100', 'dev': 'usb0'}} if mi else {})},
+                          'ifs': [{'name': 'lan', 'proto': 'static', 'device': 'br-lan', 'metric': '', 'apn': '', 'disabled': ''},
+                                  {'name': 'wan', 'proto': 'dhcp', 'device': 'eth0', 'metric': str(mi['wm']) if mi else '', 'apn': '', 'disabled': ''}]
+                                 + ([{'name': 'modem', 'proto': plugins.MODEM_PROTO[mi['profile']], 'device': mi['device'], 'metric': str(mi['mm']), 'apn': mi['apn'], 'disabled': ''}] if mi else [])}
+                    p['net'] = plugins.modem_card(ns, p['profiles'], 'hilink')
             out.append(p)
         return {'fw': '25.12.1', 'pm': 'apk', 'plugins': out}
 
@@ -319,6 +327,32 @@ class DemoOpenWrt(DemoBase):
                 'wanip': '192.168.1.70/24', 'lanip': prof['lan'] if prof else '10.0.40.1/24', 'via': 'br-lan', 'mgmt': 'lan2', 'rollback': False, 'nopass': not prof, 'wanmac': '', 'foreign': None}
 
     def plugin(self, cfg, pid, op, params):
+        if pid in ('forkop', 'tachyon', 'podkop') and op.startswith('split_'):     # «Раздельный VPN»: the real parser, a pretend router
+            from .. import forkop_split as fs, vpn_engines as ve
+            sp = (getattr(self, '_splits', None) or {}).get(pid)
+            st = lambda: {'ok': True, 'engine': pid, 'forkop': pid in self._pkgs, 'lan': '192.168.1.0/24', 'running': pid in self._pkgs, 'applied': bool(sp),
+                          'lists': ve.LISTS, 'awgProto': False,
+                          'sections': ([{'id': 'rl_ru', 'action': 'bypass', 'name': 'Россия напрямую', 'ours': True}] if sp and sp['mode'] == 'split' else [])
+                          + ([{'id': 'rl_vpn', 'action': 'connection', 'name': 'Через VPN', 'ours': True}] if sp else []), 'children': []}
+            if op == 'split_status':
+                return st()
+            try:
+                parsed = fs.parse(params.get('text'))
+                mode, lists, domains = ve.check_opts(params.get('mode'), params.get('lists'), params.get('domains') or '', pid)
+                net = fs.check_net(params.get('net')) if mode == 'split' else ''
+            except fs.SplitError as e:
+                raise DriverError(str(e))
+            if op == 'split_preview':
+                return {'ok': True, 'preview': fs.public(parsed), 'net': net}
+            if pid not in self._pkgs:
+                raise DriverError(f'{pid.capitalize()} не установлен на роутере')
+            if pid == 'forkop':                                           # builds without errors
+                fs.script(parsed, net, True, mode, lists, domains)
+            elif parsed['type'] != 'subscription' or pid == 'tachyon':
+                (ve.tachyon_script if pid == 'tachyon' else ve.podkop_script)(parsed, net, True, mode, lists, domains, True)
+            self._splits = dict(getattr(self, '_splits', None) or {}, **{pid: {'mode': mode}})
+            how = f"российские сайты напрямую, остальное для сети {net or '192.168.1.0/24'} — через VPN" if mode == 'split' else 'выбранные сайты — через VPN, остальное напрямую'
+            return {'ok': True, 'split': st(), 'backup': f'/root/{pid}.rl-demo.bak', 'message': f"Готово (демо): {how}."}
         time.sleep(.8)
         if pid == 'portal':
             from .. import portal
@@ -349,6 +383,19 @@ class DemoOpenWrt(DemoBase):
             if op == 'remove':
                 self._pkgs.pop('portal', None)
                 return {'ok': True, 'message': 'Портал убран (демо)', 'deviceUpdate': {'portal': None}}
+        if pid == 'modem' and op in ('iface', 'prio', 'iface_remove'):
+            mi = getattr(self, '_modem_if', None)
+            if op == 'iface_remove':
+                self._modem_if = None
+                return {'ok': True, 'message': 'Интерфейс «modem» удалён (демо)'}
+            mm, wm = plugins.MODEM_METRIC[params.get('prio') or 'backup']
+            if op == 'prio':
+                if not mi:
+                    raise DriverError('интерфейса модема ещё нет — создайте его')
+                mi.update(mm=mm, wm=wm)
+            else:
+                self._modem_if = {'profile': params.get('profile') or 'hilink', 'device': params.get('device') or 'usb0', 'apn': params.get('apn') or '', 'mm': mm, 'wm': wm}
+            return {'ok': True, 'message': 'Интерфейс «modem» готов (демо): ' + ('модем — основной' if mm < wm else 'кабель — основной')}
         if pid == 'modem':
             (self._installed.add if op == 'install' else self._installed.discard)(params.get('profile'))
             return {'ok': True, 'log': [], 'message': f"{'Установлено' if op == 'install' else 'Удалено'} (демо)"}

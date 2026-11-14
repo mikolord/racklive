@@ -56,7 +56,15 @@ function App() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [tab, setTabRaw] = useState(() => { const t = PLAN_APP ? 'plan' : location.hash.slice(1) || lsGet('rl_tab', 'rack'); return t === 'devices' ? 'tools' : t; });
-  const setTab = t => { if (PLAN_APP && t!=='plan') { location.assign('/#'+encodeURIComponent(t==='devices'?'tools':t)); return; } setTabRaw(t === 'devices' ? 'tools' : t); };
+  // The press is answered at once (the dock moves its lens, the icon plays), while the heavy page is drawn in a transition: before, the main
+  // thread was busy building the dashboard and the animation of the press stuttered. tabNow = the tab pressed, whose page is not on the screen yet.
+  const [tabNow, setTabNow] = useState(null);
+  const setTab = t => {
+    if (PLAN_APP && t!=='plan') { location.assign('/#'+encodeURIComponent(t==='devices'?'tools':t)); return; }
+    const n = t === 'devices' ? 'tools' : t;
+    setTabNow(n); React.startTransition(() => setTabRaw(n));
+  };
+  useEffect(() => { if (tabNow != null && tabNow === tab) setTabNow(null); }, [tab, tabNow]);
   const [mode, setMode] = useState(() => new URLSearchParams(location.search).get('mode') === 'edit' ? 'edit' : 'view');
   const [sheet, setSheet] = useState(null);
   const [place, setPlace] = useState(null);           // a rack / panel opened from the plan: a window of its own, not a jump to the main screen
@@ -91,6 +99,8 @@ function App() {
   useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
   // the very first visit of the administrator: the server says tourDone=false (an installation that already has an administrator never gets it)
   useEffect(() => { if (!APP_MODE && data && data.authed && data.settings && data.settings.tourDone === false) setTour(true); }, [data && data.authed, data && data.settings && data.settings.tourDone]);
+  // the look chosen before 2.51 lives only in this browser: the administrator's device hands it to the server once, so that the installed apps (Frank, the speed test…) get it too
+  useEffect(() => { if (!APP_MODE && data && data.authed && !window.RL_LOOK && (getSkin() !== DEFAULT_SKIN || getAccent())) pushLook(); }, [data && data.authed]);
   useEffect(() => {                                       // ui.js of the administrator's own local plugins (rackd/localplug.py), once per page load
     if (APP_MODE || !data || !data.authed || window.__rlLocalScripts) return; window.__rlLocalScripts = true;
     api('/api/x/_scripts').then(r => (r.scripts || []).forEach(u => { const s = document.createElement('script'); s.src = u; s.defer = true; document.head.appendChild(s); })).catch(() => { });
@@ -141,7 +151,7 @@ function App() {
     : <div className="dim">Загрузка…</div>}</div>;
   if (data.setupNeeded) return <AuthScreen setup title={data.settings && data.settings.title} onDone={refresh} />;
   if (tg === 'pending' && !data.authed) return <div className="auth"><div className="app-bg" /><div className="dim">Вход через Telegram…</div></div>;
-  if ((data.needLogin && !data.devices) || login || ((FRANK || TERM_APP || CARDS_APP || PLAN_APP) && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : TERM_APP ? 'Терминал' : CARDS_APP ? 'Сканер' : PLAN_APP ? 'План' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin} codeLogin={data.loginCodes}
+  if ((data.needLogin && !data.devices) || login || ((FRANK || TERM_APP || CARDS_APP || PLAN_APP) && !data.authed)) return <AuthScreen title={FRANK ? 'Frank' : SPEED_APP ? 'Тест скорости' : TERM_APP ? 'Терминал' : CARDS_APP ? 'Сканер' : PLAN_APP ? 'План' : data.settings && data.settings.title} note={TG && tg !== 'ok' ? 'Вход через Telegram не удался: ' + tg : ''} tgLogin={data.tgLogin} codeLogin={data.loginCodes} passkey={data.passkeyLogin}
     onDone={() => { setLogin(false); refresh(); }} />;
 
   const admin = !!data.authed;
@@ -165,7 +175,7 @@ function App() {
     if (data.settings.tourDone !== true) { try { await api('/api/tour', { method: 'POST', body: {} }); } catch (e) { } refresh(); }
   };
   const applyState = (id, state) => setData(d => ({ ...d, devices: d.devices.map(x => x.id === id ? { ...x, state } : x) }));
-  const ctx = { data, admin, edit, arrange, setArrange, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
+  const ctx = { data, admin, edit, arrange, setArrange, setMode, theme, setTheme, refresh, saveRack, saveRacks, saveMap, savePlan, logout, applyState, setTab,
     pinTest, setPinTest, pinSpeedTest: id => { setPinTest(id); setMode('view'); setTab('plan'); }, openSpeed: () => setSpeed(true),
     openPlace: id => setPlace(id), openDevice: (d, t, port, popup) => d && setSheet({ id: d.id, tab: t, port, popup: !!popup }), openEditor: d => setEditor(d),
     newDevice: preset => setEditor({ __preset: preset }),             // «Новое устройство» with the type and fields already filled in
@@ -190,6 +200,9 @@ function App() {
   const tabs = TABS.filter(t => !t.admin || admin).map(t => ({ ...t, label: T('tab.' + t.id, t.label) }));      // a custom look may rename the tabs
   const cur = tabs.find(t => t.id === tab) ? tab : 'rack';
   const view = cur;          // what is shown: subtitle and hint follow it
+  const dockCur = tabNow != null && tabs.find(t => t.id === tabNow) ? tabNow : cur;      // the dock shows the pressed tab at once, the page follows
+  // «Аврора», расстановка виджетов: верхняя капсула превращается в «Готово», левый круг дока — в «Как было» (см. AuTop, AuDock)
+  const auArr = isAurora() && admin && edit && arrange && cur === 'rack';
   const subtitle = {
     rack: `${data.devices.filter(d => !d.healthSkip && (d.state || {}).status === 'online').length} из ${data.devices.filter(d => !d.healthSkip).length} устройств в сети${data.racks.length > 1 ? ' · мест: ' + data.racks.length : ''}`,       // «без слежки» не считаются
     map: 'Как всё соединено: шкаф, кабели, точки доступа и клиенты',
@@ -213,7 +226,7 @@ function App() {
         {admin ? <span data-tour="edit-toggle" style={{ display: 'inline-flex' }}><Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
           { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /></span> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
         {admin && edit && cur === 'rack' ? <label className="arrange-sw" title="Двигать, менять размер, добавлять и убирать виджеты на главной"><Switch on={arrange} onChange={setArrange} /><span>Расстановка виджетов</span></label> : null}
-        {admin ? <button type="button" data-tour="frank-btn" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}><FrankEye size={26} round={8} /></button> : null}
+        {admin ? <button type="button" data-tour="frank-btn" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}>{isAurora() ? <AuEye size={19} /> : <FrankEye size={26} round={8} />}</button> : null}
         <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
         <Btn size="sm" icon={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} title={'Тема: ' + ({ auto: 'как в системе', dark: 'тёмная', light: 'светлая' })[theme]}
           onClick={() => setTheme(theme === 'auto' ? 'dark' : theme === 'dark' ? 'light' : 'auto')} />
@@ -225,7 +238,7 @@ function App() {
       theme={theme} setTheme={setTheme} onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} onClose={() => { if (tourNav.current) setNavKey(k => k + 1); else setNav(false); }} title={data.settings.title} stale={stale} live={stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)} /> : null}
     {menu ? <HeaderMenu admin={admin} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
       onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
-    <main className={'page' + (mapFull ? ' page-full' : '')}>
+    <main className={'page' + (mapFull ? ' page-full' : '') + (auArr ? ' au-arr' : '')}>
       {mapFull ? null : <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
         <div className="grow"><div className="page-title">{tabs.find(t => t.id === cur).label}</div><div className="page-sub" style={{ marginBottom: 0 }}>{subtitle}</div></div>
         {edit ? <span className="badge warning"><Icon name="edit" size={12} />Режим редактирования</span> : null}
@@ -239,6 +252,11 @@ function App() {
       {cur === 'tools' && admin ? <ToolsView /> : null}
       {cur === 'settings' && admin ? <SettingsView /> : null}
     </main>
+    {isAurora() ? <AuTop admin={admin} onDevices={() => { ssSet('rl_pending_tool', 'devices'); if (cur === 'tools') window.dispatchEvent(new CustomEvent('rl-open-tool', { detail: 'devices' })); else setTab('tools'); }} onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onMenu={() => setMenu(true)}
+      arr={auArr} onDone={() => { setArrange(false); setMode('view'); }} /> : null}
+    {isAurora() && mapFull ? <AuTuck /> : null}
+    {isAurora() && mapFull ? <AuFullFit /> : null}
+    {isAurora() ? <AuDock tabs={tabs} cur={dockCur} setTab={setTab} problems={problems} badge={badge} onLogin={() => setLogin(true)} arr={auArr} /> : null}
     <nav className="bottombar">{tabs.map(t => <button key={t.id} data-tour={'tab-' + t.id} className={cur === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
       <Icon name={t.icon} size={24} />{t.label}{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
     {place ? <PlaceModal rackId={place} onClose={() => setPlace(null)} /> : null}
@@ -250,6 +268,142 @@ function App() {
   </AppCtx.Provider>;
 }
 
+/* «Аврора» on a phone (Apple Liquid Glass, iOS 26): on top a round button (the app, with the live dot) and a capsule of actions;
+   at the bottom a small dock of the main sections in the middle and two round buttons at the sides (Инструменты, Настройки — or «Войти»).
+   Shown only by the CSS of that look at phone width; elsewhere the usual header and tab bar stay. */
+const isAurora = () => document.documentElement.getAttribute('data-look') === 'aurora';
+/* значок главной кнопки «оживает» по нажатию: у каждой своё движение (data-fx) — шестерёнка проворачивается, ключ качается, колокольчик звенит, глаз моргает…
+   Запуск — атрибутом data-go прямо на кнопке (React его не трогает, а класс перезаписал бы при смене раздела) */
+const AU_FX = { rack: 'hop', map: 'fold', plan: 'draw', tools: 'wiggle', events: 'ring', settings: 'spin' };
+const auFx = e => { const b = e.currentTarget; b.removeAttribute('data-go'); void b.offsetWidth; b.setAttribute('data-go', '1');
+  clearTimeout(b._fx); b._fx = setTimeout(() => b.removeAttribute('data-go'), 950); };
+/* плавная подмена кнопки: прежняя сжимается и тает (класс out), потом выпрыгивает новая (класс in) */
+function useAuSwap(v, ms = 180) {
+  const [s, setS] = useState({ v, ph: '' });
+  useEffect(() => {
+    if (s.v === v) { if (s.ph === 'out') setS({ v, ph: 'in' }); return; }
+    setS(x => ({ ...x, ph: 'out' })); const t = setTimeout(() => setS({ v, ph: 'in' }), ms); return () => clearTimeout(t);
+  }, [v]);
+  return s;
+}
+function AuTop({ admin, onDevices, onFrank, onSpeed, onMenu, arr, onDone }) {
+  const back = useAuBackTop();                                  // a screen with somewhere to go back to turns the button into «Назад»
+  const sw = useAuSwap(!!arr);                                  // расстановка виджетов: вся капсула справа превращается в одну кнопку «Готово»
+  const left = sw.v ? <span key="none" className="au-spacer" />
+    : back ? <button type="button" key="back" data-fx="nudge" className={'au-glass au-circle au-morph au-sw ' + sw.ph} title={'Назад: ' + back.label} aria-label={'Назад: ' + back.label} onClick={e => { auFx(e); back.fn(); }}>
+      <Icon name="chevron" size={22} stroke={2.6} style={{ transform: 'rotate(180deg)' }} /></button>
+    : admin ? <button type="button" key="dev" data-fx="stack" className={'au-glass au-circle au-morph au-sw ' + sw.ph} title="Устройства" aria-label="Устройства" onClick={e => { auFx(e); onDevices(); }}><Icon name="server" size={21} /></button>
+    : <span key="none" className="au-spacer" />;
+  return <div className="au-top">
+    {left}
+    {sw.v ? <button type="button" key="done" className={'au-circle au-done au-sw ' + sw.ph} title="Готово" aria-label="Готово" onClick={onDone}><Icon name="check" size={25} stroke={2.8} /></button>
+      : <div key="pill" className={'au-glass au-pill au-sw ' + sw.ph}>
+        {admin ? <button type="button" data-fx="blink" title="Frank — помощник" aria-label="Frank" onClick={e => { auFx(e); onFrank(); }}><AuEye size={23} /></button> : null}
+        <button type="button" data-fx="rev" title="Тест скорости" aria-label="Тест скорости" onClick={e => { auFx(e); onSpeed(); }}><Icon name="gauge" size={21} /></button>
+        <button type="button" data-fx="dots" title="Меню" aria-label="Меню" onClick={e => { auFx(e); onMenu(); }}><Icon name="more" size={21} stroke={2.6} /></button>
+      </div>}
+  </div>;
+}
+function AuDock({ tabs, cur, setTab, problems, badge, onLogin, arr }) {
+  const SIDE = ['tools', 'settings'];
+  const main = tabs.filter(t => !SIDE.includes(t.id)), left = tabs.find(t => t.id === 'tools'), right = tabs.find(t => t.id === 'settings');
+  const btn = t => <button key={t.id} type="button" data-fx={AU_FX[t.id] || 'hop'} title={t.label} aria-label={t.label} className={cur === t.id ? 'on' : ''} onClick={e => { auFx(e); setTab(t.id); setMini(false); }}>
+    <Icon name={t.icon} size={23} />{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>;
+  const sw = useAuSwap(!!arr);                                  // расстановка виджетов: «Инструменты» на время становятся кнопкой «Как было»
+  const nav = useRef(null);
+  const idx = main.findIndex(t => t.id === cur);
+  // a side section is open (tools, settings): its circle steps back when the dock shrinks, so the shrunk capsule shows that section's icon instead of staying empty
+  const curSide = idx < 0 ? tabs.find(t => t.id === cur && SIDE.includes(t.id)) : null;
+  // iOS 26: scrolling down shrinks the dock to the open section (the side buttons step back), scrolling up or a tap brings it back
+  const [mini, setMini] = useState(false);
+  useEffect(() => {
+    let last = window.scrollY, acc = 0, rest = 0;
+    // сжатый док живёт от прокрутки: значок открытого раздела наклоняется по ходу пальца и пружинит обратно (шестерёнка — катится), по кромке бежит кольцо «сколько пролистано»
+    const fx = (d, y) => { const el = nav.current; if (!el) return;
+      const max = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+      el.style.setProperty('--au-sv', Math.max(-1, Math.min(1, d / 26)).toFixed(3)); el.style.setProperty('--au-sy', Math.round(y)); el.style.setProperty('--au-sp', Math.max(0, Math.min(1, y / max)).toFixed(4));
+      clearTimeout(rest); rest = setTimeout(() => el.style.setProperty('--au-sv', '0'), 110); };
+    const on = () => { if (document.querySelector('main.page-full')) return;   // map / plan: the page is scrolled by AuFullFit, not by the finger
+      const y = window.scrollY, d = y - last; last = y; acc = Math.sign(d) === Math.sign(acc) ? acc + d : d; fx(d, y);
+      if (y < 40) setMini(false); else if (acc > 60) setMini(true); else if (acc < -40) setMini(false); };
+    window.addEventListener('scroll', on, { passive: true }); return () => { window.removeEventListener('scroll', on); clearTimeout(rest); };
+  }, []);
+  useEffect(() => { setMini(false); }, [cur]);
+  return <nav ref={nav} className={'au-dock' + (mini && !arr ? ' mini' : '')}>
+    {sw.v ? <div key="reset" className={'au-glass au-circle au-side au-sw ' + sw.ph}><button type="button" data-fx="back" title="Как было" aria-label="Вернуть главную как было"
+        onClick={e => { auFx(e); window.dispatchEvent(new Event('rl-dash-reset')); }}><Icon name="undo" size={22} stroke={2.1} /></button></div>
+      : left ? <div key="tools" className={'au-glass au-circle au-side au-sw ' + sw.ph}>{btn(left)}</div> : <span className="au-spacer" />}
+    <div className="au-glass au-pill au-tabs" style={{ '--i': idx, '--n': main.length }} onClick={() => mini && setMini(false)}>
+      {idx >= 0 ? <span className="au-lens" aria-hidden="true" /> : curSide ? <span className="au-lens au-lens-side" aria-hidden="true" /> : null}{main.map(btn)}
+      {curSide ? <button key="side-mini" type="button" tabIndex={-1} data-fx={AU_FX[curSide.id]} title={curSide.label} aria-label={curSide.label} className="on au-side-mini" onClick={() => setMini(false)}><Icon name={curSide.icon} size={23} /></button> : null}</div>
+    {right ? <div className="au-glass au-circle au-side">{btn(right)}</div>
+      : <div className="au-glass au-circle au-side"><button type="button" title="Войти" aria-label="Войти" onClick={onLogin}><Icon name="lock" size={22} /></button></div>}
+  </nav>;
+}
+
+/* «Аврора», карта и план на телефоне в установленном приложении: iOS начинает страницу ниже строки статуса, а в зоне под часами показывает то,
+   что на странице выше прокрутки. Поэтому холст делается ровно по видимой высоте плюс запас сверху, и страница прокручивается на этот запас —
+   под часами видна сама карта, как содержимое других вкладок. Верхние панели холста сдвигаются на тот же запас (--au-shift в CSS). */
+const AU_SHIFT = 120;
+function AuFullFit() {
+  useEffect(() => {
+    const h = document.documentElement;
+    const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    const fit = () => {
+      if (innerWidth > 760) { h.style.removeProperty('--au-vh'); h.style.removeProperty('--au-shift'); return; }
+      const shift = standalone ? AU_SHIFT : 0;
+      h.style.setProperty('--au-vh', innerHeight + 'px'); h.style.setProperty('--au-shift', shift + 'px');
+      requestAnimationFrame(() => window.scrollTo(0, shift));
+    };
+    // iOS moves the page by itself now and then (a tap on a house, the map flying to it, coming back to the app): the bottom of the canvas with the
+    // house card would slide off the screen. The page is pinned: any drift is put back at once.
+    const pin =() => { const want = parseFloat(h.style.getPropertyValue('--au-shift')) || 0;
+      if (innerWidth <= 760 && Math.abs(window.scrollY - want) > 1) window.scrollTo(0, want); };
+    const again = () => { if (!document.hidden) { fit(); setTimeout(fit, 300); } };
+    fit(); const t = setTimeout(fit, 350);
+    addEventListener('resize', fit); addEventListener('orientationchange', fit); addEventListener('scroll', pin, { passive: true });
+    addEventListener('pageshow', again); document.addEventListener('visibilitychange', again);
+    if (window.visualViewport) visualViewport.addEventListener('resize', fit);
+    return () => { clearTimeout(t); removeEventListener('resize', fit); removeEventListener('orientationchange', fit); removeEventListener('scroll', pin);
+      removeEventListener('pageshow', again); document.removeEventListener('visibilitychange', again);
+      if (window.visualViewport) visualViewport.removeEventListener('resize', fit);
+      h.style.removeProperty('--au-vh'); h.style.removeProperty('--au-shift'); window.scrollTo(0, 0); };
+  }, []);
+  return null;
+}
+
+/* «Аврора», карта и план на телефоне: свои кнопки экрана сворачиваются в один стеклянный круг — с анимацией, как окно в Dock macOS
+   (втягивается к кнопке, сужаясь), и разворачиваются обратно. Выбор помнится на устройстве; по умолчанию свёрнуто. */
+const AU_TUCK_SEL = '.page-full :is(.plan-ctx, .plan-floors, .plan-tool-current, .map-tools, .zoom-btns, .map-legend, .plan-hint, .rack-jump, .plan-edit-dock), .wm-fab';
+function AuTuck() {
+  const ref = useRef(null); const busy = useRef(false);
+  const [tucked, setTucked] = useState(() => lsGet('rl_au_tuck', '1') !== '0');
+  useEffect(() => { document.documentElement.classList.toggle('au-tucked', tucked); }, [tucked]);
+  useEffect(() => () => document.documentElement.classList.remove('au-tucked'), []);
+  const genie = closing => {
+    const b = ref.current.getBoundingClientRect(), bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const els = [...document.querySelectorAll(AU_TUCK_SEL)].filter(el => el.getBoundingClientRect().width);
+    return Promise.all(els.map((el, k) => {
+      const r = el.getBoundingClientRect(), dx = bx - (r.left + r.width / 2), dy = by - (r.top + r.height / 2);
+      const open = { transform: 'none', opacity: 1 }, mid = { transform: `translate(${dx * .2}px, ${dy * .62}px) scale(.5, .82)`, opacity: .9 },
+        shut = { transform: `translate(${dx}px, ${dy}px) scale(.04, .06)`, opacity: 0 };
+      const frames = closing ? [open, { ...mid, offset: .45 }, shut] : [shut, { ...mid, offset: .55 }, open];
+      const a = el.animate(frames, { duration: reduce ? 1 : 520, delay: reduce ? 0 : k * 40, easing: closing ? 'cubic-bezier(.55,0,.75,.3)' : 'cubic-bezier(.2,.75,.25,1)', fill: 'both' });
+      return a.finished.then(() => a).catch(() => a);
+    }));
+  };
+  const toggle = async () => {
+    if (busy.current) return; busy.current = true;
+    try {
+      if (!tucked) { const anims = await genie(true); document.documentElement.classList.add('au-tucked'); anims.forEach(a => a.cancel()); setTucked(true); lsSet('rl_au_tuck', '1'); }
+      else { document.documentElement.classList.remove('au-tucked'); const anims = await genie(false); anims.forEach(a => a.cancel()); setTucked(false); lsSet('rl_au_tuck', '0'); }
+    } finally { busy.current = false; }
+  };
+  return <button type="button" ref={ref} className="au-tuck au-glass" title={tucked ? 'Показать кнопки' : 'Спрятать кнопки'} aria-label={tucked ? 'Показать кнопки' : 'Спрятать кнопки'} onClick={toggle}>
+    <Icon key={tucked ? 'm' : 'x'} name={tucked ? 'more' : 'x'} size={21} stroke={2.4} /></button>;
+}
+
 /* phone header menu: tiles on top (Frank, speed test, refresh), rows below (editing, theme, sign in / out) — like an iOS context menu */
 function HeaderMenu({ admin, mode, arrange, setArrange, setMode, theme, setTheme, onClose, onFrank, onSpeed, onRefresh, onLogin, onLogout }) {
   useEffect(() => { const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
@@ -257,7 +411,7 @@ function HeaderMenu({ admin, mode, arrange, setArrange, setMode, theme, setTheme
   return <div className="hdr-menu-wrap" onClick={e => e.target === e.currentTarget && onClose()}>
     <div className="hdr-menu">
       <div className="hdr-tiles">
-        {admin ? <button type="button" onClick={go(onFrank)}><FrankEye size={30} round={9} /><span>Frank</span></button> : null}
+        {admin ? <button type="button" onClick={go(onFrank)}>{isAurora() ? <AuEye size={26} /> : <FrankEye size={30} round={9} />}<span>Frank</span></button> : null}
         <button type="button" onClick={go(onSpeed)}><Icon name="gauge" size={24} /><span>Тест скорости</span></button>
         <button type="button" onClick={go(onRefresh)}><Icon name="refresh" size={24} /><span>Обновить</span></button>
       </div>

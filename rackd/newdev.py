@@ -10,7 +10,7 @@ What a new device means depends on the network it joined (cfg.netroles, «<route
   service      technical links (VPN bridge, OpenWrt WAN…) — silent
 A network without a role yet behaves like before: every new device is a question.
 """
-import threading, time
+import re, threading, time
 
 LEARN = 600
 ROLES = {'main': 'Основная', 'subscribers': 'Абоненты', 'guest': 'Гостевая', 'iot': 'Умный дом', 'cameras': 'Камеры', 'service': 'Служебная'}
@@ -92,6 +92,12 @@ class NewDevices:
                         continue
                     self.known[mac] = {'first': int(now), 'last': int(now), 'name': c.get('name') or '', 'ip': c.get('ip') or '', 'via': names[did]}
                     self.dirty = True
+                    own = self._owner(devices, c)                      # a second address of a device already added (another interface = another MAC): not news
+                    if own:
+                        self.known[mac]['alias'] = own['id']
+                        if c.get('ip') and c['ip'] not in (own.get('ips') or []):
+                            own['ips'] = (own.get('ips') or []) + [c['ip']]; self.store.save()
+                        continue
                     if not learning:
                         rec = {'t': int(now), 'mac': mac, 'name': c.get('name') or '', 'ip': c.get('ip') or '', 'segment': c.get('seg') or '',
                                'segId': c.get('segId'), 'router': did if c.get('segId') else None, 'via': names[did],
@@ -123,6 +129,20 @@ class NewDevices:
                     anomalies.append(f'⚠️ Гостевая сеть «{net}»: {n} новых устройств за час — похоже, кто-то перебирает подключения')
             self._save(force=bool(new or anomalies))
         return new, anomalies
+
+    @staticmethod
+    def _owner(devices, c):
+        """the added device this client is another address of: its IP is one of the device's (host / extra `ips`), or its name is the device's name"""
+        ip = c.get('ip')
+        norm = lambda s: re.sub(r'[^a-z0-9а-я]', '', (s or '').lower())
+        nm = norm(c.get('name'))
+        for d in devices:
+            host = re.sub(r'^\w+://|[:/].*$', '', d.get('host') or '')
+            if ip and (ip == host or ip in (d.get('ips') or [])):
+                return d
+            if nm and len(nm) >= 4 and nm == norm(d.get('name')) and ip != host:
+                return d
+        return None
 
     def trust(self, mac, on=True):
         with self.lock:

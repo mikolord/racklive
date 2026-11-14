@@ -162,6 +162,10 @@ const SET_SECTIONS = [
   { id: 'system', label: 'Система', icon: 'server', color: '#636366', need: 'devMode', desc: 'Режим разработчика: время, обновления, Docker, перезагрузка машины', state: () => 'режим разработчика' },
   { id: 'terminal', label: 'Терминал', icon: 'terminal', color: '#3a3a3c', desc: 'Командная строка машины, где работает Rack Live' , state: () => '' },
   { id: 'access', label: 'Доступ', icon: 'lock', color: '#34c759', desc: 'Пароль, второй фактор, устройства с доступом' },
+  { id: 'faceid', label: 'Face ID', icon: 'shield', color: '#34c759', admin: true, desc: 'Вход и «Пароли» по лицу или отпечатку',
+    state: () => '' },
+  { id: 'passwords', label: 'Пароли', icon: 'key', color: '#30b0c7', admin: true, desc: 'Логины, пароли и ключи всех устройств: просмотр, экспорт и импорт' },
+  { id: 'backups', label: 'Бэкапы', icon: 'clock', color: '#5856d6', admin: true, desc: 'Копии конфигураций устройств и слепки серверов' },
   { id: 'backup', label: 'Резервная копия', icon: 'download', color: '#ff9500', desc: 'Скачать все настройки или восстановить из файла' },
   { id: 'about', label: 'О программе', icon: 'other', color: '#8e8e93', desc: 'Версия и ссылки', state: d => 'Rack Live ' + d.version },
 ];
@@ -173,12 +177,12 @@ function useMedia(q) {
 }
 
 /* the phone list: grouped cells like iOS Settings — a coloured icon, the name, a short status, a chevron */
-const IOS_GROUPS = [['general', 'plan', 'look', 'notify', 'frank', 'apps', 'network', 'system', 'terminal'], ['access', 'backup'], ['about']];
+const IOS_GROUPS = [['general', 'plan', 'look', 'notify', 'frank', 'apps', 'network', 'system', 'terminal'], ['access', 'faceid', 'passwords', 'backups', 'backup'], ['about']];
 function IosSettingsList({ secs, data, onPick }) {
   return <div className="ios-list">{IOS_GROUPS.map((g, gi) => { const items = g.map(id => secs.find(x => x.id === id)).filter(Boolean); if (!items.length) return null;
     return <div className="ios-group" key={gi}>{items.map(x => <button type="button" key={x.id} className="ios-cell" data-tour={'set-' + x.id} onClick={() => onPick(x.id)}>
       <span className="ios-ico">{document.documentElement.getAttribute('data-skin') === 'net' ? <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>
-        : x.id === 'frank' ? <AppIcon app="frank" size={32} radius={8} /> : x.id === 'about' ? <AppIcon size={32} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>}</span>
+        : x.id === 'frank' && isAurora() ? <span className="set-ic"><AuEye size={21} /></span> : x.id === 'frank' ? <AppIcon app="frank" size={32} radius={8} /> : x.id === 'about' && !isAurora() ? <AppIcon size={32} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={18} color="#fff" stroke={2} /></span>}</span>
       <span className="ios-label">{x.label}</span><span className="ios-val">{x.state ? x.state(data) : ''}</span>
       <Icon name="chevron" size={15} color="var(--text3)" stroke={2.4} /></button>)}</div>; })}</div>;
 }
@@ -227,8 +231,7 @@ function SettingsView() {
       const tok = ssGet('rl_tok');
       const r = await fetch('/api/export', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'application/json' }, tok ? { 'X-RL-Session': tok } : {}), body: JSON.stringify({ password: bkPw }) });
       if (!r.ok) { let m = 'не получилось'; try { m = (await r.json()).error || m; } catch (e) { } throw new Error(m); }
-      const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = 'racklive-backup-full.json';
-      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+      await saveBlob(await r.blob(), 'racklive-backup-full.json');
       setBkPw(''); setFullBk(false); toast('Полная копия скачана');
     } catch (e) { toast(e.message, true); }
   };
@@ -257,9 +260,10 @@ function SettingsView() {
     setSec(id); lsSet('rl_set_sec', id); window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const back = () => { if (history.state && history.state.rlset) history.back(); else setOpen(null); window.scrollTo({ top: 0 }); };
+  useAuBack(phone && !!open, back, 'Настройки');               // «Аврора»: the top-left glass button becomes «Назад»
   useEffect(() => { const h = e => pick(e.detail); window.addEventListener('rl-section', h); return () => window.removeEventListener('rl-section', h); }, [phone]);     // a window elsewhere sends the person to a section
   useEffect(() => { const h = e => setOpen(e.state && e.state.rlset ? e.state.rlset : null); window.addEventListener('popstate', h); return () => window.removeEventListener('popstate', h); }, []);   // the system «back» closes a section
-  const secs = SET_SECTIONS.filter(x => !x.need || data[x.need]);
+  const secs = SET_SECTIONS.filter(x => (!x.need || data[x.need]) && (!x.admin || admin));
   const cur = secs.find(x => x.id === (phone ? open : sec)) || secs[0];
   const listMode = phone && !open;                          // the list of sections (the cards below are kept, just hidden)
   useEffect(() => {                                         // inside a section the big «Настройки» title and the hint above are not needed (css: html.set-detail)
@@ -271,7 +275,7 @@ function SettingsView() {
     {listMode ? <IosSettingsList secs={secs} data={data} onPick={pick} /> : null}
     {!phone ? <nav className="set-nav">{secs.map(x => <button key={x.id} type="button" data-tour={'set-' + x.id} className={'set-item' + (x.id === cur.id ? ' on' : '')} onClick={() => pick(x.id)}>
       {document.documentElement.getAttribute('data-skin') === 'net' ? <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>
-        : x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' ? <AppIcon size={30} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
+        : x.id === 'frank' && isAurora() ? <span className="set-ic"><AuEye size={20} /></span> : x.id === 'frank' ? <AppIcon app="frank" size={30} radius={8} /> : x.id === 'about' && !isAurora() ? <AppIcon size={30} radius={8} /> : <span className="set-ic" style={{ background: x.color }}><Icon name={x.icon} size={16} color="#fff" stroke={2} /></span>}
       <span className="set-txt"><b>{x.label}</b><small>{x.state ? x.state(data) : x.desc}</small></span>
       <Icon name="chevron" size={14} color="var(--text3)" /></button>)}</nav> : null}
     <div className={'set-body' + (listMode ? ' ios-hidden' : phone ? ' ios-push' : '')} key={phone ? 'p' + cur.id : 'd'}>
@@ -343,10 +347,13 @@ function SettingsView() {
     {cur.id === 'network' ? <NetworkTabs /> : null}
     {cur.id === 'system' ? <DevSystem /> : null}
     {cur.id === 'terminal' ? <TerminalCard /> : null}
+    {cur.id === 'faceid' ? <FaceIdCard /> : null}
+    {cur.id === 'passwords' ? <PasswordsCard /> : null}
+    {cur.id === 'backups' ? <BackupsCenter /> : null}
     {cur.id === 'backup' ? <Card title="Резервная копия и импорт">
       <div className="col" style={{ gap: 12 }}>
         <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Копия содержит устройства, схему шкафа, карту и настройки. Пароля администратора и второго фактора в ней нет никогда, а пароли устройств и ключи сервисов — только в полной копии.</div>
-        <a className="btn" href="/api/export"><Icon name="download" size={17} />Скачать резервную копию</a>
+        <Btn icon="download" onClick={() => downloadFile('/api/export', 'racklive-backup.json').catch(e => toast(e.message, true))}>Скачать резервную копию</Btn>
         <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={fullBk} onChange={setFullBk} /><div className="grow"><div>Полная копия — с паролями устройств</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Нужна, чтобы перенести Rack Live на другую машину со всеми доступами. Такой файл — ключи от всех ваших устройств: храните его надёжно.</div></div></div>
         {fullBk ? <div className="row" style={{ gap: 8 }}><input className="input grow" type="password" placeholder="Пароль администратора" value={bkPw} onChange={e => setBkPw(e.target.value)} />
@@ -405,7 +412,7 @@ function EventsView() {
 }
 
 const LOGIN_ALT = { totp: ['Приложение', 'код из приложения', '#0a84ff', 'key'], email: ['Почта', 'код на почту', '#ff9f0a', 'mail'], sms: ['SMS', 'код по SMS', '#30d158', 'sms'] };
-function AuthScreen({ setup, title, onDone, note, tgLogin: tgReal, codeLogin: codeReal }) {
+function AuthScreen({ setup, title, onDone, note, tgLogin: tgReal, codeLogin: codeReal, passkey }) {
   const peek = new URLSearchParams(location.search).get('mfapreview') === 'login';       // ?mfapreview=login — only the looks of the buttons
   const tgLogin = tgReal || (peek ? { bot: 'bot' } : null), codeLogin = (codeReal && codeReal.length ? codeReal : null) || (peek ? ['totp', 'email', 'sms'] : []);
   const [tgMode, setTgMode] = useState(false);
@@ -440,8 +447,9 @@ function AuthScreen({ setup, title, onDone, note, tgLogin: tgReal, codeLogin: co
     <div className="dim">{setup ? T('auth.setup', 'Задайте название и пароль администратора — с ним можно будет добавлять устройства и управлять ими.') : T('auth.login', 'Войдите, чтобы продолжить')}</div>
     {note ? <div className="badge offline" style={{ whiteSpace: 'normal', lineHeight: 1.4, padding: '8px 12px', borderRadius: 12 }}>{note}</div> : null}
     <div className="col">
+      {!setup && passkey && pkSupported() ? <><PasskeyLoginBtn remember={remember} onDone={onDone} onErr={setErr} /><div className="or-line"><span>или паролем</span></div></> : null}
       {setup ? <Field label="Название"><input className="input" value={t} onChange={e => setT(e.target.value)} /></Field> : null}
-      <Field label="Пароль"><input className="input" type="password" autoFocus value={pw} onChange={e => setPw(e.target.value)} placeholder={setup ? 'Не короче 8 символов' : ''} /></Field>
+      <Field label="Пароль"><input className="input" type="password" autoFocus={!(passkey && pkSupported())} value={pw} onChange={e => setPw(e.target.value)} placeholder={setup ? 'Не короче 8 символов' : ''} /></Field>
       {setup ? <Field label="Ещё раз"><input className="input" type="password" value={pw2} onChange={e => setPw2(e.target.value)} /></Field> : null}
       {err ? <div style={{ color: 'var(--red)', fontSize: 14 }}>{err}</div> : null}
       {!setup ? <label className="mfa-remember"><Switch on={remember} onChange={setRemember} />

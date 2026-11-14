@@ -1,5 +1,5 @@
 """HTTP API, static files and the background poller."""
-import base64, concurrent.futures, gzip, ipaddress, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
+import base64, concurrent.futures, datetime, gzip, ipaddress, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -9,16 +9,20 @@ from . import planmap
 from . import usage as usage_mod
 from . import frankfiles, frank_agent, frankbrowser, frankdev, webdrive
 from . import portal as portal_mod
+from . import payment as payment_mod
+from . import vpnload as vpnload_mod
 from . import remote as remote_mod
 from . import doctor, vpncheck, learn, localplug, capps, cameras, hostnet, hostops, terminal, modelstore, plugins as plugins_mod, vps as vps_mod, agents as agents_mod, collector_install as cinstall, community, updater, sites as sites_mod, collector as collector_mod, sitelink, themes, netscan, advisor, alerts, analysis, assistant, auth, backups, detect, extscan, inet, loops, mfa, newdev, power, routers, security, speedtest, tgbot, topology, uptime
 from .drivers import REGISTRY, load_all
 from . import store as store_mod
 from . import rackcords
 from . import snapshots as snapshots_mod
+from . import vault as vault_mod
+from . import passkey as passkey_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.45.7'
+VERSION = '2.53.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -69,7 +73,38 @@ def port_errors(p):
     return max(i or 0, c or 0) + (o or 0)
 
 
-APP_MANIFESTS = {'/manifest.json': 'rack', '/frank-manifest.json': 'frank', '/speed-manifest.json': 'speed', '/terminal-manifest.json': 'terminal', '/cards-manifest.json': 'cards', '/plan-manifest.json': 'plan'}
+APP_MANIFESTS = {'/manifest.json': 'rack', '/frank-manifest.json': 'frank', '/speed-manifest.json': 'speed', '/terminal-manifest.json': 'terminal', '/cards-manifest.json': 'cards', '/plan-manifest.json': 'plan',
+                 '/modeler-manifest.json': 'modeler'}
+LOOK_BUILTIN = ('classic', 'graphite', 'net', 'test', 'aurora')
+LOOK_ACCENTS = ('blue', 'green', 'purple', 'orange', 'red', 'teal', 'pink')
+AURORA_ICONS = {'frank': 3, 'speed': 3, 'terminal': 3, 'plan': 3, 'modeler': 2}        # apps with their own «Аврора» icon (web/look-aurora/) → its revision
+
+
+def server_look():
+    """The look the administrator chose for the whole installation (settings.look, PUT /api/look) or {}."""
+    try:
+        look = APP.store.cfg['settings'].get('look')
+    except Exception:
+        look = None
+    return look if isinstance(look, dict) and look.get('rev') and look.get('skin') else {}
+
+
+def look_script():
+    """The first script of every page. The look used to live only in the browser's own storage, and every app put on the home screen of an iPhone has a storage of its own —
+    so Frank, the speed test and the others started in the default look whatever was chosen in Rack Live. Now the administrator's choice is kept on the server with a revision;
+    a page that sees a new revision takes the look over before its own head script reads it. A device may still pick another look for itself until the next change."""
+    look = server_look()
+    # An installed app is often not reloaded for days (iOS keeps it asleep): when it wakes up it asks the server whether the look was changed and takes it over.
+    wake = ('  <script>(function(){var L2=function(l){try{var c=localStorage.getItem("rl_look_rev");if(!l||!l.rev||String(l.rev)===c)return;localStorage.setItem("rl_look_rev",String(l.rev));'
+            'if(!/[?&]skin=/.test(location.search)){localStorage.setItem("rl_look2","1");localStorage.setItem("rl_skin",l.skin);localStorage.setItem("rl_accent",l.accent||"");localStorage.setItem("rl_theme_meta",l.meta||"");}location.reload()}catch(e){}},'
+            'C=function(){try{fetch("/api/look",{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).then(L2).catch(function(){})}catch(e){}};'
+            'document.addEventListener("visibilitychange",function(){if(!document.hidden)C()});window.addEventListener("pageshow",function(e){if(e.persisted)C()});setTimeout(C,1500)})()</script>').encode('utf-8')
+    if not look:
+        return wake
+    j = json.dumps({'skin': look['skin'], 'accent': look.get('accent') or '', 'meta': look.get('meta') or '', 'rev': look['rev']}, ensure_ascii=False).replace('<', '\\u003c')
+    return ('  <script>try{var L=' + j + ';window.RL_LOOK=L;if(localStorage.getItem("rl_look_rev")!==String(L.rev)){localStorage.setItem("rl_look_rev",String(L.rev));'
+            'if(!/[?&]skin=/.test(location.search)){localStorage.setItem("rl_look2","1");localStorage.setItem("rl_skin",L.skin);'       # ?skin= in the address (the way out of an unreadable look) wins on this device
+            'localStorage.setItem("rl_accent",L.accent);localStorage.setItem("rl_theme_meta",L.meta);}}}catch(e){}</script>').encode('utf-8') + b'\n' + wake
 
 class App:
     def __init__(self):
@@ -89,7 +124,8 @@ class App:
         self.fails = {}                # device id → polls in a row that got no answer (one lost reply is not an outage)
         self._view_cache = {}
         self.alerter = alerts.Alerter(self.store)
-        self.speed = speedtest.SpeedTests(self.store)
+        self.vpnload = vpnload_mod.Collector(self.store, REGISTRY)         # «Клиенты VPN» of the servers that have the switch on
+        self.speed =speedtest.SpeedTests(self.store)
         self.jobs = {}
         self.inet = inet.InetSpeed(self)
         self.backups = backups.Backups(self.store)
@@ -115,6 +151,8 @@ class App:
         self.modelstore = modelstore.Store(DATA)          # «Магазин моделей»: ready cards from the public catalog + the owner's moderation
         self.learn = learn.Learn(DATA)                    # «Обучение»: built-in lessons/games + modules downloaded from the owner's public catalog (data only, shown in a sandbox)
         self.snapshots = snapshots_mod.Snapshots(DATA)    # «Слепок сервера»: whole VPS copies in data/snapshots, restored onto another VPS
+        self.vault = vault_mod.Tickets()                  # «Пароли»: short tickets after the administrator password is typed again
+        self.pk_challenges = passkey_mod.Challenges()     # «Face ID»: one-time challenges of passkey sign-ins
         self.portal_tpl = portal_mod.Templates(DATA)      # «Гостевой Wi-Fi с порталом»: designs of the guest page
         self.community = community.Community(DATA)
         self.local = localplug.Local(DATA, lambda: self.store.cfg['devices'], lambda name, level, text: self.store.add_event(None, name, level, text), VERSION)     # the owner's own code that runs inside Rack Live (off until confirmed)
@@ -322,6 +360,10 @@ class App:
         """Save the device config if it changed; an event + a notification when it did (not for the very first copy)."""
         drv = REGISTRY.get(d.get('driver'))
         v, msg = self.backups.take(d, drv, force)
+        try:
+            self.backups.prune(self.store.cfg['settings'].get('backupKeepDays'))
+        except Exception as e:
+            log('backup prune', e)
         if v:
             self.store.add_event(d['id'], d.get('name'), 'info' if v['first'] else 'warning', msg)
             if not v['first'] and self.alerter.cfg()['rules'].get('config', {}).get('on'):
@@ -339,9 +381,17 @@ class App:
         # «Найдено в сети» (routers.py) no longer runs on its own: it knocked on every client's ports every 6 h — «Сканировать сеть» does this on request
         if time.time() - self.started > advisor.FIRST_DELAY and self.advisor.due():     # Frank's review every few days
             self.advisor.start()
+        if time.time() - getattr(self, 'backup_pruned', 0) > 3600:      # old config versions go (Settings → «Бэкапы» → «Удалять старые»)
+            self.backup_pruned = time.time()
+            try:
+                n = self.backups.prune(self.store.cfg['settings'].get('backupKeepDays'))
+                if n:
+                    log('backup', f'удалено старых версий: {n}')
+            except Exception as e:
+                log('backup prune', e)
         if not self.backup_busy:
             d = next((d for d in self.store.cfg['devices'] if d.get('enabled', True) and hasattr(REGISTRY.get(d.get('driver')), 'backup')
-                      and (self.states.get(d['id']) or {}).get('status') == 'online' and self.backups.due(d['id'])), None)
+                      and (self.states.get(d['id']) or {}).get('status') == 'online' and self.backups.due(d['id'], self.store.cfg['settings'].get('backupEvery'))), None)
             if d:
                 self.backup_busy = True
 
@@ -378,6 +428,16 @@ class App:
                 self.usage.sample()
                 try:
                     self.alerter.evaluate([d for d in self.store.cfg['devices'] if not health_skipped(self.store.cfg, d)], self.states)
+                except Exception:
+                    traceback.print_exc()
+                try:
+                    self.vpnload.tick(self.store.cfg['devices'])
+                except Exception:
+                    traceback.print_exc()
+                try:                                                  # «Оплата» of a VPS: reminders at the chosen day and hour
+                    payment_mod.check(self.store.cfg['devices'], datetime.datetime.now(),
+                                      lambda lines, did: threading.Thread(target=self.alerter.send, args=(lines, None, did), daemon=True).start(),
+                                      lambda: self.store.save(), lambda did, name, text: self.store.add_event(did, name, 'info', text))
                 except Exception:
                     traceback.print_exc()
                 try:
@@ -834,6 +894,7 @@ class App:
                                   browserReady=bool(frankbrowser.binary()), browserBin=frankbrowser.where(),
                                   browserLogin=webdrive.available(), browserLoginBin=webdrive.where()),
                        'advice': self.advisor.public(), 'apps': cfg.get('apps') or {}, 'routerScan': self.routers.public(), 'inet': self.inet.public(), 'extscan': self.extscan.public(), 'newDevices': self.newdev.public(), 'networks': self.newdev.networks(cfg['devices'], self.states),
+                       'vpnLoad': self.vpnload.summary(cfg['devices']),
                        'backups': {did: v[-1:] + [{'count': len(v)}] for did, v in self.backups.index.items()}} if authed else {}
         return {**admin_extra, 'notify': alerts.public(cfg.get('notify')) if authed else None, 'security': sec,
                 'notifyStatus': self.alerter.status if authed else None,
@@ -1062,7 +1123,7 @@ class Handler(BaseHTTPRequestHandler):
         """a person is in: a device record, a session, both cookies; a new device is told to the owner in Telegram"""
         ip, ua = self.client_ip(), self.headers.get('User-Agent') or ''
         tok, dtok, new, did = APP.sessions.create(ip, ua, remember, self.dev_token(), via)
-        if new and via in ('password', 'mfa'):
+        if new and via in ('password', 'mfa', 'passkey'):
             name = auth.device_name(ua)
             APP.store.add_event(None, 'Вход', 'info', f'новое устройство: {name} ({ip})')
             threading.Thread(target=APP.tgbot.notice, args=(f'👤 Новое устройство вошло в Rack Live: {name}, адрес {ip}.\nНе вы? Настройки → Доступ → отключите устройство и смените пароль.',), daemon=True).start()
@@ -1071,6 +1132,120 @@ class Handler(BaseHTTPRequestHandler):
         if extra and 'token' in extra:
             out['token'] = tok
         return self.send(out, headers={'Set-Cookie': [self.cookie(tok, max_age), self.dev_cookie(dtok)]})
+
+    def passkey_route(self, method, path, body):
+        """«Face ID» (rackd/passkey.py): settings and keys (admin), sign-in and unlocking «Пароли» with a key. → False when not ours."""
+        st = APP.store
+        pkc = st.cfg.get('passkeys') or {}
+        keys = pkc.get('keys') or []
+        ip = self.client_ip()
+
+        def status():
+            return {'ok': True, 'login': bool(pkc.get('login')), 'vault': bool(pkc.get('vault')), 'keys': passkey_mod.public(pkc.get('keys') or [])}
+
+        def store_keys(new_keys=None, **flags):
+            with st.lock:
+                cur = dict(st.cfg.get('passkeys') or {})
+                if new_keys is not None:
+                    cur['keys'] = new_keys
+                cur.update(flags)
+                cur.setdefault('keys', [])
+                st.cfg['passkeys'] = cur
+                st.save()
+            pkc.clear()
+            pkc.update(cur)
+
+        if path == '/api/passkey/status' and method == 'POST':
+            if not self.need_admin():
+                return
+            return self.send(status())
+        if path == '/api/passkey/settings' and method == 'PUT':
+            if not self.need_admin():
+                return
+            flags = {k: bool(body[k]) for k in ('login', 'vault') if k in body}
+            if any(flags.values()) and not keys:
+                return self.err('сначала добавьте хотя бы одно устройство с Face ID')
+            store_keys(**flags)
+            st.add_event(None, 'Face ID', 'warning', ', '.join(f"{'вход' if k == 'login' else '«Пароли»'} по Face ID {'включён' if v else 'выключен'}" for k, v in flags.items()))
+            return self.send(status())
+        if path == '/api/passkey/register/options' and method == 'POST':
+            if not self.need_admin():
+                return
+            if APP.vault.throttled(ip):
+                return self.err(f'{vault_mod.TRIES} неверных паролей подряд — подождите 5 минут', 429)
+            if not auth.check_password(st.cfg.get('auth'), body.get('password') or ''):
+                APP.vault.fail(ip)
+                time.sleep(1)
+                return self.err('неверный пароль', 403)
+            APP.vault.good(ip)
+            rp = passkey_mod.valid_rp(body.get('rpId'))
+            if not rp:
+                return self.err('Face ID работает только по доменному адресу через https, а не по IP — откройте Rack Live по своему домену')
+            try:
+                ch = APP.pk_challenges.new('register', rp)
+            except ValueError as e:
+                return self.err(str(e), 429)
+            title = st.cfg['settings'].get('title') or 'Rack Live'
+            return self.send({'ok': True, 'publicKey': {
+                'challenge': ch, 'rp': {'id': rp, 'name': 'Rack Live'},
+                'user': {'id': passkey_mod.b64u(b'racklive-admin'), 'name': 'Администратор · ' + title, 'displayName': 'Rack Live · ' + title},
+                'pubKeyCredParams': [{'type': 'public-key', 'alg': -7}, {'type': 'public-key', 'alg': -257}],
+                'authenticatorSelection': {'residentKey': 'required', 'requireResidentKey': True, 'userVerification': 'required'},
+                'excludeCredentials': [{'type': 'public-key', 'id': k['id']} for k in keys if k.get('rpId') == rp],
+                'attestation': 'none', 'timeout': 120000}})
+        if path == '/api/passkey/register' and method == 'POST':
+            if not self.need_admin():
+                return
+            try:
+                rec = passkey_mod.register(body.get('credential') or {}, APP.pk_challenges, keys, body.get('name'))
+            except ValueError as e:
+                return self.err(str(e))
+            store_keys(keys + [rec])
+            st.add_event(None, 'Face ID', 'warning', f"добавлено устройство «{rec['name']}» для входа по Face ID (адрес {ip})")
+            return self.send(status())
+        m = re.match(r'^/api/passkey/key/([A-Za-z0-9_\-]{8,400})$', path)
+        if m and method == 'DELETE':
+            if not self.need_admin():
+                return
+            left = [k for k in keys if k['id'] != m.group(1)]
+            if len(left) == len(keys):
+                return self.err('ключ не найден', 404)
+            gone = next(k for k in keys if k['id'] == m.group(1))
+            store_keys(left, **({'login': False, 'vault': False} if not left else {}))
+            st.add_event(None, 'Face ID', 'warning', f"удалено устройство «{gone.get('name')}» из входа по Face ID")
+            return self.send(status())
+        if path == '/api/passkey/challenge' and method == 'POST':
+            purpose = body.get('purpose')
+            if purpose == 'vault' and not self.need_admin():
+                return
+            if purpose not in ('login', 'vault') or not pkc.get(purpose):
+                return self.err('вход по Face ID выключен' if purpose == 'login' else 'открытие «Паролей» по Face ID выключено', 403)
+            rp = passkey_mod.valid_rp(body.get('rpId'))
+            allow = [k['id'] for k in keys if k.get('rpId') == rp]
+            if not rp or not allow:
+                return self.err('для этого адреса нет устройств с Face ID — войдите паролем и добавьте устройство в Настройках → Face ID', 404)
+            try:
+                ch = APP.pk_challenges.new('get', rp)
+            except ValueError as e:
+                return self.err(str(e), 429)
+            return self.send({'ok': True, 'publicKey': {'challenge': ch, 'rpId': rp, 'userVerification': 'required', 'timeout': 120000,
+                                                        'allowCredentials': [{'type': 'public-key', 'id': i} for i in allow]}})
+        if path == '/api/passkey/login' and method == 'POST':
+            if not (pkc.get('login') and keys):
+                return self.err('вход по Face ID выключен', 403)
+            if APP.sessions.throttled(ip):
+                return self.err('слишком много попыток, подождите 5 минут', 429)
+            try:
+                with st.lock:
+                    key = passkey_mod.assert_ok(body.get('credential') or {}, APP.pk_challenges, keys)
+                    st.save()
+            except ValueError as e:
+                self.login_fail(ip, 'Face ID')
+                return self.err(str(e), 401)
+            APP.sessions.ok(ip)
+            st.add_event(None, 'Вход', 'info', f"вход по Face ID — «{key.get('name')}» ({ip})")
+            return self.signed_in('passkey', body.get('remember') is not False)
+        return False
 
     def can_view(self):
         cfg = APP.store.cfg
@@ -1287,6 +1462,14 @@ class Handler(BaseHTTPRequestHandler):
         link = APP.sites.link(q.get('site'))
         if not link:
             return self.err('канал с площадкой не подключён', 400)
+        key = re.sub(r'[^A-Za-z0-9_.\-]', '', q.get('device') or '')
+        if link.caps.get('level') != 'terminal':          # the level is told at hello; an older collector does not repeat it when the owner changes it — ask once
+            try:
+                lv = (link.request('state', {'key': key}, 10) or {}).get('level')
+                if lv:
+                    link.caps['level'] = lv
+            except Exception:
+                pass
         if link.caps.get('level') != 'terminal':
             return self.err('владелец площадки не разрешил терминал', 403)
         key = re.sub(r'[^A-Za-z0-9_.\-]', '', q.get('device') or '')
@@ -1368,13 +1551,16 @@ class Handler(BaseHTTPRequestHandler):
         # ReckController runs natively and is identified by its installer marker.
         # Keep the normal Rack Live PWA untouched on all other installations.
         if os.path.isfile(cinstall.RCOS_MARK):
+            cdir, cv = ('look-aurora', 2) if server_look().get('skin') == 'aurora' else ('look-test', 1)      # «Аврора» has its own Reck Controller icon
             if path == '/index.html':
-                b = b.replace(b'href="icon.svg?v=28"', b'href="/look-test/controller.svg?v=1"')
-                b = b.replace(b'href="apple-touch-icon.png?v=28"', b'href="/look-test/controller-180.png?v=1"')
+                b = b.replace(b'href="icon.svg?v=28"', f'href="/{cdir}/controller.svg?v={cv}"'.encode())
+                b = b.replace(b'href="apple-touch-icon.png?v=28"', f'href="/{cdir}/controller-180.png?v={cv}"'.encode())
             elif path == '/manifest.json':
                 man = json.loads(b)
-                man['icons'] = [{'src': f'/look-test/controller-{s}.png?v=1', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
+                man['icons'] = [{'src': f'/{cdir}/controller-{s}.png?v={cv}', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
                 b = json.dumps(man, ensure_ascii=False).encode('utf-8')
+        if full.endswith('.html'):
+            b = b.replace(b'<head>', b'<head>\n' + look_script(), 1)
         self.send_response(200)
         texty = ctype.startswith(('text', 'application/javascript', 'application/json', 'image/svg'))
         self.send_header('Content-Type', ctype + ('; charset=utf-8' if ctype.startswith(('text', 'application/javascript', 'application/json')) else ''))
@@ -1400,6 +1586,10 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(WEB, path.lstrip('/')), encoding='utf-8') as f:
                 man = json.load(f)
             if path in ('/manifest.json', '/cards-manifest.json'):
+                return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
+            if tid == 'aurora' and APP_MANIFESTS[path] in AURORA_ICONS:          # «Аврора»: glass icons
+                a = APP_MANIFESTS[path]
+                man['icons'] = [{'src': f'/look-aurora/{a}-{s}.png?v={AURORA_ICONS[a]}', 'sizes': f'{s}x{s}', 'type': 'image/png', 'purpose': 'any'} for s in (192, 512)]
                 return self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', {'Cache-Control': 'no-cache'})
             if tid == 'test':          # the built-in «Test» look: black aluminium icons
                 a = APP_MANIFESTS[path]
@@ -1618,13 +1808,16 @@ class Handler(BaseHTTPRequestHandler):
                             devs.append({'id': x['id'], 'name': x.get('name'), 'driver': x.get('driver'), 'user': xc.get('username'), 'host': xc.get('host'), 'port': xc.get('sshPort') or 22})
                 return self.send({'ok': bool(d) and not DEMO, 'why': why if (not d or DEMO) else '', 'device': {'id': d['id'], 'name': d.get('name'), 'driver': d.get('driver'), 'user': cfg.get('username'), 'host': cfg.get('host'), 'port': cfg.get('sshPort') or 22} if d else None,
                                   'devices': devs, 'supported': terminal.supported() and not DEMO, 'sessions': len(terminal.KEYS)})
+            if path == '/api/look':                      # open to every page: an app that wakes up asks whether the look was changed (see look_script)
+                return self.send(server_look())
             if path == '/api/state':
                 a = self.authed()
                 cfg = APP.store.cfg
                 if not a and (not cfg.get('auth') or not cfg['settings'].get('publicView')):
                     return self.send({'authed': False, 'setupNeeded': not cfg.get('auth'), 'needLogin': bool(cfg.get('auth')),
                                       'settings': {'title': cfg['settings'].get('title')}, 'version': VERSION,
-                                      'tgLogin': APP.tgbot.login_available(), 'loginCodes': APP.mfa.login_methods()})
+                                      'tgLogin': APP.tgbot.login_available(), 'loginCodes': APP.mfa.login_methods(),
+                                      'passkeyLogin': bool((cfg.get('passkeys') or {}).get('login') and (cfg.get('passkeys') or {}).get('keys'))})
                 return self.send(APP.view(a))
             if path.startswith('/api/speedtest/'):
                 if not self.can_view():
@@ -1890,6 +2083,54 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.need_admin():
                     return
                 return self.send(APP.netscan.public())
+            if path == '/api/backups':                      # Settings → «Бэкапы»: every device's config history + every server snapshot (admin only)
+                if not self.need_admin():
+                    return
+                devs = []
+                for d in APP.store.cfg['devices']:
+                    drv = REGISTRY.get(d.get('driver'))
+                    vers = APP.backups.index.get(d['id']) or []
+                    can = callable(getattr(drv, 'backup', None))
+                    if not vers and not can:
+                        continue
+                    devs.append({'id': d['id'], 'name': d.get('name') or d.get('host') or d['id'], 'kind': d.get('kind') or getattr(drv, 'kind', 'other'),
+                                 'driver': d.get('driver'), 'driverTitle': getattr(drv, 'title', '') or '', 'host': d.get('host') or '', 'can': can,
+                                 'online': (APP.states.get(d['id']) or {}).get('status') == 'online', 'count': len(vers), 'last': vers[-1] if vers else None,
+                                 'first': vers[0]['t'] if vers else None})
+                size = 0
+                for root, _, files in os.walk(APP.backups.dir):
+                    for fn in files:
+                        try:
+                            size += os.path.getsize(os.path.join(root, fn))
+                        except OSError:
+                            pass
+                return self.send({'devices': devs, 'snapshots': APP.snapshots.list(), 'storeFree': APP.snapshots.free(), 'configBytes': size,
+                                  'everyH': APP.store.cfg['settings'].get('backupEvery', backups.EVERY // 3600), 'keep': backups.KEEP,
+                                  'keepDays': APP.store.cfg['settings'].get('backupKeepDays', backups.KEEP_DAYS)})
+            m = re.match(r'^/api/snapshots/([a-z0-9]{6,24})/file$', path)
+            if m:                                           # a server snapshot as a file, to keep a copy off this machine (admin only: it holds the whole server)
+                if not self.need_admin():
+                    return
+                try:
+                    meta = APP.snapshots.get(m.group(1))
+                    fp = APP.snapshots._path(meta['id'], 'root.tar.gz')
+                except DriverError as e:
+                    return self.err(str(e), 404)
+                st_ = os.stat(fp)
+                name = re.sub(r'[^\w.-]', '_', f"{meta.get('hostname') or meta.get('deviceName') or 'server'}-{time.strftime('%Y%m%d-%H%M', time.localtime(meta.get('t') or 0))}.tar.gz")
+                APP.store.add_event(meta.get('device'), 'Слепок сервера', 'warning', f'слепок скачан с адреса {self.client_ip()}')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/gzip')
+                self.send_header('Content-Disposition', f"attachment; filename=\"snapshot.tar.gz\"; filename*=UTF-8''{urllib.parse.quote(name)}")
+                self.send_header('Content-Length', str(st_.st_size))
+                self.end_headers()
+                with open(fp, 'rb') as f:
+                    while True:
+                        b = f.read(1 << 20)
+                        if not b:
+                            break
+                        self.wfile.write(b)
+                return
             m = re.match(r'/api/backups/([\w.\-]+)(?:/(\d+))?$', path)
             if m:                                           # versions list · diff · raw file (admin only: configs hold secrets)
                 if not self.need_admin():
@@ -2121,6 +2362,11 @@ class Handler(BaseHTTPRequestHandler):
                     st.cfg['settings']['title'] = body['title'][:80]
                 st.save()
                 return self.signed_in('setup')
+            # ── «Face ID»: ключи входа (rackd/passkey.py) ──
+            if path.startswith('/api/passkey/'):
+                r = self.passkey_route(method, path, body)
+                if r is not False:
+                    return r
             if path == '/api/login' and method == 'POST':
                 ip = self.client_ip()
                 if APP.sessions.throttled(ip):
@@ -2259,6 +2505,26 @@ class Handler(BaseHTTPRequestHandler):
             if not self.need_admin():
                 return
             # ── admin API ──
+            if path == '/api/look' and method == 'PUT':        # the look chosen by the administrator: one for every device and every installed app (see look_script)
+                sk = str(body.get('skin') or '')
+                if not re.match(r'^[a-z][a-z0-9-]{2,31}$', sk):
+                    return self.err('неизвестное оформление', 400)
+                ac = str(body.get('accent') or '')
+                meta = body.get('meta') or ''
+                if sk in LOOK_BUILTIN or not isinstance(meta, str) or len(meta) > 4000:
+                    meta = ''
+                if meta:
+                    try:
+                        mj = json.loads(meta)
+                        meta = meta if isinstance(mj, dict) and mj.get('id') == sk else ''
+                    except ValueError:
+                        meta = ''
+                if sk not in LOOK_BUILTIN and not meta:
+                    return self.err('неизвестное оформление', 400)
+                look = {'skin': sk, 'accent': ac if ac in LOOK_ACCENTS else '', 'meta': meta, 'rev': int(time.time())}
+                st.cfg['settings']['look'] = look
+                st.save()
+                return self.send({'ok': True, 'look': look})
             if path == '/api/settings' and method == 'PUT':
                 s = st.cfg['settings']
                 if 'planDefaults' in body:
@@ -2270,6 +2536,23 @@ class Handler(BaseHTTPRequestHandler):
                 for k in ('title', 'poll', 'publicView', 'showClients', 'hints', 'vlans', 'devMode', 'skipRemoteHealth'):
                     if k in body:
                         s[k] = body[k]
+                if 'backupEvery' in body:                       # automatic config backups: hours between checks, 0 = only by hand
+                    try:
+                        h = int(body['backupEvery'])
+                    except (TypeError, ValueError):
+                        return self.err('неверный интервал бэкапов')
+                    if h not in backups.CHOICES:
+                        return self.err('неверный интервал бэкапов')
+                    s['backupEvery'] = h
+                if 'backupKeepDays' in body:                    # old config versions: removed after N days (0 = never); the newest always stays
+                    try:
+                        k = int(body['backupKeepDays'])
+                    except (TypeError, ValueError):
+                        return self.err('неверный срок хранения бэкапов')
+                    if k not in backups.KEEP_CHOICES:
+                        return self.err('неверный срок хранения бэкапов')
+                    s['backupKeepDays'] = k
+                    APP.backups.prune(k)
                 if body.get('newPassword'):
                     if not auth.check_password(st.cfg['auth'], body.get('oldPassword') or ''):
                         return self.err('текущий пароль неверный', 403)
@@ -2781,6 +3064,100 @@ class Handler(BaseHTTPRequestHandler):
             if m and method == 'DELETE':
                 APP.speed.delete(m.group(1))
                 return self.send({'ok': True})
+            m = re.match(r'^/api/snapshots/([a-z0-9]{6,24})$', path)
+            if m and method == 'DELETE':                    # Settings → «Бэкапы»: remove a server snapshot
+                if not self.need_admin():
+                    return
+                try:
+                    meta = APP.snapshots.get(m.group(1))
+                    if APP.snapshots.busy.get(meta.get('device')):
+                        return self.err('с этим сервером сейчас идёт ' + APP.snapshots.busy[meta['device']])
+                    APP.snapshots.delete(m.group(1))
+                except DriverError as e:
+                    return self.err(str(e), 404)
+                st.add_event(meta.get('device'), 'Слепок сервера', 'info', f"удалён слепок от {time.strftime('%d.%m.%Y %H:%M', time.localtime(meta.get('t') or 0))}")
+                return self.send({'ok': True})
+            # ── «Пароли»: the administrator password again → a short ticket; everything else needs that ticket ──
+            if path == '/api/vault/unlock' and method == 'POST':
+                if not self.need_admin():
+                    return
+                ip = self.client_ip()
+                if APP.vault.throttled(ip):
+                    return self.err(f'{vault_mod.TRIES} неверных паролей подряд — раздел закрыт на 5 минут', 429)
+                if body.get('passkey'):                         # Face ID instead of the password (Settings → Face ID → «Открывать «Пароли» по Face ID»)
+                    pkc = st.cfg.get('passkeys') or {}
+                    if not (pkc.get('vault') and pkc.get('keys')):
+                        return self.err('открытие «Паролей» по Face ID выключено', 403)
+                    try:
+                        with st.lock:
+                            key = passkey_mod.assert_ok(body['passkey'], APP.pk_challenges, pkc['keys'])
+                            st.save()
+                    except ValueError as e:
+                        APP.vault.fail(ip)
+                        return self.err(str(e), 403)
+                    APP.vault.good(ip)
+                    st.add_event(None, 'Пароли', 'warning', f"открыт раздел «Пароли» по Face ID — «{key.get('name')}» ({ip})")
+                    return self.send({'ok': True, 'ticket': APP.vault.new(), 'ttl': vault_mod.TTL, 'items': vault_mod.entries(st.cfg['devices'], REGISTRY)})
+                if not auth.check_password(st.cfg.get('auth'), body.get('password') or ''):
+                    left = APP.vault.fail(ip)
+                    time.sleep(1)
+                    if not left:
+                        msg = f'раздел «Пароли» закрыт на 5 минут для адреса {ip}: {vault_mod.TRIES} неверных паролей подряд'
+                        st.add_event(None, 'Пароли', 'warning', msg)
+                        threading.Thread(target=lambda: APP.alerter.send(['🔒 ' + msg]), daemon=True).start()
+                        return self.err(f'{vault_mod.TRIES} неверных паролей подряд — раздел закрыт на 5 минут', 429)
+                    return self.err('неверный пароль' + (f', осталось попыток: {left}' if left <= 5 else ''), 403)
+                APP.vault.good(ip)
+                st.add_event(None, 'Пароли', 'warning', f'открыт раздел «Пароли» (адрес {ip})')
+                return self.send({'ok': True, 'ticket': APP.vault.new(), 'ttl': vault_mod.TTL, 'items': vault_mod.entries(st.cfg['devices'], REGISTRY)})
+            if path.startswith('/api/vault/'):
+                if not self.need_admin():
+                    return
+                if not APP.vault.ok(body.get('ticket') or self.headers.get('X-RL-Vault') or ''):
+                    return self.err('раздел «Пароли» закрыт — введите пароль администратора ещё раз', 423)
+                if path == '/api/vault/list' and method == 'POST':
+                    return self.send({'ok': True, 'items': vault_mod.entries(st.cfg['devices'], REGISTRY)})
+                if path == '/api/vault/lock' and method == 'POST':
+                    APP.vault.drop(body.get('ticket'))
+                    return self.send({'ok': True})
+                m = re.match(r'^/api/vault/item/([\w.\-]+)$', path)
+                if m and method == 'PUT':
+                    with st.lock:
+                        d = st.device(m.group(1))
+                        if not d:
+                            return self.err('устройство не найдено', 404)
+                        try:
+                            ch = vault_mod.update(d, body.get('fields') or {})
+                        except ValueError as e:
+                            return self.err(str(e))
+                        if ch:
+                            st.save()
+                    if ch:
+                        st.add_event(d['id'], 'Пароли', 'info', 'изменено: ' + ', '.join(vault_mod.LABELS.get(k, k) for k in ch))
+                    return self.send({'ok': True, 'changed': ch, 'item': vault_mod.entry(d, REGISTRY.get(d.get('driver')))})
+                if path == '/api/vault/export' and method == 'POST':
+                    fmt = 'csv' if body.get('format') == 'csv' else 'json'
+                    text = vault_mod.export_csv(st.cfg['devices'], REGISTRY) if fmt == 'csv' else vault_mod.export_json(st.cfg['devices'], REGISTRY)
+                    st.add_event(None, 'Пароли', 'warning', f'пароли выгружены в файл {fmt.upper()} (адрес {self.client_ip()})')
+                    b = (('﻿' if fmt == 'csv' else '') + text).encode('utf-8')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/csv; charset=utf-8' if fmt == 'csv' else 'application/json; charset=utf-8')
+                    self.send_header('Content-Disposition', f'attachment; filename="racklive-passwords.{fmt}"')
+                    self.send_header('Content-Length', str(len(b)))
+                    self.end_headers()
+                    return self.wfile.write(b)
+                if path == '/api/vault/import' and method == 'POST':
+                    try:
+                        items = vault_mod.parse(body.get('text') or '')
+                    except ValueError as e:
+                        return self.err(str(e))
+                    with st.lock:
+                        res = vault_mod.apply_import(st.cfg['devices'], items)
+                        if res['fields']:
+                            st.save()
+                    st.add_event(None, 'Пароли', 'warning', f"импорт паролей: обновлено устройств {len(res['updated'])}, полей {res['fields']}, не найдено {len(res['unmatched'])}")
+                    return self.send({'ok': True, **res, 'items': vault_mod.entries(st.cfg['devices'], REGISTRY)})
+                return self.err('нет такого действия', 404)
             if path == '/api/export' and method == 'POST':
                 # the backup WITH device passwords and service keys: only after the administrator password is typed again (the sign-in itself is never in a file)
                 ip = self.client_ip()
@@ -2817,6 +3194,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.err('неизвестный тип устройства')
                 if body.get('driver') == 'ups' and body.get('location') == 'remote':
                     return self.err(power.REMOTE_UPS)
+                if 'pay' in body:
+                    body['pay'] = payment_mod.clean(body['pay'])
+                if 'vpn' in body:
+                    body['vpn'] = vpnload_mod.clean(body['vpn'])
                 d = st.upsert_device(body)
                 APP.last_start.pop(d['id'], None)
                 st.add_event(d['id'], d.get('name'), 'info', 'устройство добавлено')
@@ -2837,13 +3218,42 @@ class Handler(BaseHTTPRequestHandler):
                         placed = power.placed_where(st.cfg['racks'], did)
                         if placed:
                             return self.err(f"Удалённое устройство не ставится в шкаф, щиток или комнату — оно живёт только в списке устройств. Сейчас оно стоит в: {', '.join(placed)}. Уберите его оттуда и повторите.")
+                    if 'pay' in body:                                  # the «Оплата» block: checked, bookkeeping kept
+                        body['pay'] = payment_mod.clean(body['pay'], d.get('pay'))
+                    if 'vpn' in body:
+                        body['vpn'] = vpnload_mod.clean(body['vpn'])
                     d = st.upsert_device(body, did)
                     APP.last_start.pop(did, None)
                     return self.send({'ok': True, 'device': st.public_device(d)})
+                if sub == 'paid' and method == 'POST':             # «Оплатил»: the due date moves to the next period
+                    pay = d.get('pay') or {}
+                    if not payment_mod.parse(pay.get('due')):
+                        return self.err('дата оплаты не указана')
+                    nxt = payment_mod.mark_paid(pay, datetime.date.today())
+                    st.save()
+                    st.add_event(did, d.get('name'), 'info', f"оплата отмечена, следующая {nxt.strftime('%d.%m.%Y')}" if nxt else 'оплата отмечена, напоминания выключены')
+                    return self.send({'ok': True, 'device': st.public_device(d)})
+                if sub == 'vpnscan' and method == 'POST':          # «Обновить» in the «Клиенты VPN» block: one scan right now (read-only on the server)
+                    if not (d.get('vpn') or {}).get('on'):
+                        return self.err('подсчёт VPN выключен у этого устройства')
+                    try:
+                        APP.vpnload.scan(d, force=True)
+                        APP.vpnload.errors.pop(did, None)
+                    except Exception as e:
+                        return self.err('не удалось опросить сервер: ' + str(e)[:200])
+                    return self.send({'ok': True, 'vpnLoad': APP.vpnload.summary(st.cfg['devices'])})
+                if sub == 'paytest' and method == 'POST':          # a sample reminder to every channel that is on
+                    pay = payment_mod.clean(body.get('pay') or d.get('pay'), d.get('pay'))
+                    left = payment_mod.days_left(pay, datetime.date.today())
+                    name = re.sub(r'^\s*/abh(?:\s+|$)', '', d.get('name') or '', flags=re.I) or d.get('name') or 'Сервер'
+                    text = payment_mod.line(name, pay, left) if left is not None else f'💳 {name}: проверка напоминания об оплате'
+                    res = APP.alerter.send(['(проверка) ' + text])
+                    return self.send({'ok': True, 'results': res or {}, 'text': text})
                 if sub is None and method == 'DELETE':
                     st.add_event(None, d.get('name'), 'info', 'устройство удалено')
                     st.delete_device(did)
                     APP.backups.forget(did)
+                    APP.vpnload.forget(did)
                     APP.uptime.forget(did)
                     APP.states.pop(did, None)
                     return self.send({'ok': True})
@@ -2989,6 +3399,10 @@ class Handler(BaseHTTPRequestHandler):
                         if DEMO:
                             return self.send({'ok': True, 'message': 'Захвачено (демо): роутер принят в Keenetic как точка Mesh.'})
                         return self.send({'ok': True, 'job': APP.meshnode_acquire(d, drv)['id']})
+                    if pid == 'modem' and op in ('iface', 'prio', 'iface_remove') and not DEMO:   # the WAN restarts: wait for the router in the background
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
+                    if pid in ('forkop', 'tachyon', 'podkop') and op == 'split_apply' and not DEMO:   # Forkop restarts for up to a minute: in the background
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     if op in getattr(drv, 'async_ops', ()) or (pid == 'meshnode' and op == 'install'):   # долгая установка (ставятся пакеты) — фоном, иначе прокси рвёт по 504
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, drv, pid, op, body)['id']})
                     try:
@@ -2996,7 +3410,7 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError as e:                     # bad .conf / domains: a readable reason
                         return self.err(str(e))
                     except DriverError as e:
-                        if op not in ('preview',):
+                        if op not in ('preview', 'split_preview', 'split_status'):
                             st.add_event(did, d.get('name'), 'warning', f'плагин {pid}: {e}')
                         raise
                     if res.get('deviceUpdate'):                   # the plugin changed the device (a saved profile)

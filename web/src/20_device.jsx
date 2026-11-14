@@ -127,6 +127,53 @@ function SshAccess({ device }) {
   </Card>;
 }
 
+/* «Клиенты VPN»: who is connected to the VPN on this server and how many more it takes (rackd/vpnload.py); the main server also shows the whole VPN */
+const VPN_LIM = { cpu: 'процессор', net: 'канал', quota: 'лимит трафика' };
+const vpnConf = c => c === 'good' ? ['надёжно', 'online'] : c === 'mid' ? ['ориентировочно', 'warning'] : ['пока грубо', 'warning'];
+const vpnN = n => n == null ? '—' : '≈ ' + (n >= 200 ? Math.round(n / 10) * 10 : n);
+function VpnLoadCard({ device }) {
+  const { data, refresh } = useApp(); const toast = useToast(); const [busy, setBusy] = useState(false);
+  const all = data.vpnLoad || {}; const r = (all.devices || {})[device.id]; const sys = all.system && all.system.main === device.id ? all.system : null;
+  const scan = async () => { setBusy(true); try { await api(`/api/devices/${device.id}/vpnscan`, { method: 'POST', body: {} }); refresh(); } catch (e) { toast(e.message, true); } setBusy(false); };
+  const right = <Btn size="sm" icon="refresh" busy={busy} onClick={scan}>Обновить</Btn>;
+  if (!r || !r.at) return <Card title="Клиенты VPN" right={right}><div className="dim" style={{ fontSize: 13 }}>{r && r.error ? 'Не удалось опросить сервер: ' + r.error : 'Первый опрос будет в течение нескольких минут — или нажмите «Обновить».'}</div></Card>;
+  const [ct, cc] = vpnConf(r.confidence);
+  const lim = (p, l) => Math.min(100, Math.round(100 * p / Math.max(l, .0001)));
+  return <>
+    <Card title="Клиенты VPN" right={<span className="row" style={{ gap: 8 }}>{r.detected && r.k != null ? <span className={'badge ' + cc}>{ct}</span> : null}{right}</span>}>
+      {r.detected ? <div className="stats">
+        <Stat k="Онлайн сейчас" v={r.online == null ? '—' : r.online} />
+        <Stat k="Всего клиентов" v={r.clients == null ? '—' : r.clients} />
+        <Stat k="Можно добавить ещё" v={vpnN(r.k)} unit={r.k != null ? 'подключений' : ''} level={r.k != null && r.k < 5 ? 'warn' : ''} />
+        {r.users != null ? <Stat k="Это новых пользователей" v={vpnN(r.users)} /> : null}
+      </div> : null}
+      {r.detected && r.bottleneck ? <div className="dim" style={{ fontSize: 13, margin: '10px 0 4px' }}>Первым упрётся в: <b style={{ color: 'var(--text)' }}>{VPN_LIM[r.bottleneck]}</b>.
+        Считаю по нагрузке последних {r.days >= 1 ? Math.round(r.days) + ' дн.' : 'часов'}, в пике было {r.peakOnline} клиентов онлайн.</div> : null}
+      {r.detected && r.k != null ? <div className="vpn-meters">
+        {r.cpu ? <div><div className="row"><span className="grow">Процессор в пике</span><b>{r.cpu.p95}% из {r.cpu.limit}%</b></div><Bar value={lim(r.cpu.p95, r.cpu.limit)} warnAt={80} badAt={95} />
+          <div className="dim3" style={{ fontSize: 11.5 }}>{r.cpu.perClient != null ? `один клиент — около ${r.cpu.perClient}% процессора` : 'нагрузка почти не растёт с числом клиентов'}</div></div> : null}
+        {r.net ? <div><div className="row"><span className="grow">Канал в пике</span><b>{r.net.p95Mbps} из {r.net.limitMbps} Мбит/с</b></div><Bar value={lim(r.net.p95Mbps, r.net.limitMbps)} warnAt={80} badAt={95} />
+          <div className="dim3" style={{ fontSize: 11.5 }}>{`безопасно до ${r.margin}% от ${r.net.capMbps}`}{r.net.perClientMbps != null ? ` · один клиент — около ${r.net.perClientMbps} Мбит/с в пике` : ''}</div></div> : null}
+        {r.quota ? <div><div className="row"><span className="grow">Трафик за месяц</span><b>{r.quota.monthTb} из {r.quota.limitTb} ТБ</b></div><Bar value={lim(r.quota.monthTb, r.quota.limitTb)} warnAt={80} badAt={95} />
+          <div className="dim3" style={{ fontSize: 11.5 }}>{`безопасно до ${r.margin}% от ${r.quota.capTb} ТБ`}{r.quota.perClientGb != null ? ` · один клиент — около ${r.quota.perClientGb} ГБ в месяц` : ''}</div></div> : null}
+      </div> : null}
+      {(r.notes || []).map((t, i) => <div key={i} className="dim" style={{ fontSize: 12.5, marginTop: 8 }}>{t}</div>)}
+      {r.error ? <div className="err-note" style={{ marginTop: 8, fontSize: 12.5 }}>Последний опрос не удался: {r.error}</div> : null}
+      {(r.sources || []).length ? <div className="list" style={{ marginTop: 10 }}>{r.sources.map(s => <div className="li" key={s.id}>
+        <div className="grow" style={{ minWidth: 0 }}><b>{s.label}</b><div className="dim3" style={{ fontSize: 11.5 }}>{s.how}</div></div>
+        <div style={{ textAlign: 'right' }}><div>онлайн {s.online == null ? '—' : s.online}</div><div className="dim3" style={{ fontSize: 11.5 }}>{s.clients == null ? 'клиентов не видно' : 'клиентов ' + s.clients}</div></div></div>)}</div> : null}
+    </Card>
+    {sys ? <Card title="Вся сеть VPN" right={<span className="badge info">главный сервер</span>}>
+      <div className="stats">
+        <Stat k="Серверов" v={sys.nodes} /><Stat k="Клиентов" v={sys.clients == null ? '—' : sys.clients} /><Stat k="Онлайн сейчас" v={sys.online} />
+        <Stat k="Ещё выдержит" v={vpnN(sys.k)} unit={sys.k != null ? 'подключений' : ''} />
+        {sys.users != null ? <Stat k="Новых пользователей" v={vpnN(sys.users)} /> : null}</div>
+      {sys.weakest ? <div className="dim" style={{ fontSize: 13, marginTop: 10 }}>Первым упрётся: <b style={{ color: 'var(--text)' }}>{nameNoFlag(sys.weakest[0])}</b> — {VPN_LIM[sys.weakest[2]] || 'нагрузка'}, запас {vpnN(sys.weakest[1])}.</div> : null}
+      {sys.unknown && sys.unknown.length ? <div className="dim3" style={{ fontSize: 12, marginTop: 6 }}>Пока без оценки запаса: {sys.unknown.map(nameNoFlag).join(', ')} — не хватает данных или не указан канал.</div> : null}
+    </Card> : null}
+  </>;
+}
+
 function Overview({ device, drv }) {
   const { admin, data } = useApp();
   const st = device.state || {}; const s = st.summary || {};
@@ -142,12 +189,13 @@ function Overview({ device, drv }) {
   const devActions = (drv?.actions || []).filter(a => a.scope === 'device' && a.kind !== 'speed' && !/^loop_/.test(a.id));      // loop protection has its own card
   const speedAction = (drv?.actions || []).find(a => a.kind === 'speed');
   return <>
-    {isTestLook() ? <DeviceVisual device={device} /> : null}
+    {isRichLook() ? <DeviceVisual device={device} /> : null}
     {st.error ? <div className="card pad" style={{ borderColor: 'var(--red)', color: 'var(--red)' }}><b>Нет связи:</b> {st.error}
       {st.updated && st.summary ? <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>Показаны последние известные данные</div> : null}</div> : null}
     {stats.length ? <div className="stats">{stats}</div> : null}
     {st.ups ? <UpsCard ups={st.ups} /> : null}
     {(st.loopGuard && st.loopGuard.supported) || (st.loops && (st.loops.active || st.loops.recent)) ? <LoopGuardCard device={device} drv={drv} /> : null}
+    {admin && device.vpn && device.vpn.on ? <VpnLoadCard device={device} /> : null}
     {admin ? <WebAccess device={device} /> : null}
     {admin ? <SshAccess device={device} /> : null}
     <Card title="Сведения">
@@ -232,7 +280,7 @@ function UpsCard({ ups }) {
     <div className="list">{ups.connected.map((c, i) => { const d = data.devices.find(x => x.id === c.id);
       return <React.Fragment key={c.id || c.unit || 'r' + i}><div className="li" style={{ cursor: d ? 'pointer' : 'default' }} onClick={() => d && openDevice(d)}>
         {c.outlet ? <span className="pt-out">{c.outlet}</span> : null}
-        <KindIcon kind={c.kind || 'other'} name={c.name} size={30} round={8} />
+        <KindIcon kind={c.kind || 'other'} name={c.name} mac={c.mac} size={30} round={8} />
         <div className="grow" style={{ minWidth: 0 }}><div className="row" style={{ gap: 6 }}>{c.status ? <span className={'dot ' + c.status} /> : null}<b style={{ fontSize: 14 }} className="ellipsis">{nameNoFlag(c.name)}</b></div>
           <div className="dim3" style={{ fontSize: 12, color: c.missing ? 'var(--orange)' : undefined }}>{c.src}</div></div>
         <b className="mono" style={{ fontSize: 13 }}>{c.w} Вт</b></div>
@@ -300,6 +348,7 @@ const ERR_COLOR = { bad: 'var(--red)', warn: 'var(--orange)', low: 'var(--text2)
 /* «Test»: the device itself, the same as in the «Сканер» app — its photo with port buttons, its own 3D model, or the model made from its ports.
    «Вид» opens the same window as Настройки → Приложения → Сканер → «Вид» (choose a model, add one, upload a photo, mark the ports). */
 const isTestLook = () => document.documentElement.getAttribute('data-look') === 'test';
+const isRichLook = () => ['test', 'aurora'].includes(document.documentElement.getAttribute('data-look'));      // the features of «Витрина» (3D rack, instruments…) that «Аврора» has too
 function DeviceVisual({ device, sel, onSel, compact }) {
   const { data, admin } = useApp(); const [look, setLook] = useState(false);
   const ports = (device.state || {}).ports || [];
@@ -351,7 +400,7 @@ function PortsTab({ device, drv, initialPort }) {
   return <>
     <Hint id="ports">Нажмите на порт: скорость, VLAN, кто подключён, трафик. Зелёный — 1 Гбит, жёлтый — 100 Мбит (у гигабитных устройств это часто плохой кабель),
       серый — ничего не подключено. Колонка «Ошибки» — повреждённые кадры: у исправного кабеля их нет.</Hint>
-    {isTestLook() ? <DeviceVisual device={device} sel={sel} onSel={setSel} />
+    {isRichLook() ? <DeviceVisual device={device} sel={sel} onSel={setSel} />
       : <Faceplate ports={ports} sel={sel} onSel={setSel} vlans={vlans} />}
     <div className="legend">
       <span><i style={{ background: 'var(--green)' }} />1 Гбит+</span><span><i style={{ background: '#ffd60a' }} />100 Мбит</span>
@@ -377,7 +426,7 @@ function PortsTab({ device, drv, initialPort }) {
       {(p.peers || []).length ? <div style={{ marginTop: 12 }}>
         <div className="card-title" style={{ marginBottom: 4 }}>Подключено ({p.peers.length})</div>
         <div className="list">{p.peers.slice(0, 40).map(x => <div className="li" key={x.mac}>
-          <KindIcon kind={x.kind || 'other'} name={x.name} size={30} round={8} />
+          <KindIcon kind={x.kind || 'other'} name={x.name} mac={x.mac} size={30} round={8} />
           <div className="grow"><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(x.name) || 'Неизвестное устройство'}</div>
             <div className="dim mono" style={{ fontSize: 12 }}>{[x.ip, x.mac].filter(Boolean).join(' · ')}</div></div>
           {x.vlan ? <span className="badge" style={{ color: vlanColor(x.vlan, vlans) }}>{vlanName(x.vlan, vlans)}</span> : null}
@@ -433,7 +482,7 @@ function ClientsTab({ clients, children, device, drv }) {
       {segs.map(s => <button key={s} className={'chip' + (seg === s ? ' on' : '')} onClick={() => setSeg(s)}>{s} · {clients.filter(c => (c.segment || '—') === s).length}</button>)}</div>
     {canEdit ? <div className="dim3" style={{ fontSize: 12.5 }}>Нажмите на устройство — имя, постоянный адрес, скорость и политика на роутере.</div> : null}
     <Card pad={false}><div className="list" style={{ padding: '0 14px' }}>{list.map(c => <div className="li" key={c.mac} style={canEdit ? { cursor: 'pointer' } : null} onClick={() => canEdit && setEdit(c.mac)}>
-      <KindIcon kind={c.kind} name={c.name} size={34} round={9} />
+      <KindIcon kind={c.kind} name={c.name} mac={c.mac} size={34} round={9} />
       <div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>{nameNoFlag(c.name) || c.mac}</div>
         <div className="dim mono ellipsis" style={{ fontSize: 12 }}>{c.ip} · {c.mac}</div>
         {c.limit || c.policy || c.access === 'deny' || (c.registered === false) ? <div className="row wrap" style={{ gap: 4, marginTop: 2 }}>

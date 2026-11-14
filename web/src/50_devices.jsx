@@ -151,6 +151,81 @@ function CatalogPick({ grp, setGrp, onPick }) {
     <div style={{ minWidth: 0 }}><b>{g.title}</b><small>{g.text}</small></div><Icon name="chevron" size={15} color="var(--text3)" /></button>)}</div>;
 }
 
+/* «Оплата» of a VPS / hosting: when, how much, where to pay; a reminder goes to Telegram (and the other channels that are on) and shows in the «Оплата» widget */
+const PAY_REMIND = [[14, 'за 14 дн.'], [7, 'за 7 дн.'], [3, 'за 3 дн.'], [2, 'за 2 дн.'], [1, 'за 1 день'], [0, 'в день оплаты']];
+const payLeft = p => { const m = /^(\d{4})-(\d\d)-(\d\d)/.exec((p && p.due) || ''); if (!m) return null; const t = new Date();
+  return Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 864e5); };
+const payWhen = n => n == null ? '' : n < 0 ? `просрочено на ${-n} ${ruPlural(-n, 'день', 'дня', 'дней')}` : n === 0 ? 'сегодня' : n === 1 ? 'завтра' : `через ${n} ${ruPlural(n, 'день', 'дня', 'дней')}`;
+const payTone = n => n == null ? '' : n < 0 ? 'red' : n <= 3 ? 'orange' : 'green';
+const payDate = p => { const m = /^(\d{4})-(\d\d)-(\d\d)/.exec((p && p.due) || ''); return m ? `${m[3]}.${m[2]}.${m[1]}` : ''; };
+const PAY_SIGN = { RUB: '₽', USD: '$', EUR: '€' };
+const payMoney = p => p && p.amount ? `${p.amount}${p.cur ? ' ' + (PAY_SIGN[p.cur] || p.cur) : ''}` : '';
+async function payPaid(id, toast, refresh) {            // «Оплатил»: the due date moves to the next period
+  try { const r = await api(`/api/devices/${id}/paid`, { method: 'POST', body: {} }); refresh(); toast(r.device.pay && r.device.pay.on ? `Следующая оплата ${payDate(r.device.pay)}` : 'Отмечено, напоминания выключены'); return r.device; }
+  catch (e) { toast(e.message, true); return null; }
+}
+function PayBlock({ f, set, device }) {
+  const { data, refresh } = useApp(); const toast = useToast(); const [busy, setBusy] = useState('');
+  const p = f.pay || { on: false, every: 'month', remind: [7, 3, 1, 0], hour: 10, cur: '₽' };
+  const up = patch => set('pay', { ...p, ...patch });
+  const left = payLeft(p);
+  const tg = !!(data.notify && data.notify.telegram && data.notify.telegram.enabled);
+  const remind = p.remind || [];
+  const toggle = n => up({ remind: remind.includes(n) ? remind.filter(x => x !== n) : [...remind, n].sort((a, b) => b - a) });
+  const test = async () => {
+    setBusy('test');
+    try { const r = await api(`/api/devices/${device.id}/paytest`, { method: 'POST', body: { pay: p } }); const ok = Object.entries(r.results || {});
+      toast(!ok.length ? 'Ни один канал уведомлений не включён — настройте Telegram в уведомлениях' : ok.every(([, v]) => v === 'ok') ? 'Проверочное напоминание отправлено' : ok.map(([k, v]) => `${k}: ${v}`).join('; '), ok.some(([, v]) => v !== 'ok')); }
+    catch (e) { toast(e.message, true); } setBusy('');
+  };
+  const paid = async () => { setBusy('paid'); const d = await payPaid(device.id, toast, refresh); if (d) set('pay', d.pay); setBusy(''); };
+  return <div style={{ marginTop: 8 }}>
+    <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45, marginBottom: 10 }}>Когда подходит срок продления VPS или хостинга, Rack Live напомнит — в Telegram (если он подключён), в «События» и в виджете «Оплата» на главной.</div>
+    <span className="row"><Switch on={!!p.on} onChange={v => up({ on: v })} /><span>Напоминать об оплате</span></span>
+    {p.on ? <>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', marginTop: 10 }}>
+        <Field label="Следующая оплата"><input className="input" type="date" value={p.due || ''} onChange={e => up({ due: e.target.value })} /></Field>
+        <Field label="Повторять"><select className="select" value={p.every || 'month'} onChange={e => up({ every: e.target.value })}>
+          <option value="month">Каждый месяц</option><option value="year">Каждый год</option><option value="days">Раз в несколько дней</option><option value="once">Один раз</option></select></Field>
+        {p.every === 'days' ? <Field label="Раз в сколько дней"><input className="input" type="number" min="1" max="3650" value={p.days || 30} onChange={e => up({ days: e.target.value })} /></Field> : null}
+        <Field label="Сумма"><div className="row" style={{ gap: 6 }}><input className="input grow" inputMode="decimal" placeholder="500" value={p.amount || ''} onChange={e => up({ amount: e.target.value })} />
+          <select className="select" style={{ width: 72 }} value={p.cur || ''} onChange={e => up({ cur: e.target.value })}><option value="₽">₽</option><option value="$">$</option><option value="€">€</option><option value="">—</option></select></div></Field>
+        <Field label="Сайт, где платить"><input className="input" placeholder="https://… личный кабинет хостера" value={p.url || ''} onChange={e => up({ url: e.target.value })} autoComplete="off" /></Field>
+        <Field label="Во сколько напоминать"><select className="select" value={p.hour == null ? 10 : p.hour} onChange={e => up({ hour: +e.target.value })}>
+          {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}</select></Field>
+      </div>
+      <Field label="За сколько напоминать" hint="После даты оплаты напоминание приходит каждый день, пока не нажмёте «Оплатил»">
+        <div className="row wrap" style={{ gap: 6 }}>{PAY_REMIND.map(([n, t]) => <Btn key={n} size="sm" kind={remind.includes(n) ? 'primary' : ''} onClick={() => toggle(n)}>{t}</Btn>)}</div></Field>
+      <div className={'dim' + (tg ? '' : ' err-note')} style={{ fontSize: 12.5, marginTop: 8 }}>{tg ? '✈️ Telegram подключён — напоминание придёт туда.' : 'Telegram не подключён: напоминание появится только в «Событиях» и на главной. Подключить можно в настройках уведомлений.'}</div>
+      {left != null ? <div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
+        <span className={'badge ' + (payTone(left) === 'red' ? 'offline' : payTone(left) === 'orange' ? 'warning' : 'online')}>Оплата {payWhen(left)} · {payDate(p)}</span>
+        {device ? <><Btn size="sm" icon="check" busy={busy === 'paid'} onClick={paid}>Оплатил(а)</Btn><Btn size="sm" busy={busy === 'test'} onClick={test}>Проверить уведомление</Btn></> : <span className="dim3" style={{ fontSize: 12 }}>Кнопки «Оплатил» и проверка появятся после сохранения</span>}</div> : null}
+    </> : null}
+  </div>;
+}
+
+/* «Клиенты VPN» of a server: counts the clients of the VPN on it (3x-ui, Remnawave, AmneziaWG / WireGuard, xray, sing-box, hysteria, OpenVPN …) and estimates how many more it will take (rackd/vpnload.py) */
+function VpnBlock({ f, set }) {
+  const v = f.vpn || { on: false, mbps: 0, quotaTb: 0, quotaMode: 'out', margin: 75 };
+  const up = patch => set('vpn', { ...v, ...patch });
+  return <div style={{ marginTop: 8 }}>
+    <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.45, marginBottom: 10 }}>Rack Live раз в 5 минут заходит на сервер по SSH и только читает: считает клиентов 3x-ui, Remnawave, AmneziaWG и WireGuard, а у остальных
+      (xray, sing-box, hysteria, OpenVPN, Shadowsocks, Trojan…) — подключённые адреса. По нагрузке на процессор и канал прикидывает, сколько клиентов сервер выдержит ещё. Ничего на сервере не меняется.</div>
+    <span className="row"><Switch on={!!v.on} onChange={on => up({ on, main: on ? v.main : false })} /><span>Вести подсчёт VPN-клиентов</span></span>
+    {v.on ? <>
+      <div style={{ marginTop: 10 }}><span className="row"><Switch on={!!v.main} onChange={main => up({ main })} /><span>Это главный сервер для VPN</span></span>
+        <div className="dim3" style={{ fontSize: 12, margin: '4px 0 0 2px' }}>Главный видит всю сеть VPN: складывает клиентов и запас у всех серверов, где включён подсчёт, и показывает, сколько ещё людей выдержит всё вместе.</div></div>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', marginTop: 10 }}>
+        <Field label="Скорость канала, Мбит/с" hint="Что обещает хостер: 100, 1000, 10000. Без неё канал в расчёт не идёт"><input className="input" type="number" min="0" inputMode="numeric" placeholder="1000" value={v.mbps || ''} onChange={e => up({ mbps: e.target.value })} /></Field>
+        <Field label="Лимит трафика, ТБ в месяц" hint="Если у хостера он есть. Пусто — не учитывать"><input className="input" type="number" min="0" step="0.1" inputMode="decimal" placeholder="например 20" value={v.quotaTb || ''} onChange={e => up({ quotaTb: e.target.value })} /></Field>
+        {v.quotaTb > 0 ? <Field label="Как хостер считает трафик"><select className="select" value={v.quotaMode || 'out'} onChange={e => up({ quotaMode: e.target.value })}>
+          <option value="out">Только исходящий</option><option value="sum">Входящий + исходящий</option></select></Field> : null}
+        <Field label="Безопасная загрузка" hint="До какой доли предела считать нормой"><select className="select" value={v.margin || 75} onChange={e => up({ margin: +e.target.value })}>
+          {[60, 70, 75, 80, 90].map(x => <option key={x} value={x}>{x}%</option>)}</select></Field>
+      </div></> : null}
+  </div>;
+}
+
 function DeviceEditor({ device, onClose, onCreated, preset }) {
   const { data, refresh } = useApp(); const toast = useToast(); const confirm = useConfirm();
   const [drvId, setDrvId] = useState(device ? device.driver : (preset && preset.driver) || new URLSearchParams(location.search).get('adddrv') || null);      // ?add=1&adddrv=openwrt — for tests
@@ -258,6 +333,12 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       <Field label="Площадка / объект" hint="Например «Дача» или «Офис» — устройства группируются по площадкам"><input className="input" value={f.site || ''} onChange={e => set('site', e.target.value)} /></Field>
     </div>
     <Field label="Заметки"><textarea className="textarea" value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
+    {drvId !== 'ups' ? <details className="guide" open={!!(f.pay && f.pay.on)}>
+      <summary>Оплата и напоминание{f.pay && f.pay.on && payLeft(f.pay) != null ? ` · ${payWhen(payLeft(f.pay))}` : ''}</summary>
+      <PayBlock f={f} set={set} device={device} /></details> : null}
+    {drvId === 'ssh' ? <details className="guide" open={!!(f.vpn && f.vpn.on)}>
+      <summary>Клиенты VPN{f.vpn && f.vpn.on ? (f.vpn.main ? ' · главный сервер' : ' · считаем') : ''}</summary>
+      <VpnBlock f={f} set={set} /></details> : null}
     {drvId !== 'ups' && drvId !== 'remote_web' ? <details className="guide" open={!!specW(f.pwr)}>
       <summary>Потребление питания (для расчёта ИБП и блоков розеток){specW(f.pwr) ? ` · ${Math.round(specW(f.pwr) * 10) / 10} Вт` : ''}</summary>
       <div style={{ margin: '8px 0' }}><MeasureHint kind={f.kind || drv.kind} /></div>

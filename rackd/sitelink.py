@@ -107,6 +107,8 @@ class Link:
         if t == 'hello':
             self.caps = {'level': m.get('level'), 'version': m.get('version')}
         elif t == 'ping':
+            if m.get('level'):                      # newer collectors repeat their level in every ping
+                self.caps['level'] = m.get('level')
             self.send({'t': 'pong'})
         elif t == 'res':
             p = self.pending.get(m.get('id'))

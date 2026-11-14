@@ -386,6 +386,6 @@ function Rack3D({ rack, devById, side, onUnit, flatten = false, cords = false, o
         <RackCordOverlay root={cordRoot} rack={rack} data={data} side={side} enabled={cords} width={W} height={H} scale={k} mode="3d" onPick={onCord} />
       </R3Face> : null}
     </div></div>
-    <div className="r3-hint">потяните, чтобы повернуть · двойное нажатие — как было</div>
+    {isAurora() ? null : <div className="r3-hint">потяните, чтобы повернуть · двойное нажатие — как было</div>}
   </div>;
 }

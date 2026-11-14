@@ -1,6 +1,54 @@
 /* Core: API client, formatting helpers, icons. Files in src/ are concatenated in name order. */
 const { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, createContext, useContext, Fragment } = React;
 
+/* «Аврора» on a phone: the top-left glass button adapts to the screen like the macOS menu bar adapts to the app — it is «Назад» while the screen
+   has somewhere to go back to (a section of Settings / Tools, a house in the plan, the network of one house), otherwise its own action.
+   A screen says so with <AuBack fn label /> (or useAuBack); the newest one wins. The in-page back buttons are hidden then (CSS of the look). */
+const AU_BACK = { stack: [], subs: new Set() };
+const auBackPing = () => AU_BACK.subs.forEach(s => s());
+function useAuBack(active, fn, label) {
+  const ref = useRef(fn); ref.current = fn;
+  useEffect(() => {
+    if (!active) return;
+    const item = { fn: () => ref.current && ref.current(), label: label || 'Назад' };
+    AU_BACK.stack.push(item); auBackPing();
+    return () => { AU_BACK.stack = AU_BACK.stack.filter(x => x !== item); auBackPing(); };
+  }, [active, label]);
+}
+function AuBack({ fn, label, active = true }) { useAuBack(active, fn, label); return null; }
+function useAuBackTop() {
+  const [, tick] = useState(0);
+  useEffect(() => { const s = () => tick(n => n + 1); AU_BACK.subs.add(s); return () => AU_BACK.subs.delete(s); }, []);
+  return AU_BACK.stack[AU_BACK.stack.length - 1] || null;
+}
+
+/* «Аврора»: много кнопок одной кнопкой — меню, как контекстное в iOS / macOS: стекло, разделы, галочка у выбранного.
+   items: { label, icon, on, onClick, keep } | '-' (разделитель) | { head } (подпись раздела). Меню рисуется поверх всего (portal), не обрезается карточкой. */
+function AuMenu({ label, icon = 'more', items, title, left, cls }) {        // left: меню раскрывается от левого края кнопки (кнопка стоит слева)
+  const [at, setAt] = useState(null); const btn = useRef(null), box = useRef(null);
+  useEffect(() => {
+    if (!at) return;
+    const out = e => { if (!(btn.current && btn.current.contains(e.target)) && !(box.current && box.current.contains(e.target))) setAt(null); };
+    const key = e => e.key === 'Escape' && setAt(null); const gone = () => setAt(null);
+    document.addEventListener('pointerdown', out); window.addEventListener('keydown', key); window.addEventListener('resize', gone);
+    return () => { document.removeEventListener('pointerdown', out); window.removeEventListener('keydown', key); window.removeEventListener('resize', gone); };
+  }, [at]);
+  const toggle = () => { if (at) return setAt(null); const r = btn.current.getBoundingClientRect();
+    const down = r.bottom + 320 < innerHeight || r.top < 340;
+    setAt({ ...(left ? { left: Math.max(8, r.left) } : { right: Math.max(8, innerWidth - r.right) }), ...(down ? { top: r.bottom + 8 } : { bottom: innerHeight - r.top + 8 }), down }); };
+  return <>
+    <button type="button" ref={btn} className={'btn sm au-menu-btn' + (cls ? ' ' + cls : '') + (at ? ' on' : '')} title={title || label} aria-haspopup="menu" aria-expanded={!!at} onClick={toggle}>
+      <Icon name={icon} size={16} />{label ? <span className="ellipsis">{label}</span> : null}<Icon name="chevron" size={11} stroke={2.6} style={{ transform: 'rotate(90deg)', opacity: .6 }} /></button>
+    {at ? ReactDOM.createPortal(<div ref={box} className={'au-menu' + (at.down ? '' : ' up') + (left ? ' l' : '')} role="menu" style={{ left: at.left, right: at.right, top: at.top, bottom: at.bottom }}>
+      {items.map((it, i) => it === '-' ? <i key={i} className="au-menu-sep" /> : it.head ? <div key={i} className="au-menu-head">{it.head}</div>
+        : <button key={i} type="button" role="menuitemcheckbox" aria-checked={!!it.on} className={'au-menu-it' + (it.on ? ' on' : '')}
+          onClick={() => { it.onClick(); if (!it.keep) setAt(null); }}>
+          <span className="au-menu-chk">{it.on ? <Icon name="check" size={15} stroke={2.8} /> : null}</span>
+          <span className="grow">{it.label}</span>{it.icon ? <Icon name={it.icon} size={17} /> : null}</button>)}
+    </div>, document.body) : null}
+  </>;
+}
+
 /* Telegram mini app: Telegram puts signed launch data into the URL hash — grab it before the app uses the hash for tabs */
 const ssGet = k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
 const ssSet = (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) { } };
@@ -98,6 +146,7 @@ const ICON_PATHS = {
   router: 'M3 14h18v5H3zM7 16.5h.01M10 16.5h.01M8 10a6 6 0 0 1 8 0M5.5 7.5a10 10 0 0 1 13 0M12 14v-2',
   switch: 'M2 8h20v8H2zM5 11h2v2H5zM9 11h2v2H9zM13 11h2v2h-2zM17 11h2v2h-2z',
   server: 'M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01M11 7h6M11 17h6',
+  card: 'M3 6.5h18v11H3zM3 10.5h18M6.5 14.5h4',
   nas: 'M5 3h14v18H5zM8 7h8M8 11h8M9 17h.01M12 17h.01M15 17h.01',
   ap: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0M1.5 9.5a15 15 0 0 1 21 0',
   camera: 'M3 7h13v10H3zM16 10l5-3v10l-5-3M7 12h.01',
@@ -131,7 +180,7 @@ const ICON_PATHS = {
   link: 'M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1', fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
   lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4', logout: 'M15 4h4v16h-4M10 17l5-5-5-5M15 12H3', sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
   moon: 'M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z', chevron: 'M9 6l6 6-6 6', download: 'M12 3v12M7 10l5 5 5-5M4 21h16', upload: 'M12 21V9M7 14l5-5 5 5M4 3h16',
-  check: 'M5 12l5 5 9-11', sort: 'M4 7h16M7 12h10M10 17h4', clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2', minus: 'M5 12h14', grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01', resize: 'M21 13l-8 8M21 6L6 21',
+  check: 'M5 12l5 5 9-11', undo: 'M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11', sort: 'M4 7h16M7 12h10M10 17h4', clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2', minus: 'M5 12h14', grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01', resize: 'M21 13l-8 8M21 6L6 21',
   plan: 'M3 4h18v16H3zM3 12h7M10 4v4M14 12v8M14 15h7', terminal: 'M4 5h16v14H4zM8 10l3 2-3 2M13 15h3', wifi: 'M12 20h.01M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 14 0', globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
   box: 'M4 7h16v13H4zM4 7l2-4h12l2 4M9 11h6', wrench: 'M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z', home: 'M4 11l8-7 8 7M6 10v10h12V10M10 20v-6h4v6',
   pole: 'M12 2v20M7 6h10M8.5 10h7M9 22h6', send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
@@ -150,10 +199,13 @@ const APP_ICONS = { rack: '/icon.svg?v=28', frank: '/frank-icon.svg?v=27', speed
 const APP_ICONS_G = { rack: '/icon-graphite.svg?v=1', frank: '/frank-icon-graphite.svg?v=1', speed: '/speed-icon-graphite.svg?v=1', terminal: '/terminal-icon.svg?v=28', cards: '/cards-icon.svg?v=2', modeler: '/modeler-icon.svg?v=2', plan: '/plan-icon.svg?v=1' };
 const APP_ICONS_N = { rack: '/icon-net.svg?v=1', frank: '/frank-icon-net.svg?v=1', speed: '/speed-icon-net.svg?v=1', terminal: '/terminal-icon.svg?v=28', cards: '/cards-icon.svg?v=2', modeler: '/modeler-icon.svg?v=2', plan: '/plan-icon.svg?v=1' };
 const APP_ICONS_T = { rack: '/look-test/rack.svg?v=3', frank: '/look-test/frank.svg?v=3', speed: '/look-test/speed.svg?v=3', terminal: '/look-test/terminal.svg?v=4', cards: '/look-test/cards.svg?v=3', modeler: '/look-test/modeler.svg?v=2', plan: '/look-test/plan.svg?v=3' };      // «Test»: black aluminium, hairline glyphs
-const APP_ICON_SET = document.documentElement.getAttribute('data-look') === 'test' ? APP_ICONS_T : APP_ICONS;      // switching the look reloads the page
+const APP_ICONS_A = { ...APP_ICONS, frank: '/look-aurora/frank.svg?v=3', speed: '/look-aurora/speed.svg?v=3', terminal: '/look-aurora/terminal.svg?v=3', modeler: '/look-aurora/modeler.svg?v=2', plan: '/look-aurora/plan.svg?v=3' };      // «Аврора»: glass glyphs on colour, as on iOS 26
+const APP_LOOK = document.documentElement.getAttribute('data-look');
+const APP_ICON_SET = APP_LOOK === 'test' ? APP_ICONS_T : APP_LOOK === 'aurora' ? APP_ICONS_A : APP_ICONS;      // switching the look reloads the page
 function AppIcon({ app = 'rack', size = 30, radius, style }) {
   const st = { borderRadius: radius != null ? radius : Math.round(size * .225), flexShrink: 0, ...style };
   if (app === 'rack' || app === 'cards') return <img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;
+  if (APP_LOOK === 'aurora') return <img src={APP_ICONS_A[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;
   if (THEME.appIcons[app]) return <img src={THEME.appIcons[app]} width={size} height={size} alt="" draggable="false" style={{ display: 'block', ...st }} />;      // the custom look brings its own
   // every app icon has flat outline twins for the «Графит» and «Контроллер» looks (css shows the right one, so the original look is untouched)
   return <><img src={APP_ICONS[app]} width={size} height={size} alt="" draggable="false" className="app-ic-c" style={{ display: 'block', ...st }} />
@@ -217,7 +269,7 @@ const KIND_COLOR_NET = { tv: 'var(--accent)', internet: 'var(--accent)', modem: 
 function kindColor(kind) {
   const k = kind || 'other';
   if (THEME.kindColors[k]) return THEME.kindColors[k];
-  if (document.documentElement.getAttribute('data-look') === 'test') return 'var(--text2)';        // «Test»: strict, monochrome
+  if (['test', 'aurora'].includes(document.documentElement.getAttribute('data-look'))) return 'var(--text2)';        // «Test»: strict, monochrome
   if (document.documentElement.getAttribute('data-skin') === 'net' && KIND_COLOR_NET[k]) return KIND_COLOR_NET[k];
   return KIND_COLOR[k] || KIND_COLOR.other;
 }
@@ -234,16 +286,19 @@ function flagOf(name) {
   return (c && NAME_CODES[c[1].toLowerCase()]) || '';
 }
 function nameNoFlag(name) {
+  if (tagBrand(name)) return nameNoTag(name);
   if (!flagOf(name)) return name;
   const s = String(name);
   return (FLAG_RE.test(s) ? s.replace(FLAG_RE, '') : s.replace(NAME_CODE_RE, '')) || name;
 }
-function KindIcon({ kind, size = 36, round = 10, icon, name }) {
+function KindIcon({ kind, size = 36, round = 10, icon, name, mac }) {
   const c = kindColor(kind);
   const cc = flagOf(name);
   const [bad, setBad] = useState('');                  // the country code whose picture is missing (a code with no flag): fall back to the plain server icon
   if (cc && bad !== cc) return <div className="kind-flag" style={{ width: size, height: size, borderRadius: round }}>
     <img src={'/flags/' + cc + '.svg'} alt="" draggable={false} onError={() => setBad(cc)} /></div>;
+  const br = tagBrand(name) || (!icon ? brandOf(name, kind, mac) : '');        // the maker's logo (by the name, else by the MAC) of a phone / laptop / TV…, as the flag of a VPS (01_brands.jsx); a hand-chosen icon wins
+  if (br) return <BrandTile brand={br} size={size} round={round} />;
   return <div className="kind-ic" style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
     background: `color-mix(in srgb, ${c} 16%, transparent)` }}><NodeGlyph spec={icon} kind={kind} size={size * (isUpIcon(icon) ? .72 : .54)} color={c} /></div>;
 }

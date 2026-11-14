@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs>
+  <linearGradient id="bg" x1=".15" y1="0" x2=".85" y2="1"><stop offset="0" stop-color="#4aa8ff"/><stop offset="1" stop-color="#0a52e8"/></linearGradient>
+  <radialGradient id="sheen" cx=".22" cy="-.05" r="1"><stop offset="0" stop-color="#fff" stop-opacity=".42"/><stop offset=".55" stop-color="#fff" stop-opacity=".06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+  <radialGradient id="deep" cx=".85" cy="1.1" r=".8"><stop offset="0" stop-color="#000" stop-opacity=".22"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset=".22" stop-color="#fff" stop-opacity=".16"/><stop offset=".72" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity=".3"/></linearGradient>
+  <linearGradient id="gl" gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="420"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity=".84"/></linearGradient>
+  <linearGradient id="edge" gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="420"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset=".5" stop-color="#fff" stop-opacity=".18"/><stop offset="1" stop-color="#fff" stop-opacity=".45"/></linearGradient>
+  <filter id="sh" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#03256e" flood-opacity=".5"/></filter>
+  <filter id="sh2" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#03256e" flood-opacity=".35"/></filter>
+  <clipPath id="r"><rect width="512" height="512" rx="114"/></clipPath></defs>
+<g clip-path="url(#r)"><rect width="512" height="512" fill="url(#bg)"/><rect width="512" height="512" fill="url(#deep)"/><rect width="512" height="512" fill="url(#sheen)"/>
+<path d="M126.1 337.0A150 150 0 1 1 385.9 337.0" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="38" stroke-linecap="round"/>
+<g filter="url(#sh)"><path d="M126.1 337.0A150 150 0 0 1 385.9 187.0" fill="none" stroke="url(#gl)" stroke-width="38" stroke-linecap="round"/>
+<path d="M286 150L196 286H252L230 382L328 240H270Z" fill="#fff" stroke="#fff" stroke-width="16" stroke-linejoin="round"/></g>
+<rect x="3" y="3" width="506" height="506" rx="111" fill="none" stroke="url(#rim)" stroke-width="6"/></g></svg>

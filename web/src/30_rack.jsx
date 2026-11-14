@@ -104,6 +104,8 @@ function RackUnit({ unit, dev, rack, edit, onClick, onPointerDown, dragging, swa
 function RackModeTransition({ show3d, rack, devById, side, onUnit, flat, cords, onCord }) {
   const view3d = useRef(null), viewFlat = useRef(null);
   const [height, setHeight] = useState(0);
+  const [armed, setArmed] = useState(false);          // transitions only after the first frames: when the tab opens, the rack settling must not slide everything below it
+  useEffect(() => { let a = requestAnimationFrame(() => { a = requestAnimationFrame(() => setTimeout(() => setArmed(true), 450)); }); return () => cancelAnimationFrame(a); }, []);
   useLayoutEffect(() => {
     const measure = () => { const el = show3d ? view3d.current : viewFlat.current; if (el) setHeight(el.offsetHeight); };
     measure();
@@ -112,7 +114,7 @@ function RackModeTransition({ show3d, rack, devById, side, onUnit, flat, cords, 
     if (viewFlat.current) ro.observe(viewFlat.current);
     return () => ro.disconnect();
   }, [show3d, rack.id, rack.totalU]);
-  return <div className={'rack-transition ' + (show3d ? 'is-3d' : 'is-flat')} style={{ height: height || undefined }}>
+  return <div className={'rack-transition ' + (show3d ? 'is-3d' : 'is-flat') + (armed ? ' armed' : '')} style={{ height: height || undefined }}>
     <div ref={view3d} className="rack-transition-3d" aria-hidden={!show3d}><Rack3D rack={rack} devById={devById} side={side} onUnit={onUnit} flatten={!show3d} cords={cords} onCord={onCord} /></div>
     <div ref={viewFlat} className="rack-transition-flat" aria-hidden={show3d}>{flat}</div>
   </div>;
@@ -124,7 +126,7 @@ function RackView({ placeId, embedded } = {}) {          // embedded: one place 
   const [rackId, setRackId] = useState(() => { const p = placeId || new URLSearchParams(location.search).get('place'); return (data.racks.find(r => r.id === p) || data.racks[0]).id; });
   const [side, setSide] = useState(() => new URLSearchParams(location.search).get('side') === 'back' ? 'back' : 'front');
   const [r3, setR3] = useState(() => { try { return localStorage.getItem('rl_rack3d') !== '0'; } catch (e) { return true; } });
-  const show3d = isTestLook() && r3 && !edit;
+  const show3d = isRichLook() && r3 && !edit;
   const [cordsOn, setCordsOn] = useState(() => new URLSearchParams(location.search).get('cords') === '1' || lsGet('rl_rackcords', '0') === '1');
   const [cordSettings, setCordSettings] = useState(null); const cordSurface = useRef(null);
   useEffect(() => { if (!edit) setCordSettings(null); }, [edit]);
@@ -238,24 +240,37 @@ function RackView({ placeId, embedded } = {}) {          // embedded: one place 
     <RackCordOverlay root={cordSurface} rack={rack} data={data} side={side} enabled={cordsOn && !edit} />
   </div>;
 
+  // «Аврора»: шкафы, щитки и комнаты — не россыпью чипов, а одним выпадающим меню прямо в названии места (как заголовок-меню в iOS)
+  const placeMenu = isAurora() && !embedded && (data.racks.length > 1 || edit) ? <AuMenu left cls="au-place" icon={placeKind(rack).icon} label={rack.name} title="Шкафы, щитки и комнаты" items={[
+    { head: 'Места' }, ...data.racks.map(r => ({ label: r.name, icon: placeKind(r).icon, on: r.id === rackId, onClick: () => setRackId(r.id) })),
+    ...(edit ? ['-', { label: 'Новое место', icon: 'plus', onClick: () => setNewPlace(true) }] : [])]} /> : null;
   const left = <div>
-      {!embedded && (data.racks.length > 1 || edit) ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
+      {!placeMenu && !embedded && (data.racks.length > 1 || edit) ? <div className="row wrap rack-tabs" style={{ marginBottom: 12 }}>
         {data.racks.map(r => <button key={r.id} className={'chip' + (r.id === rackId ? ' on' : '')} onClick={() => setRackId(r.id)}>
           <Icon name={placeKind(r).icon} size={13} />{r.name}</button>)}
         {edit ? <Btn size="sm" icon="plus" onClick={() => setNewPlace(true)}>Место</Btn> : null}
       </div> : null}
       {rack.kind && rack.kind !== 'rack'
-        ? <TileView rack={rack} edit={edit} devById={devById} openDevice={openDevice} onEdit={setEditing} onInfo={setInfo} onSettings={() => setRackSettings(rack)} onMove={() => setMoving(true)} />
+        ? <TileView rack={rack} edit={edit} devById={devById} openDevice={openDevice} onEdit={setEditing} onInfo={setInfo} onSettings={() => setRackSettings(rack)} onMove={() => setMoving(true)} title={placeMenu} />
         : <><div className="rack">
-        <div className="rack-top"><div><div className="title">{rack.name}
+        <div className="rack-top"><div><div className="title">{placeMenu || rack.name}
           {edit ? <button className="icon-link" onClick={() => setRackSettings(rack)} title="Настройки шкафа"><Icon name="settings" size={15} /></button> : null}
           {edit ? <button className="icon-link" onClick={() => setMoving(true)} title="Переезд: сделать щитком или комнатой"><Icon name="swap" size={15} /><span className="move-lbl">Переезд</span></button> : null}</div>
-          <div className="meta">{total}U · занято {occ.filter(Boolean).length}U · {side === 'front' ? 'вид спереди' : 'вид сзади'}</div></div>
-          <div className="row wrap" style={{ gap: 8 }}>{!edit ? <Btn size="sm" icon="link" kind={cordsOn ? 'primary' : ''} title={cordsOn ? 'Скрыть патч-корды' : 'Показать патч-корды'} onClick={() => { const next = !cordsOn; setCordsOn(next); lsSet('rl_rackcords', next ? '1' : '0'); }}>Патч-корды</Btn> : <Btn size="sm" icon="settings" title="Цвета патч-кордов" onClick={() => setCordSettings({})}>Цвета патч-кордов</Btn>}{isTestLook() && !edit ? <Seg value={r3 ? '3d' : 'flat'} onChange={v => { setR3(v === '3d'); try { localStorage.setItem('rl_rack3d', v === '3d' ? '1' : '0'); } catch (e) { } }}
+          <div className="meta">{total}U · занято {occ.filter(Boolean).length}U{isAurora() ? '' : ' · ' + (side === 'front' ? 'вид спереди' : 'вид сзади')}</div></div>
+          {isAurora() && !edit ? <AuMenu label="Вид" icon="eye" title="Как показать шкаф" items={[
+            { head: 'Показать' },
+            { label: 'Патч-корды', icon: 'link', on: cordsOn, onClick: () => { const next = !cordsOn; setCordsOn(next); lsSet('rl_rackcords', next ? '1' : '0'); } },
+            '-', { head: 'Вид' },
+            { label: '3D', icon: 'rack', on: !!r3, onClick: () => { setR3(true); try { localStorage.setItem('rl_rack3d', '1'); } catch (e) { } } },
+            { label: 'Схема', icon: 'list', on: !r3, onClick: () => { setR3(false); try { localStorage.setItem('rl_rack3d', '0'); } catch (e) { } } },
+            '-', { head: 'Сторона' },
+            { label: 'Фронт', on: side === 'front', onClick: () => setSide('front') },
+            { label: 'Тыл', on: side === 'back', onClick: () => setSide('back') }]} />
+          : <div className="row wrap" style={{ gap: 8 }}>{!edit ? <Btn size="sm" icon="link" kind={cordsOn ? 'primary' : ''} title={cordsOn ? 'Скрыть патч-корды' : 'Показать патч-корды'} onClick={() => { const next = !cordsOn; setCordsOn(next); lsSet('rl_rackcords', next ? '1' : '0'); }}>Патч-корды</Btn> : <Btn size="sm" icon="settings" title="Цвета патч-кордов" onClick={() => setCordSettings({})}>Цвета патч-кордов</Btn>}{isRichLook() && !edit ? <Seg value={r3 ? '3d' : 'flat'} onChange={v => { setR3(v === '3d'); try { localStorage.setItem('rl_rack3d', v === '3d' ? '1' : '0'); } catch (e) { } }}
             options={[{ value: '3d', label: '3D' }, { value: 'flat', label: 'Схема' }]} /> : null}
-          <Seg value={side} onChange={setSide} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></div>
+          <Seg value={side} onChange={setSide} options={[{ value: 'front', label: 'Фронт' }, { value: 'back', label: 'Тыл' }]} /></div>}
         </div>
-        {isTestLook() && !edit ? <RackModeTransition show3d={show3d} rack={rack} devById={devById} side={side} flat={flatRack} cords={cordsOn}
+        {isRichLook() && !edit ? <RackModeTransition show3d={show3d} rack={rack} devById={devById} side={side} flat={flatRack} cords={cordsOn}
           onUnit={u => { const d = devById[u.deviceId]; d ? openDevice(d) : setInfo(u); }} /> : flatRack}
       </div>
       {edit ? <div className="row" style={{ marginTop: 12 }}>
@@ -269,7 +284,7 @@ function RackView({ placeId, embedded } = {}) {          // embedded: one place 
         }}>
           {[...new Set([6, 9, 12, 15, 18, 20, 22, 24, 27, 32, 36, 42, 45, 47, total])].sort((a, b) => a - b).map(n =>
             <option key={n} value={n} disabled={n < minU}>{n}U{n < minU ? ' — мало' : ''}</option>)}</select>
-      </div> : <div className="dim" style={{ fontSize: 12.5, marginTop: 10, textAlign: 'center' }}>Нажмите на устройство, чтобы открыть подробности</div>}
+      </div> : isAurora() ? null : <div className="dim" style={{ fontSize: 12.5, marginTop: 10, textAlign: 'center' }}>Нажмите на устройство, чтобы открыть подробности</div>}
       </>}
     </div>;
   const modals = <>
@@ -304,7 +319,7 @@ function PlaceModal({ rackId, onClose }) {
 
 /* Box / room: devices as free tiles you can drag around (edit mode), snapped to a grid */
 const TW = 214, TH = 64, TGRID = 12;
-function TileView({ rack, edit, devById, openDevice, onEdit, onInfo, onSettings, onMove }) {
+function TileView({ rack, edit, devById, openDevice, onEdit, onInfo, onSettings, onMove, title }) {
   const { data, saveRack } = useApp();
   const kinfo = placeKind(rack);
   const linked = rack.units.filter(u => u.deviceId).length;
@@ -337,7 +352,7 @@ function TileView({ rack, edit, devById, openDevice, onEdit, onInfo, onSettings,
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
   return <div className="tilebox">
-    <div className="rack-top"><div><div className="title row" style={{ gap: 8 }}><Icon name={kinfo.icon} size={17} />{rack.name}
+    <div className="rack-top"><div><div className="title row" style={{ gap: 8 }}>{title || <><Icon name={kinfo.icon} size={17} />{rack.name}</>}
       {edit ? <button className="icon-link" onClick={onSettings} title="Настройки места"><Icon name="settings" size={15} /></button> : null}
       {edit ? <button className="icon-link" onClick={onMove} title="Переезд: сменить тип места"><Icon name="swap" size={15} /><span className="move-lbl">Переезд</span></button> : null}</div>
       <div className="meta">{kinfo.label} · {linked} {linked === 1 ? 'устройство' : linked >= 2 && linked <= 4 ? 'устройства' : 'устройств'}{edit ? ' · перетаскивайте плитки' : ''}</div></div>

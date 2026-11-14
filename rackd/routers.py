@@ -140,6 +140,7 @@ class RouterScan:
             macs |= {x.lower() for x in (s.get('mac'), d.get('mac')) if x}
             host = re.sub(r'^\w+://|[:/].*$', '', d.get('host') or d.get('webUrl') or '')
             ips |= {x for x in (s.get('ip'), host) if x}
+            ips |= {x for x in (d.get('ips') or []) if x}               # the device's extra addresses (other interfaces / networks)
             for ch in st.get('children') or []:
                 macs |= {ch['mac'].lower()} if ch.get('mac') else set()
                 ips |= {ch['ip']} if ch.get('ip') else set()

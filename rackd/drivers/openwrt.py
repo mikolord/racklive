@@ -338,6 +338,12 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                 p['profiles'] = [dict(m, installed=m['key'] in st['pkgs'], suggested=m['id'] == sug) for m in plugins.MODEM_PROFILES]
                 p['installed'] = any(m['installed'] for m in p['profiles'])
                 p['checks'] = [{'label': 'Модем подключён к USB' + (f": {st['usb'][0]}" if st['usb'] else ''), 'ok': bool(st['usb'])}]
+                p['storage'] = plugins.modem_storage(st)
+                if p['installed']:
+                    try:
+                        p['net'] = plugins.modem_card(plugins.parse_modem_net(self._ssh(cfg, plugins.MODEM_NET, 40)), p['profiles'], sug)
+                    except DriverError:
+                        p['net'] = None
             elif p['id'] == 'portal':
                 hw = portal.parse_status(self._ssh(cfg, portal.STATUS, 40))
                 p.update(self._portal_card(hw, st))
@@ -566,10 +572,119 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
                     'deviceUpdate': {'host': old_lan or self._hostname(cfg), 'portal': None}}
         raise DriverError('неизвестное действие')
 
+    # ───────── «Раздельный VPN» for Forkop (rackd/forkop_split.py), Tachyon and Podkop (rackd/vpn_engines.py) ─────────
+    def _vpn_split(self, cfg, pid, op, params):
+        from .. import forkop_split as fs, vpn_engines as ve
+        title = {'forkop': 'Forkop', 'tachyon': 'Tachyon', 'podkop': 'Podkop'}[pid]
+        if pid == 'forkop':
+            status = lambda: dict(fs.parse_status(self._ssh(cfg, fs.STATUS, 40)), lists=ve.LISTS)
+        else:
+            status = lambda: ve.parse_status(pid, self._ssh(cfg, ve.status_script(pid), 40))
+        try:
+            if op == 'split_status':
+                return dict(status(), ok=True, engine=pid)
+            parsed = fs.parse(params.get('text'))
+            mode, lists, domains = ve.check_opts(params.get('mode'), params.get('lists'), params.get('domains') or '', pid)
+            net = fs.check_net(params.get('net')) if mode == 'split' else ''
+            if op == 'split_preview':
+                return {'ok': True, 'preview': fs.public(parsed), 'net': net}
+        except fs.SplitError as e:
+            raise DriverError(str(e))
+        st = status()
+        if not st['forkop']:
+            raise DriverError(f'{title} не установлен на роутере')
+        prog = params.get('_progress') or (lambda s: None)
+        replace, auto = params.get('replace', True) is not False, params.get('auto', True) is not False
+        try:
+            if pid == 'podkop' and parsed['type'] == 'subscription':
+                prog('Читаю подписку…')
+                links = ve.fetch_subscription(parsed['url'])
+                parsed = {'type': 'links', 'links': links, 'count': len(links), 'fromSub': parsed['host']}
+            sc = fs.script(parsed, net, replace, mode, lists, domains) if pid == 'forkop' else \
+                (ve.tachyon_script if pid == 'tachyon' else ve.podkop_script)(parsed, net, replace, mode, lists, domains, auto)
+        except fs.SplitError as e:
+            raise DriverError(str(e))
+        prog(f'Записываю настройки {title} и перезапускаю его…')
+        r = fs.result(self._ssh(cfg, sc, timeout=300))
+        if not r['ok']:
+            if r.get('restored'):
+                raise DriverError(f'{title} не запустился с новыми настройками — вернул прежние, интернет как был.' + (f" Причина: {r['why']}" if r['why'] else ''))
+            raise DriverError(r['why'] or 'не получилось записать настройки')
+        n = parsed.get('count') or 0
+        what = {'tunnel': f"туннель {parsed.get('name')} ({parsed.get('server')})",
+                'links': (f"подписка {parsed['fromSub']}, серверов: {n} (Podkop не обновляет подписку сам — при смене серверов вставьте её снова)" if parsed.get('fromSub')
+                          else f"серверов: {n}") + (', авто-выбор самого быстрого' if n > 1 and (auto or pid == 'forkop') else ''),
+                'subscription': f"подписка {parsed.get('host')}" + (', авто-выбор самого быстрого' if auto or pid == 'forkop' else '')}[parsed['type']]
+        how = f"российские сайты идут напрямую, остальное для сети {r['net']} — через VPN" if mode == 'split' else \
+            'через VPN идут ' + ', '.join([x['label'] for x in ve.LISTS if x['id'] in lists] + ([f'свои сайты ({len(domains)})'] if domains else [])) + ', остальное напрямую'
+        return {'ok': True, 'split': dict(status(), ok=True, engine=pid), 'backup': r['backup'],
+                'message': f"Готово: {how} ({what}). Копия прежних настроек: {r['backup']}"}
+
+    # ───────── USB modem add-on: interface + priority against the wired WAN ─────────
+    def _modem_iface(self, cfg, op, params):
+        prog = params.get('_progress') or (lambda s: None)
+        st = self._state(cfg)
+        profs = [dict(m, installed=m['key'] in st['pkgs']) for m in plugins.MODEM_PROFILES]
+        card = lambda: plugins.modem_card(plugins.parse_modem_net(self._ssh(cfg, plugins.MODEM_NET, 40)), profs, plugins.modem_suggest(st))
+        cur = card()
+        name = (cur['iface'] or {}).get('name') or plugins.MODEM_IFACE
+        prio = params.get('prio')
+        if op != 'iface_remove' and prio not in plugins.MODEM_METRIC:
+            raise DriverError('выберите, что главнее: модем или кабель')
+        if op == 'iface':
+            prof = params.get('profile')
+            if prof not in plugins.MODEM_PROTO or not next((m for m in profs if m['id'] == prof and m['installed']), None):
+                raise DriverError('сначала установите драйверы этого варианта')
+            dev, apn, pin = str(params.get('device') or '').strip(), str(params.get('apn') or '').strip(), str(params.get('pin') or '').strip()
+            if not re.fullmatch(r'[\w./:+-]{1,200}', dev):
+                raise DriverError('не выбрано устройство модема')
+            if not re.fullmatch(r'[\w.-]{0,63}', apn):
+                raise DriverError('APN: только латиница, цифры, точка и дефис')
+            if prof != 'hilink' and not apn:
+                raise DriverError('укажите APN оператора')
+            if pin and not re.fullmatch(r'\d{4,8}', pin):
+                raise DriverError('PIN — от 4 до 8 цифр')
+            old = int((re.findall(r'\d+', st['rel']) or ['0'])[0]) < 21
+            prog('Записываю интерфейс и приоритет…')
+            out = self._ssh(cfg, plugins.modem_apply_script(name, prof, dev, apn, pin, prio, old), timeout=60)
+        elif op == 'prio':
+            if not cur['iface']:
+                raise DriverError('интерфейса модема ещё нет — создайте его')
+            prog('Меняю приоритет…')
+            out = self._ssh(cfg, plugins.modem_prio_script(name, prio), timeout=40)
+        else:
+            if not cur['iface']:
+                return {'ok': True, 'message': 'Интерфейса модема уже нет'}
+            prog('Убираю интерфейс модема…')
+            out = self._ssh(cfg, plugins.modem_remove_script(name), timeout=40)
+        if '@@fail' in out:
+            raise DriverError(out.split('@@fail', 1)[1].splitlines()[0].strip())
+        if '@@ok' not in out:
+            raise DriverError('роутер не подтвердил запись настроек')
+        prog('Жду, пока сеть перезапустится…')
+        net, waited = None, 0
+        while waited < 45:                      # the WAN may restart: the router can drop off for a few seconds
+            time.sleep(6); waited += 6
+            try:
+                net = card()
+            except DriverError:
+                continue
+            if op == 'iface_remove' or (net['iface'] and (net['iface']['up'] or waited >= 30)):
+                break
+        if op == 'iface_remove':
+            return {'ok': True, 'net': net, 'message': f'Интерфейс «{name}» удалён, проводной WAN — с прежним приоритетом.'}
+        who = 'модем — основной, кабель — запасной' if prio == 'main' else 'кабель — основной, модем — запасной'
+        i = (net or {}).get('iface') or {}
+        up = f"модем в сети, адрес {i['ip']}" if i.get('up') and i.get('ip') else 'модем пока не поднялся (подождите минуту; для 4G проверьте APN и SIM)'
+        zone = ' Зона wan в межсетевом экране не найдена — добавьте интерфейс в зону вручную.' if '@@nozone' in out else ''
+        return {'ok': True, 'net': net, 'message': f"Интерфейс «{name}» готов: {who}; {up}.{zone}"}
+
     def plugin(self, cfg, pid, op, params):
         clean = lambda s: re.sub(r'\x1b\[[0-9;]*m', '', s)
         to_log = lambda body: [{'cmd': l[:200], 'ok': '@@fail' not in l and not re.search(r'\berror\b|failed|ошибка', l, re.I), 'msg': ''}
                                for l in clean(body).splitlines() if l.strip() and not l.startswith('@@')][-60:]
+        if pid in ('forkop', 'tachyon', 'podkop') and op in ('split_status', 'split_preview', 'split_apply'):
+            return self._vpn_split(cfg, pid, op, params)
         if pid in plugins.OWRT_INSTALLERS:
             inst, meta = plugins.OWRT_INSTALLERS[pid], next(p for p in plugins.CATALOG if p['id'] == pid)
             st = self._state(cfg)
@@ -602,6 +717,23 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
             sb = f" · {after['sb'].replace('sing-box version ', 'sing-box ')}" if after['sb'] else ''
             return {'ok': True, 'log': log, 'version': after['pkgs'][main], 'url': url,
                     'message': f"{meta['title']} {after['pkgs'][main]} установлен{sb}. Настройка: LuCI → Службы → {meta['title']} ({url})"}
+        if pid == 'modem' and op in ('iface', 'prio', 'iface_remove'):
+            return self._modem_iface(cfg, op, params)
+        if pid == 'modem' and op == 'modeswitch':
+            st = self._state(cfg)
+            ids = [d['id'] for d in plugins.modem_storage(st)]
+            if not ids:
+                return {'ok': True, 'message': 'Модем уже в режиме модема — переключать нечего'}
+            out = self._ssh(cfg, plugins.modeswitch_script(ids) + plugins.OWRT_STATUS, timeout=90)
+            if '@@fail' in out:
+                raise DriverError(out.split('@@fail', 1)[1].splitlines()[0].strip())
+            after = plugins.parse_owrt(out)
+            left = [d['id'] for d in plugins.modem_storage(after)]
+            if left:
+                return {'ok': False, 'error': 'модем не переключился — попробуйте вынуть и вставить его (правило уже записано) или другой USB-порт',
+                        'message': 'Модем не переключился'}
+            return {'ok': True, 'message': f"Модем переключён в режим модема ({', '.join(after['usb']) or 'USB'}). Правило записано на роутер — "
+                                           'после перезагрузки или переподключения модем переключится сам. Теперь можно создать интерфейс.'}
         if pid == 'modem':
             prof = next((m for m in plugins.MODEM_PROFILES if m['id'] == params.get('profile')), None)
             if not prof or op not in ('install', 'remove'):

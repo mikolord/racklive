@@ -26,7 +26,7 @@ def hash_password(pw, salt=None):
 
 
 def check_password(rec, pw):
-    if not rec:
+    if not rec or not rec.get('salt') or not rec.get('hash'):        # no password set (or the demo's placeholder): nothing matches
         return False
     h = hashlib.pbkdf2_hmac('sha256', pw.encode(), rec['salt'].encode(), rec.get('iter', ITER)).hex()
     return hmac.compare_digest(h, rec['hash'])

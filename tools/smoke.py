@@ -871,8 +871,8 @@ def main():
                 check('сканирование: что можно добавить — сверху, остальное свёрнуто', 'Можно добавить в Rack Live' in out and 'остальные устройства в сети' in out, re.sub(r'<[^>]+>', ' ', out)[-600:])
             if name == 'Настройки — оформление':
                 check('раздел «Оформление»: стили, акцент, тема', 'Стиль интерфейса' in out and 'Графит' in out and 'Лазурь' in out and 'Цвет акцента' in out and 'Светлая и тёмная тема' in out)
-                check('оформление: «Витрина» — основное, у каждого из четырёх своя обложка, слова Test в названиях нет',
-                      'Витрина' in out and 'Стекло' in out and out.count('class="look-cover"') == 4 and 'основное' in out and '>Test<' not in out)
+                check('оформление: «Витрина» — основное, у каждого из пяти своя обложка (с «Авророй»), слова Test в названиях нет',
+                      'Витрина' in out and 'Стекло' in out and 'Аврора' in out and out.count('class="look-cover"') == 5 and 'основное' in out and '>Test<' not in out)
             if name == 'Главная — стиль «Графит»':
                 check('стиль «Графит» включается атрибутами на <html>', 'data-skin="graphite"' in out and 'data-accent="green"' in out)
             if name == 'Главная — стиль «Контроллер»':
@@ -1134,6 +1134,23 @@ def main():
                 check('оформление Test: свои значки приложений (манифесты, «Домой», вкладка)', ok_ic and '/look-test/frank-180.png' in co and 'frank-manifest.json?skin=test' in co)
                 co = dom('/?skin=test&section=apps#settings', 1300, 900)
                 check('оформление Test: значки в «Приложениях» и шапке', co.count('/look-test/') >= 5 and 'data-js-error="' not in co)
+                ok_au = True
+                for mf in ('frank-manifest.json', 'speed-manifest.json', 'terminal-manifest.json', 'plan-manifest.json', 'modeler-manifest.json'):
+                    mj = json.loads(urllib.request.urlopen(base + '/' + mf + '?skin=aurora', timeout=10).read())
+                    ok_au = ok_au and all('/look-aurora/' in i['src'] and urllib.request.urlopen(base + '/' + i['src'].lstrip('/'), timeout=10).status == 200 for i in mj['icons'])
+                lk = api('/api/look', {'skin': 'aurora', 'accent': 'green'}, 'PUT')['look']          # the admin's look is shared: a fresh browser (no ?skin=) gets it from the server
+                raw = urllib.request.urlopen(base + '/frank', timeout=10).read().decode()
+                co = dom('/frank', 600, 900); co2 = dom('/modeler', 600, 900)
+                try:
+                    api('/api/look', {'skin': 'Не то'}, 'PUT'); lbad = False
+                except urllib.error.HTTPError:
+                    lbad = True
+                lk2 = json.loads(urllib.request.urlopen(base + '/api/look', timeout=10).read())          # a sleeping app asks for the look when it wakes up
+                api('/api/look', {'skin': 'test'}, 'PUT')
+                check('оформление «Аврора»: свои значки приложений; выбор админа общий для всех устройств и приложений', ok_au and lk['rev'] and lk2.get('rev') == lk['rev'] and lk2.get('skin') == 'aurora' and 'visibilitychange' in raw and lbad
+                      and 'window.RL_LOOK=' in raw and raw.index('window.RL_LOOK=') < raw.index("localStorage.getItem('rl_theme')")
+                      and 'data-look="aurora"' in co and 'data-accent="green"' in co and '/look-aurora/frank-180.png' in co and 'frank-manifest.json?skin=aurora' in co
+                      and 'data-look="aurora"' in co2 and '/look-aurora/modeler-180.png' in co2 and 'data-js-error="' not in co)
                 co = dom('/?skin=test&section=notify#settings', 600, 900)
                 check('оформление Test: здоровье хорошее = синее (шкала)', 'data-js-error="' not in co)
                 co = dom('/cards?fakescan=' + sw['id'])
@@ -1161,7 +1178,7 @@ def main():
                 check('окно установки Frank с QR-кодом', 'class="qr"' in out and '<svg' in out.split('class="qr"', 1)[-1][:200] and 'data-js-error="' not in out)
                 out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=1300,900', '--virtual-time-budget=6000',
                                       '--dump-dom', base + '/' + q], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
-                check('панель помощника: подсказки и поле ввода', 'ai-suggest' in out and 'ai-foot' in out)
+                check('панель помощника: подсказки и поле ввода', 'ai-suggest' in out and 'fr-dock' in out and 'ai-panel standalone inapp' in out)
                 # a phone (600 px): Settings as an iOS list, a section opens with «‹ Настройки»; a computer keeps the two columns
                 out = subprocess.run([browser, '--headless=new', '--disable-gpu', '--window-size=600,900', '--virtual-time-budget=6000',
                                       '--dump-dom', base + '/#settings'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90).stdout
