@@ -301,7 +301,10 @@ svg.spark { display: block; width: 100%; height: 56px; border-radius: 10px; }
 .node .lbl { font-size: 13px; font-weight: 600; fill: var(--text); } .node .sub { font-size: 11px; fill: var(--text2); font-family: var(--mono); }
 .node.client rect.box { fill: var(--bg2); }
 .node.group rect.box { fill: var(--fill); stroke-dasharray: 4 4; }
-.dim-out { opacity: .18; }
+/* затемнение — на самих фигурах, а не прозрачностью групп: прозрачная группа на iPhone перерисовывается целиком при каждом сдвиге карты,
+   и с выделенным устройством карта двигалась рывками */
+.dim-out :is(rect, path, circle, ellipse, line, polyline, polygon, text) { fill-opacity: .18; stroke-opacity: .18; }
+.dim-out image { opacity: .18; }
 /* clients of a remote device fly out of it on a tap and back in on the next one */
 @keyframes nodePopIn { from { opacity: 0; transform: translateX(60px) scale(.7); } 70% { opacity: 1; } to { opacity: 1; transform: none; } }
 @keyframes nodePopOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(60px) scale(.7); } }
@@ -3701,6 +3704,44 @@ button.vault-row:active { background: var(--fill2); }
 .faceid-ic { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(160deg, #3ddc84, #28b463); display: grid; place-items: center; flex-shrink: 0; }
 .faceid-ic.big { width: 52px; height: 52px; border-radius: 13px; }
 .faceid-sub { padding: 12px 14px 4px; font-size: 12px; color: var(--text3); text-transform: uppercase; letter-spacing: .3px; }
+/* confirmations always on top: over Frank (.ai-overlay 150) and the menus (.au-menu 400), under the toasts only by order — e.g. «Удалить разговор» inside Frank */
+.overlay.top { z-index: 450; }
 /* a long window title (a device name) never pushes the close button off the screen */
 .modal-head h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal-head > .btn { flex-shrink: 0; }
+
+/* 2.54.0 — значок роли на логотипе («/ap/keenetic» → AP) */
+.kind-brand { position: relative; }
+.kind-brand-role { position: absolute; right: 1px; bottom: 1px; padding: 0 3px; border-radius: 5px; background: var(--card-solid, #fff); font-weight: 800; line-height: 1.25; letter-spacing: .02em; }
+
+/* 2.54.0 — «Сделать снимок» на карте сети: вспышка и миниатюра в углу, как скриншот на iPhone */
+.map-shot-flash { position: fixed; inset: 0; z-index: 400; background: #fff; pointer-events: none; animation: map-shot-flash .45s ease-out forwards; }
+@keyframes map-shot-flash { 0% { opacity: .95; } 100% { opacity: 0; } }
+.map-shot { position: fixed; z-index: 401; left: calc(env(safe-area-inset-left) + 14px); bottom: calc(var(--bb-h, 0px) + env(safe-area-inset-bottom) + 14px); width: min(40vw, 168px);
+  display: flex; flex-direction: column; gap: 8px; transform-origin: 0 100%; animation: map-shot-in .55s cubic-bezier(.2,.9,.25,1) both; transition: opacity .4s, transform .4s; }
+.map-shot.idle { opacity: .6; transform: scale(.85); }
+.map-shot.idle:hover, .map-shot.idle:active { opacity: 1; transform: none; }
+@keyframes map-shot-in { 0% { transform: scale(2.6) translate(10%, -20%); opacity: 0; } 35% { opacity: 1; } 100% { transform: none; opacity: 1; } }
+.map-shot-close { position: absolute; top: -11px; right: -11px; z-index: 2; width: 30px; height: 30px; border-radius: 50%; border: .5px solid var(--line);
+  background: var(--card-solid, #fff); color: var(--text); display: grid; place-items: center; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.3); -webkit-tap-highlight-color: transparent; }
+.map-shot-img { all: unset; cursor: pointer; display: block; border-radius: 14px; overflow: hidden; background: var(--card-solid, #fff);
+  border: 3px solid #fff; box-shadow: 0 12px 34px rgba(0,0,0,.32), 0 0 0 .5px rgba(0,0,0,.12); -webkit-tap-highlight-color: transparent; }
+.map-shot-img img { display: block; width: 100%; max-height: 26vh; object-fit: contain; }
+.map-shot-save { all: unset; cursor: pointer; height: 34px; border-radius: 17px; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; font: 600 13px var(--font); box-shadow: 0 6px 18px rgba(0,0,0,.2); -webkit-tap-highlight-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .map-shot-flash { display: none; } .map-shot { animation: none; } }
+
+/* подсказки по «/» в имени устройства */
+.name-input { position: relative; }
+.name-input.grow { flex: 1 1 auto; min-width: 0; }
+.name-input > input { width: 100%; box-sizing: border-box; }
+.tag-suggest { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60; max-height: 260px; overflow: auto; padding: 5px;
+  background: var(--card-solid, #fff); border: .5px solid var(--line); border-radius: 12px; box-shadow: 0 14px 40px rgba(0,0,0,.22); }
+.tag-suggest-roles { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px 7px; font-size: 12px; color: var(--text2); border-bottom: .5px solid var(--line); margin-bottom: 4px; }
+.tag-role-chip { all: unset; cursor: pointer; padding: 3px 9px; border-radius: 999px; background: var(--fill); color: var(--text); font-weight: 700; font-size: 12px; }
+.tag-role-chip:hover { background: var(--accent); color: #fff; }
+.tag-suggest-cur { padding: 4px 6px 7px; font-size: 12px; color: var(--text2); border-bottom: .5px solid var(--line); margin-bottom: 4px; }
+.tag-suggest-it { all: unset; cursor: pointer; display: flex; align-items: center; gap: 9px; width: 100%; box-sizing: border-box; padding: 7px 8px; border-radius: 9px; }
+.tag-suggest-it:hover { background: var(--fill); }
+.tag-suggest-it span { flex: 1; min-width: 0; font-size: 14px; color: var(--text); }
+.tag-suggest-it code { font-family: var(--mono); font-size: 12px; color: var(--text3); }

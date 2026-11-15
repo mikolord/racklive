@@ -298,7 +298,7 @@ function KindIcon({ kind, size = 36, round = 10, icon, name, mac }) {
   if (cc && bad !== cc) return <div className="kind-flag" style={{ width: size, height: size, borderRadius: round }}>
     <img src={'/flags/' + cc + '.svg'} alt="" draggable={false} onError={() => setBad(cc)} /></div>;
   const br = tagBrand(name) || (!icon ? brandOf(name, kind, mac) : '');        // the maker's logo (by the name, else by the MAC) of a phone / laptop / TV…, as the flag of a VPS (01_brands.jsx); a hand-chosen icon wins
-  if (br) return <BrandTile brand={br} size={size} round={round} />;
+  if (br) return <BrandTile brand={br} size={size} round={round} role={tagRole(name)} />;
   return <div className="kind-ic" style={{ width: size, height: size, borderRadius: round, display: 'grid', placeItems: 'center', flexShrink: 0,
     background: `color-mix(in srgb, ${c} 16%, transparent)` }}><NodeGlyph spec={icon} kind={kind} size={size * (isUpIcon(icon) ? .72 : .54)} color={c} /></div>;
 }

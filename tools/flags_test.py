@@ -17,7 +17,8 @@ core = open(os.path.join(ROOT, 'web', 'src', '00_core.jsx'), encoding='utf-8').r
 m = re.search(r'const FLAG_RE = .*?\nfunction nameNoFlag\(name\) \{.*?\n\}', core, re.S)
 check('helpers found in 00_core.jsx', m)
 if m:
-    js = m.group(0) + r'''
+    # метки брендов (01_brands.jsx) здесь не проверяются — только флаги, поэтому tagBrand — заглушка
+    js = 'function tagBrand() { return ""; }\nfunction nameNoTag(n) { return n; }\n' + m.group(0) + r'''
 const flag = (cc) => String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 const cases = [
   [flag('de') + 'GE10G', 'de', 'GE10G'],

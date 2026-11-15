@@ -141,7 +141,7 @@ function ClientEditor({ mac, onClose, initialName }) {
       тогда регистрация, постоянный IP и ограничения «потеряются». Чтобы закрепить устройство, на iPhone: Настройки → Wi-Fi → (i) у этой сети → «Частный адрес Wi-Fi» → «Выкл»
       (на Android — «MAC-адрес устройства» вместо случайного), потом зарегистрируйте заново.</div></div> : null}
     <Field label="Имя на роутере" hint={c.registered ? 'Переименовать устройство в списке роутера' : 'С именем устройство станет зарегистрированным — «своим» для роутера'}>
-      <div className="row" style={{ gap: 6 }}><input className="input grow" value={f.name} placeholder={c.name || 'Например, iPhone Миши'} onChange={e => set('name', e.target.value)} />
+      <div className="row" style={{ gap: 6 }}><NameInput className="input grow" value={f.name} placeholder={c.name || 'Например, iPhone Миши'} onChange={v => set('name', v)} />
         {!f.name && c.name ? <Btn size="sm" onClick={() => set('name', c.name)}>Взять «{c.name.length > 16 ? c.name.slice(0, 15) + '…' : c.name}»</Btn> : null}</div></Field>
     <Field label="Постоянный IP-адрес" hint={ipBad ? <span style={{ color: 'var(--red)' }}>{ipBad}</span> : f.ip && f.ip !== c.ip ? 'Устройство получит новый адрес после переподключения к сети (или перезапуска Wi-Fi на нём)' : 'Пусто — адрес выдаётся автоматически'}>
       <div className="row" style={{ gap: 6 }}><input className="input grow mono" value={f.ip} placeholder={sameNet ? sameNet + '…' : 'IP'} onChange={e => set('ip', e.target.value)} />

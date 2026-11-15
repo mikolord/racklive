@@ -274,6 +274,7 @@ function MapNode({ n, p, sel, dim, mark, phase, onDown, onClick, onDoubleClick }
   const cc = flagOf(n.label);            // a name starting with «🇩🇪 …» or «/abh …»: the picture of the flag instead of the icon, the name without the prefix
   const [badFlag, setBadFlag] = useState('');
   const brand = tagBrand(n.label) || (!spec ? brandOf(n.label, n.kind, n.mac || (String(n.id).startsWith('h:') ? String(n.id).slice(2) : '')) : ''), B = brand && BRANDS[brand];            // the maker's logo (01_brands.jsx) when the name says whose device it is
+  const role = B ? tagRole(n.label) : '';            // «/ap/keenetic …»: логотип Keenetic со значком AP
   const flag = cc && badFlag !== cc, label = nameNoFlag(n.label, n.kind), clipId = 'fc-' + String(n.id).replace(/[^\w-]/g, '_');
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}
     transform={`translate(${p.x},${p.y})`} onPointerDown={onDown} onClick={onClick} onDoubleClick={onDoubleClick}>
@@ -291,7 +292,10 @@ function MapNode({ n, p, sel, dim, mark, phase, onDown, onClick, onDoubleClick }
       <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={B.c} />
       {B.d ? <path d={B.d} fill={B.i} transform={`translate(${9 + is * .2},${(p.h - is) / 2 + is * .2}) scale(${is * .6 / 24})`} />
         : <text x={9 + is / 2} y={p.h / 2} textAnchor="middle" dominantBaseline="central" fill={B.i} fontSize={brandTextSize(B.t) * is} fontWeight="800" style={{ letterSpacing: '-.02em' }}>{B.t}</text>}
-      <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill="none" stroke="var(--text)" strokeOpacity=".16" /></g>
+      <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill="none" stroke="var(--text)" strokeOpacity=".16" />
+      {role ? <g transform={`translate(${9 + is - Math.max(16, 7 + role.length * 6) + 5},${(p.h - is) / 2 + is - 9})`}>
+        <rect width={Math.max(16, 7 + role.length * 6)} height={13} rx={6.5} fill="var(--card-solid, #fff)" stroke={B.c} strokeWidth="1.2" />
+        <text x={Math.max(16, 7 + role.length * 6) / 2} y={9.6} textAnchor="middle" fontSize="8.5" fontWeight="800" fill={B.c}>{role}</text></g> : null}</g>
     : <>
       <rect x={9} y={(p.h - is) / 2} width={is} height={is} rx={9} fill={c} opacity=".16" />
       {isUpIcon(spec) ? <g transform={`translate(${9 + is * .12},${(p.h - is) / 2 + is * .12})`}><NodeGlyph svg spec={spec} kind={iconKind} size={is * .76} color={c} /></g>
@@ -342,6 +346,11 @@ function MapView({ scope }) {
   const revealRef = useRef(null);                          // the device just opened: the map glides so its clients are on the screen
   const [view, setView] = useState(null);                 // {x, y, k}
   const [sel, setSel] = useState(null);
+  /* одно касание устройства только выделяет его (путь до интернета подсвечен), карточка внизу открывается вторым касанием того же устройства:
+     раньше карточка выскакивала от любого случайного касания при перемещении по карте и закрывала её */
+  const [info, setInfo] = useState(null);
+  const openInfo = id => { setSel(id); setInfo(id); };
+  useEffect(() => { if (info && info !== sel) setInfo(null); }, [sel]);
   const [linking, setLinking] = useState(null);           // null | 'pick' | nodeId
   const [q, setQ] = useState('');
   const [dragPos, setDragPos] = useState({});
@@ -456,6 +465,7 @@ function MapView({ scope }) {
     return { pinch: false, sx: pts[0].x, sy: pts[0].y, v };
   };
   const panMoved = useRef(false);
+  const bgTap = useRef(false);                              // одно касание пустого места: выделение снимается только когда палец отпустили, не сдвинув карту
   const onBgDown = e => {
     const onItem = !!e.target.closest('.node, .rackbox .u, .edge-hit');
     if (e.button > 0) return;                                                // right / middle button: not a pan (the context menu swallowed the release and the map then followed the mouse)
@@ -465,7 +475,9 @@ function MapView({ scope }) {
     ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, item: onItem };
     if (!onItem) try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { }      // on a card: captured only once it moves, or the tap would not reach the card
     panRef.current = baseline();
-    if (Object.keys(ptrs.current).length === 1 && !onItem) { setSel(null); setFocus(null); }
+    /* раньше выделение снималось уже на нажатии: стоило начать двигать карту, как выделенное устройство пропадало,
+       и вся карта перерисовывалась под пальцем. Теперь его снимает только короткое касание пустого места */
+    bgTap.current = Object.keys(ptrs.current).length === 1 && !onItem;
   };
   const onBgMove = e => {
     const p0 = ptrs.current[e.pointerId];
@@ -487,7 +499,9 @@ function MapView({ scope }) {
       applyView({ k, x: cx - (b.cx - b.v.x) * k / b.v.k, y: cy - (b.cy - b.v.y) * k / b.v.k });
     } else if (!b.pinch) applyView({ ...b.v, x: b.v.x + e.clientX - b.sx, y: b.v.y + e.clientY - b.sy });
   };
-  const onBgUp = e => { if (!ptrs.current[e.pointerId]) return; delete ptrs.current[e.pointerId]; if (!Object.keys(ptrs.current).length) { if (panMoved.current) dragEnd.current = Date.now(); commitView(); panRef.current = null; return; } panRef.current = baseline(); };
+  /* палец, начавший движение на устройстве, карта забирает себе (setPointerCapture), и устройство получает lostpointercapture — оно всплывает к карте.
+     Раньше карта принимала его за «палец отпущен», и движение обрывалось; теперь в разметке слушается только своё событие карты */
+  const onBgUp = e => { if (!ptrs.current[e.pointerId]) return; delete ptrs.current[e.pointerId]; if (!Object.keys(ptrs.current).length) { if (panMoved.current) dragEnd.current = Date.now(); else if (bgTap.current && e.type !== 'lostpointercapture') { setSel(null); setFocus(null); } bgTap.current = false; commitView(); panRef.current = null; return; } bgTap.current = false; panRef.current = baseline(); };
   const upRef = useRef(null); upRef.current = onBgUp;
   useEffect(() => {                                         // a release anywhere ends the gesture (over a panel, outside the window, after a card opened)
     const up = e => upRef.current && upRef.current(e);
@@ -596,19 +610,21 @@ function MapView({ scope }) {
       }
       setLinking(null); return;
     }
+    if (Date.now() - dragEnd.current < 350) return;                     // the click that ends a pan / drag is not a tap
     if (n.kind === 'group') { const nc = { ...collapsed, [n.parent]: false }; setCollapsed(nc); setView(null); if (edit) saveMap({ collapsed: nc }); return; }
-    if (Date.now() - dragEnd.current < 350) return;                     // the click that ends a drag is not a tap
     if (n.remoteClients && !scope) {                                    // a remote device: one tap shows / hides who is connected, two taps open its card
       const last = tapRef.current;
-      if (last && last.id === id && Date.now() - last.t < 320) { clearTimeout(last.timer); tapRef.current = null; setSel(id); return; }
+      if (last && last.id === id && Date.now() - last.t < 320) { clearTimeout(last.timer); tapRef.current = null; openInfo(id); return; }
       if (last) clearTimeout(last.timer);
       tapRef.current = { id, t: Date.now(), timer: setTimeout(() => { tapRef.current = null; toggleRemote(id); }, 240) };
       return;
     }
     if (edit && ptr.current === 'mouse') return;                        // on a computer in edit mode the card opens on double click (single click = grab)
+    if (sel === id) { setInfo(id); return; }                            // второе касание уже выделенного — открыть карточку
     setSel(id);
+    if (!lsGet('rl_map_tap_hint', '')) { lsSet('rl_map_tap_hint', '1'); toast('Нажмите ещё раз, чтобы открыть карточку'); }
   };
-  const nodeDbl = id => { if (L.nodes[id] && L.nodes[id].remoteClients && !scope) return; if (edit && ptr.current === 'mouse' && L.nodes[id] && L.nodes[id].kind !== 'group' && !linking) setSel(id); };
+  const nodeDbl = id => { if (L.nodes[id] && L.nodes[id].remoteClients && !scope) return; if (edit && ptr.current === 'mouse' && L.nodes[id] && L.nodes[id].kind !== 'group' && !linking) openInfo(id); };
   const edgeClick = async (e) => {
     if (!edit || !e.manual) return;
     if (await confirm('Удалить эту связь?', { danger: true, ok: 'Удалить' })) saveMap({ links: (data.map.links || []).filter(l => l.id !== e.id && `m:${l.source}>${l.target}` !== e.id) });
@@ -629,18 +645,71 @@ function MapView({ scope }) {
   }, [q]);
   useEffect(() => {
     if (searchHit.length === 1 && wrap.current) { const p = L.pos[searchHit[0]]; if (!p) return; const W = wrap.current.clientWidth, H = wrap.current.clientHeight;
-      setSel(searchHit[0]); setView(v => ({ k: Math.max(v.k, .9), x: W / 2 - (p.x + p.w / 2) * Math.max(v.k, .9), y: H / 2 - (p.y + p.h / 2) * Math.max(v.k, .9) })); }
+      openInfo(searchHit[0]); setView(v => ({ k: Math.max(v.k, .9), x: W / 2 - (p.x + p.w / 2) * Math.max(v.k, .9), y: H / 2 - (p.y + p.h / 2) * Math.max(v.k, .9) })); }
   }, [q]);
 
   const devById = Object.fromEntries(data.devices.map(d => [d.id, d]));
   useEffect(() => {                       // ?mapnode=<part of a name>: open that node's card (for links and tests)
     const q = (new URLSearchParams(location.search).get('mapnode') || '').toLowerCase(); if (!q) return;
-    const id = Object.keys(L.nodes).find(k => String(L.nodes[k].label || '').toLowerCase().includes(q)); if (id) { setSel(id); if (L.nodes[id].remoteClients) { setRemoteOpenIds({ [id]: true }); setView(null); } }
+    const id = Object.keys(L.nodes).find(k => String(L.nodes[k].label || '').toLowerCase().includes(q)); if (id) { openInfo(id); if (L.nodes[id].remoteClients) { setRemoteOpenIds({ [id]: true }); setView(null); } }
   }, []);
-  const selNode = sel && L.nodes[sel];
+  const selNode = info && info === sel && L.nodes[info];
   const [findOpen, setFindOpen] = useState(false);
   const [racksOpen, setRacksOpen] = useState(false);
   const anyCollapsedOpen = Object.values(collapsed).some(v => v === false);
+  /* «Показать все устройства»: раскрыть всех клиентов у удалённых устройств и все свёрнутые группы Wi-Fi-клиентов, потом уместить карту на экран */
+  const remoteIds = Object.values(L.nodes).filter(n => n.remoteClients).map(n => n.id).concat(Object.values(L.hiddenClients || {}).map(h => h.parent));
+  const allShown = remoteIds.every(id => remoteOpenIds[id]) && !Object.keys(L.groups || {}).length;
+  const showAll = () => {
+    if (allShown) { setRemoteOpenIds({}); setCollapsed(data.map.collapsed || {}); setView(null); return; }
+    const nc = { ...collapsed }; Object.keys(L.groups || {}).forEach(g => { nc[g.slice(2)] = false; });
+    setCollapsed(nc); setRemoteOpenIds(Object.fromEntries(remoteIds.map(id => [id, true]))); setSel(null); setView(null);
+  };
+  /* «Сделать снимок»: вся карта (не только видимая часть) картинкой PNG — как скриншот на iPhone: вспышка, миниатюра в углу, по нажатию сохранить */
+  const [shot, setShot] = useState(null);                  // {url, blob, name}
+  const snap = async () => {
+    const svg = wrap.current && wrap.current.querySelector(':scope > svg'); if (!svg || !gRef.current) return;
+    try {
+      const b = bbox(), pad = 40, vw = b.w + pad * 2, vh = b.h + pad * 2;
+      const scale = Math.max(.5, Math.min(2.5, Math.sqrt(15e6 / (vw * vh))));   // iPhone не рисует холст больше ~16 млн точек
+      const src = [svg, ...svg.querySelectorAll('*')], clone = svg.cloneNode(true), dst = [clone, ...clone.querySelectorAll('*')];
+      const PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'opacity', 'font-family', 'font-size',
+        'font-weight', 'letter-spacing', 'text-anchor', 'dominant-baseline', 'paint-order', 'visibility', 'display'];
+      src.forEach((el, i) => { const d = dst[i]; if (!d) return; const cs = getComputedStyle(el);
+        d.setAttribute('style', PROPS.map(k => { const v = cs.getPropertyValue(k); return v ? k + ':' + v : ''; }).filter(Boolean).join(';')); d.removeAttribute('class'); });
+      const gi = src.indexOf(gRef.current); if (gi >= 0) dst[gi].removeAttribute('transform');
+      [...clone.querySelectorAll('rect[fill="url(#mapgrid)"], title')].forEach(e => e.remove());
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg'); clone.setAttribute('viewBox', `${b.x - pad} ${b.y - pad} ${vw} ${vh}`);
+      clone.setAttribute('width', Math.round(vw * scale)); clone.setAttribute('height', Math.round(vh * scale)); clone.removeAttribute('style');
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', b.x - pad); bg.setAttribute('y', b.y - pad); bg.setAttribute('width', vw); bg.setAttribute('height', vh);
+      bg.setAttribute('fill', getComputedStyle(document.body).backgroundColor || '#f2f2f7'); clone.insertBefore(bg, clone.firstChild);
+      await Promise.all([...clone.querySelectorAll('image')].map(async im => {          // флаги и свои иконки — внутрь картинки, иначе холст их не нарисует
+        const h = im.getAttribute('href'); if (!h || h.startsWith('data:')) return;
+        try { const bl = await (await fetch(h, { credentials: 'same-origin' })).blob();
+          im.setAttribute('href', await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(bl); })); } catch (_) { im.remove(); }
+      }));
+      const svgUrl = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
+      const img = new Image(); await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = svgUrl; });
+      const cv = document.createElement('canvas'); cv.width = Math.round(vw * scale); cv.height = Math.round(vh * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(svgUrl);
+      const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+      const d = new Date(), z = n => String(n).padStart(2, '0');
+      const name = `karta-seti-${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}.png`;
+      if (shot) URL.revokeObjectURL(shot.url);
+      setShot({ url: URL.createObjectURL(blob), blob, name, t: Date.now() });
+    } catch (e) { toast('Не получилось сделать снимок: ' + (e && e.message || e), true); }
+  };
+  const saveShot = async () => {
+    if (!shot) return;
+    const file = new File([shot.blob], shot.name, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {      // iPhone: «Сохранить изображение» в Фото
+      try { await navigator.share({ files: [file], title: 'Карта сети' }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a'); a.href = shot.url; a.download = shot.name; document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(shot.url); setShot(null);                       // после скачивания миниатюру убираем
+  };
+  useEffect(() => { if (!shot) return; const t = setTimeout(() => setShot(s => s && s.t === shot.t ? { ...s, idle: true } : s), 6000); return () => clearTimeout(t); }, [shot && shot.t]);
   if (!view) return <div className="map-wrap" ref={wrap} />;
   const tv = liveV.current || (animRef.current && animV.current) || view;      // the view the layer is really at (a gesture or a glide may be running)
   return <div className={'map-wrap' + (scope ? ' scoped' : '')} ref={wrap}>
@@ -649,6 +718,9 @@ function MapView({ scope }) {
         <WorkItem icon="search" label="Найти устройство" onClick={() => { setFindOpen(true); setRacksOpen(false); }} />
         {((L.racks || []).length + (L.rooms || []).length) > 1 ? <WorkItem icon="rack" label="Шкафы и места" on={racksOpen} onClick={() => setRacksOpen(!racksOpen)} /> : null}
         <WorkItem icon="fit" label="Показать всё" onClick={fit} />
+        {remoteIds.length || Object.keys(L.groups || {}).length || allShown && anyCollapsedOpen ? <WorkItem icon="list" label={allShown ? 'Свернуть все устройства' : 'Показать все устройства'}
+          sub={allShown ? null : 'раскрыть всех клиентов'} on={allShown} onClick={showAll} /> : null}
+        <WorkItem icon="camera" label="Сделать снимок" sub="вся карта картинкой" onClick={snap} />
       </WorkSec>
       <WorkSec title="Вид">
         <WorkChoice value={style} keep options={MAP_STYLES.map(([value, label]) => ({ value, label }))} onChange={v => { setStyle(v); lsSet('rl_map_style', v); setView(null); setSel(null); }} />
@@ -678,11 +750,11 @@ function MapView({ scope }) {
     </div> : null}
     {linking ? <div className="toast" style={{ position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }}>
       <Icon name="link" size={15} />{linking === 'pick' ? 'Выберите первое устройство' : 'Выберите второе устройство'}</div> : null}
-    <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} onLostPointerCapture={onBgUp} className={panRef.current ? 'panning' : ''}>
+    <svg onPointerDown={onBgDown} onPointerMove={onBgMove} onPointerUp={onBgUp} onPointerCancel={onBgUp} onLostPointerCapture={e => { if (e.target === e.currentTarget) onBgUp(e); }} className={panRef.current ? 'panning' : ''}>
       {edit ? <><defs><pattern id="mapgrid" width={MAP_GRID} height={MAP_GRID} patternUnits="userSpaceOnUse" patternTransform={`translate(${tv.x},${tv.y}) scale(${tv.k})`}><circle cx="1" cy="1" r="1" fill="var(--text3)" opacity=".35" /></pattern></defs>
         <rect width="100%" height="100%" fill="url(#mapgrid)" pointerEvents="none" /></> : null}
       <g ref={gRef} transform={`translate(${tv.x},${tv.y}) scale(${tv.k})`}>
-        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={setSel} /> : null}
+        {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={openInfo} /> : null}
         {(L.headers || []).map(h => <g key={h.label} pointerEvents="none"><text x={h.x + 4} y={h.y + 16} fontSize="15" fontWeight="700" fill="var(--text)">{trunc(h.label, 28)}</text>
           <text x={h.x + 4} y={h.y + 34} fontSize="11.5" fill="var(--text3)">{h.count} {ruPlural(h.count, 'устройство', 'устройства', 'устройств')}</text><rect x={h.x} y={h.y + 40} width={h.w} height={2} rx={1} fill="var(--accent)" opacity=".5" /></g>)}
         {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
@@ -717,11 +789,23 @@ function MapView({ scope }) {
     <div className="zoom-btns"><button className="btn" onClick={() => zoomAt(1.35)}>+</button><button className="btn" onClick={() => zoomAt(1 / 1.35)}>−</button></div>
     {healthOpen && data.health ? <div className="card pad fade-in health-panel">
       <div className="row" style={{ marginBottom: 4 }}><b className="grow" style={{ fontSize: 16 }}>Анализ сети</b><Btn size="sm" icon="x" onClick={() => setHealthOpen(false)} /></div>
-      <HealthBody h={data.health} onCheck={c => { if (c.nodeId && L.nodes[c.nodeId] && !c.port) { setSel(c.nodeId); if (innerWidth < 760) setHealthOpen(false); } else openCheck(c); }}
-        onNode={id => { if (L.nodes[id]) { setSel(id); if (innerWidth < 760) setHealthOpen(false); } }} />
+      <HealthBody h={data.health} onCheck={c => { if (c.nodeId && L.nodes[c.nodeId] && !c.port) { openInfo(c.nodeId); if (innerWidth < 760) setHealthOpen(false); } else openCheck(c); }}
+        onNode={id => { if (L.nodes[id]) { openInfo(id); if (innerWidth < 760) setHealthOpen(false); } }} />
     </div> : null}
-    {selNode ? <NodeInfo n={selNode} L={L} data={data} devById={devById} onOpen={openDevice} onClose={() => setSel(null)} /> : null}
+    {shot ? <MapShot key={shot.t} shot={shot} onSave={saveShot} onClose={() => { URL.revokeObjectURL(shot.url); setShot(null); }} /> : null}
+    {selNode ? <NodeInfo n={selNode} L={L} data={data} devById={devById} onOpen={openDevice} onClose={() => setInfo(null)} /> : null}
   </div>;
+}
+
+/* снимок карты как скриншот на iPhone: белая вспышка, картинка уменьшается в левый нижний угол; нажать — сохранить, крестик — убрать */
+function MapShot({ shot, onSave, onClose }) {
+  return <>
+    <div className="map-shot-flash" aria-hidden="true" />
+    <div className={'map-shot' + (shot.idle ? ' idle' : '')} role="dialog" aria-label="Снимок карты">
+      <button type="button" className="map-shot-close" onClick={onClose} aria-label="Закрыть снимок"><Icon name="x" size={15} /></button>
+      <button type="button" className="map-shot-img" onClick={onSave} title="Сохранить снимок"><img src={shot.url} alt="Снимок карты сети" /></button>
+      <button type="button" className="map-shot-save" onClick={onSave}><Icon name="check" size={14} />Сохранить снимок</button>
+    </div></>;
 }
 
 function RackBox({ L, data, devById, dimSet, markSet, onOpen, onSel }) {

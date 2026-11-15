@@ -100,23 +100,92 @@ const BRANDS = {
   brother: { n: "Brother", c: '#0d2ea0', i: '#fff', t: "brother" },
   zte: { n: "ZTE", c: '#008ed3', i: '#fff', t: "ZTE" },
   realme: { n: "realme", c: '#ffc915', i: '#111', t: "realme" },
+  /* не бренды, а свои метки: «/abon Иванов» — абонент (клиент), «/cam Двор» — камера (зелёная) */
+  abon: { n: "Абонент", c: '#0a84ff', i: '#fff', d: 'M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5z' },
+  cam: { n: "Камера", c: '#34c759', i: '#fff', d: 'M3 7a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm14 3.5 4-2.5v8l-4-2.5z' },
 };
 /* A tag at the start of the name picks the logo by hand: «/ubuntu Сервер», «/windows Игровой», «/keenetic Ultra». The tag wins over everything
    (also a hand-chosen icon) and is not shown in the name. A tag is a brand key of BRANDS or one of these short names. */
-const TAG_RE = /^\s*\/([a-z0-9а-яё-]+)(?:\s+|$)/i;
+/* «/ap/keenetic Кухня»: перед брендом можно поставить короткую роль (до 4 латинских букв) — на логотипе появится значок AP, SW… */
+const TAG_RE = /^\s*\/(?:([a-z]{1,4})\/)?([a-z0-9а-яё-]+)(?:\s+|$)/i;
 const TAG_ALIAS = { win: 'windows', win10: 'windows', win11: 'windows', mac: 'apple', macos: 'apple', macbook: 'apple', ios: 'apple', iphone: 'apple', ipad: 'apple', imac: 'apple',
   kn: 'keenetic', nc: 'netcraze', owrt: 'openwrt', ha: 'homeassistant', hass: 'homeassistant', rpi: 'raspberrypi', pi: 'raspberrypi', raspberry: 'raspberrypi',
   mint: 'linuxmint', kali: 'kalilinux', arch: 'archlinux', alpine: 'alpinelinux', wd: 'westerndigital', 'tp-link': 'tplink', tp: 'tplink', 'd-link': 'dlink',
   ps: 'playstation', ps4: 'playstation', ps5: 'playstation', switch: 'nintendoswitch', nintendo: 'nintendoswitch', hue: 'philipshue', alexa: 'amazonalexa', echo: 'amazonalexa',
   nest: 'googlehome', chromecast: 'googlehome', esp: 'espressif', esphome: 'espressif', esp32: 'espressif', ya: 'yandex', 'яндекс': 'yandex', alice: 'yandex', 'алиса': 'yandex',
   mikrotik: 'mikrotik', unifi: 'ubiquiti', hik: 'hikvision', mi: 'xiaomi', galaxy: 'samsung', rhel: 'redhat', esxi: 'vmware', truenas: 'truenas', nvidia: 'nvidia',
+  abonent: 'abon', client: 'abon', 'абон': 'abon', 'абонент': 'abon', camera: 'cam', kam: 'cam', cctv: 'cam', ipcam: 'cam', 'кам': 'cam', 'камера': 'cam',
+  'кинетик': 'keenetic', 'кинетика': 'keenetic', kinetic: 'keenetic', 'микротик': 'mikrotik', 'тплинк': 'tplink', 'тп-линк': 'tplink', 'сяоми': 'xiaomi', 'ксиаоми': 'xiaomi',
+  'самсунг': 'samsung', 'хуавей': 'huawei', 'хуавэй': 'huawei', 'асус': 'asus', 'эпл': 'apple', 'айфон': 'apple', 'виндовс': 'windows', 'убунту': 'ubuntu', 'дебиан': 'debian',
+  'линукс': 'linux', 'синолоджи': 'synology', 'проксмокс': 'proxmox', 'юбикити': 'ubiquiti', 'хиквижн': 'hikvision', 'дахуа': 'dahua', 'тенда': 'tenda', 'нетгир': 'netgear',
   shield: 'nvidia', deck: 'steamdeck', zyxel: 'zyxel', ewelink: 'sonoff', lumi: 'aqara', synology: 'synology', dsm: 'synology', nas: 'synology', docker: 'docker', pve: 'proxmox' };
+/* опечатка в метке («/keenetick», «/mikrotk») — берём ближайший бренд, если он один такой: 1 ошибка в словах от 5 букв, 2 — от 8 */
+function tagTypo(t) {
+  if (t.length < 5) return '';
+  const lim = t.length >= 8 ? 2 : 1, dist = (a, c) => {
+    if (Math.abs(a.length - c.length) > lim) return 99;
+    let prev = Array.from({ length: c.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let j = 1; j <= c.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === c[j - 1] ? 0 : 1)); prev = cur; }
+    return prev[c.length];
+  };
+  let best = '', bd = 99, tie = false;
+  [...Object.keys(BRANDS), ...Object.keys(TAG_ALIAS)].forEach(w => { const d = dist(t, w.toLowerCase()); if (d < bd) { bd = d; best = TAG_ALIAS[w] || w; tie = false; } else if (d === bd && (TAG_ALIAS[w] || w) !== best) tie = true; });
+  return bd <= lim && !tie && BRANDS[best] ? best : '';
+}
+const tagCache = new Map();
 function tagBrand(name) {
   const m = TAG_RE.exec(String(name || '')); if (!m) return '';
-  const t = m[1].toLowerCase(), k = TAG_ALIAS[t] || t;
-  return BRANDS[k] ? k : '';
+  const t = m[2].toLowerCase(), k = TAG_ALIAS[t] || t;
+  if (BRANDS[k]) return k;
+  if (!tagCache.has(t)) tagCache.set(t, tagTypo(t));
+  return tagCache.get(t);
+}
+/* роль перед брендом: «/ap/keenetic» → «AP»; только вместе с найденным брендом */
+function tagRole(name) {
+  const m = TAG_RE.exec(String(name || '')); return m && m[1] && tagBrand(name) ? m[1].toUpperCase() : '';
 }
 function nameNoTag(name) { return tagBrand(name) ? (String(name).replace(TAG_RE, '') || name) : name; }
+
+/* ───────── подсказки по «/» при вводе имени устройства ───────── */
+const TAG_POPULAR = ['keenetic', 'mikrotik', 'tplink', 'ubiquiti', 'asus', 'xiaomi', 'apple', 'android', 'windows', 'ubuntu', 'synology', 'proxmox', 'homeassistant', 'hikvision', 'dahua', 'yandex', 'abon', 'cam'];
+const TAG_ROLES = [['ap', 'точка доступа'], ['sw', 'коммутатор'], ['rt', 'роутер'], ['nvr', 'регистратор'], ['srv', 'сервер']];
+// показываем, только пока пользователь ещё печатает метку в начале имени (до пробела)
+const TAG_TYPING = /^\s*\/([a-zа-яё]{1,4}\/)?([a-z0-9а-яё-]*)$/i;
+function tagSuggestions(text) {
+  const m = TAG_TYPING.exec(text || ''); if (!m) return null;
+  const role = (m[1] || '').replace('/', ''), q = (m[2] || '').toLowerCase();
+  const aliases = {};                // бренд → все его написания (для поиска по русским и коротким словам)
+  Object.keys(BRANDS).forEach(k => { aliases[k] = [k, BRANDS[k].n.toLowerCase()]; });
+  Object.entries(TAG_ALIAS).forEach(([a, key]) => { if (aliases[key]) aliases[key].push(a.toLowerCase()); });
+  let items = Object.keys(aliases).map(key => ({ key, typed: key, name: BRANDS[key].n }));   // метка — каноничное имя бренда (/keenetic, /tplink)
+  if (q) items = items.filter(x => aliases[x.key].some(a => a.includes(q)));
+  else items = items.filter(x => TAG_POPULAR.includes(x.key));
+  items.sort((a, b) => { const pa = TAG_POPULAR.indexOf(a.key), pb = TAG_POPULAR.indexOf(b.key);
+    return (pa < 0 ? 99 : pa) - (pb < 0 ? 99 : pb) || a.name.localeCompare(b.name); });
+  const roles = role || q ? [] : TAG_ROLES;      // роли подсказываем только в самом начале, когда метки ещё нет
+  return { role, items: items.slice(0, 7), roles };
+}
+// поле имени с подсказками: onChange получает строку; в остальном как обычный <input className="input">
+function NameInput({ value, onChange, className = 'input', grow, ...rest }) {
+  const [open, setOpen] = useState(false);
+  const sug = open ? tagSuggestions(value || '') : null;
+  const pickBrand = it => { onChange((sug.role ? '/' + sug.role + '/' : '/') + it.typed + ' '); setOpen(true); };
+  const pickRole = r => { onChange('/' + r + '/'); setOpen(true); };
+  const show = sug && (sug.items.length || sug.roles.length);
+  return <div className={'name-input' + (grow || / grow(\s|$)/.test(className) ? ' grow' : '')}>
+    <input className={className} value={value} {...rest}
+      onChange={e => { onChange(e.target.value); setOpen(true); }}
+      onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 180)} />
+    {show ? <div className="tag-suggest">
+      {sug.roles.length ? <div className="tag-suggest-roles">Роль (необязательно):{sug.roles.map(([r, lbl]) =>
+        <button type="button" key={r} className="tag-role-chip" onMouseDown={e => { e.preventDefault(); pickRole(r); }} title={lbl}>{r.toUpperCase()}</button>)}</div> : null}
+      {sug.role ? <div className="tag-suggest-cur">Роль: <b>{sug.role.toUpperCase()}</b> + бренд</div> : null}
+      {sug.items.map(it => <button type="button" key={it.key} className="tag-suggest-it" onMouseDown={e => { e.preventDefault(); pickBrand(it); }}>
+        <BrandTile brand={it.key} size={22} round={6} role={sug.role ? sug.role.toUpperCase() : ''} />
+        <span className="ellipsis">{it.name}</span><code>/{sug.role ? sug.role + '/' : ''}{it.typed}</code></button>)}
+    </div> : null}
+  </div>;
+}
 const BRAND_RULES = [
   ['apple', /iphone|ipad|ipod|macbook|\bimac\b|mac[\s_-]?(mini|studio|pro)\b|\bmac\b|apple|airpods|homepod|айфон|айпад|макбук/i],
   ['android', /android|galaxy|\bsm-[a-z]\d{3}|pixel|redmi|poco|xiaomi|\bmi[\s_-]?\d|huawei|honor|oneplus|realme|oppo|vivo|motorola|\bmoto\b|nokia|infinix|tecno|\bzte\b|samsung/i, ['phone', 'tablet']],
@@ -171,9 +240,10 @@ function brandOfMac(mac, kind) {
 }
 /* a word mark (no picture): the longer the word, the smaller the letters, so it fits the tile */
 const brandTextSize = t => { const n = [...String(t || '')].length; return n <= 1 ? .56 : n <= 2 ? .42 : n <= 3 ? .34 : n <= 4 ? .28 : n <= 5 ? .23 : .2; };
-function BrandTile({ brand, size = 36, round = 10 }) {
+function BrandTile({ brand, size = 36, round = 10, role }) {
   const b = BRANDS[brand];
-  return <div className="kind-brand" title={b.n} style={{ width: size, height: size, borderRadius: round, background: b.c }}>
+  return <div className="kind-brand" title={b.n + (role ? ' · ' + role : '')} style={{ width: size, height: size, borderRadius: round, background: b.c }}>
+    {role ? <span className="kind-brand-role" style={{ color: b.c, fontSize: Math.max(7, size * .24) }}>{role}</span> : null}
     {b.d ? <svg width={size * .6} height={size * .6} viewBox="0 0 24 24" fill={b.i} aria-hidden="true"><path d={b.d} /></svg>
       : <span className="kind-brand-t" style={{ color: b.i, fontSize: brandTextSize(b.t) * size }}>{b.t}</span>}</div>;
 }

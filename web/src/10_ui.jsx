@@ -42,7 +42,7 @@ function useLockPage() {
 }
 
 /* onBack: a window with steps — «‹» in the header, Esc and a tap outside go one step back; the × still closes it all */
-function Modal({ title, onClose, onBack, children, footer, wide, icon }) {
+function Modal({ title, onClose, onBack, children, footer, wide, icon, top }) {          // top: above every panel (Frank, menus) — for confirmations
   useLockPage();
   const step = onBack || onClose;
   useEffect(() => {
@@ -50,7 +50,7 @@ function Modal({ title, onClose, onBack, children, footer, wide, icon }) {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [step]);
   // always on top of the page: a window opened from inside another window / a blurred card would otherwise be pinned to it
-  return ReactDOM.createPortal(<div className="overlay" onMouseDown={e => e.target === e.currentTarget && step && step()}>
+  return ReactDOM.createPortal(<div className={'overlay' + (top ? ' top' : '')} onMouseDown={e => e.target === e.currentTarget && step && step()}>
     <div className={'modal' + (wide ? ' wide' : '')}>
       <div className="modal-head">{onBack ? <button type="button" className="modal-back" title="Назад" onClick={onBack}><Icon name="chevron" size={18} style={{ transform: 'rotate(180deg)' }} /></button> : null}
         {icon}<h3>{title}</h3>{onClose ? <Btn icon="x" size="sm" onClick={onClose} /> : null}</div>
@@ -167,7 +167,7 @@ function ConfirmHost({ children }) {
   const ask = useCallback((text, opts = {}) => new Promise(res => setQ({ text, opts, res })), []);
   const done = v => { q.res(v); setQ(null); };
   return <ConfirmCtx.Provider value={ask}>{children}
-    {q ? <Modal title={q.opts.title || 'Подтвердите'} onClose={() => done(false)}
+    {q ? <Modal top title={q.opts.title || 'Подтвердите'} onClose={() => done(false)}
       footer={<><Btn onClick={() => done(false)}>Отмена</Btn><Btn kind={q.opts.danger ? 'danger' : 'primary'} onClick={() => done(true)}>{q.opts.ok || 'Продолжить'}</Btn></>}>
       <div style={{ fontSize: 15, lineHeight: 1.45 }}>{q.text}</div></Modal> : null}
   </ConfirmCtx.Provider>;

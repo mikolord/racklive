@@ -323,7 +323,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       <ol className="steps">{entry.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
       {entry.proof ? <div className="dim3" style={{ fontSize: 12 }}>Как это работает: {entry.proof}.</div> : null}</details> : null}
     <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))' }}>
-      <Field label="Название"><input className="input" value={f.name} onChange={e => set('name', e.target.value)} placeholder="Например, Роутер дома" /></Field>
+      <Field label="Название" hint="Можно поставить метку бренда: /keenetic, /ap/keenetic, /abon, /cam"><NameInput className="input" value={f.name} onChange={v => set('name', v)} placeholder="Например, Роутер дома" /></Field>
       <Field label="Тип (иконка)"><select className="select" value={f.kind || drv.kind} onChange={e => set('kind', e.target.value)}>
         {DEVICE_KINDS.map(k => <option key={k} value={k}>{KIND_TEXT[k]}</option>)}</select></Field>
       {drv.fields.filter(visible).map(renderField)}
