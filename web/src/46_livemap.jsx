@@ -120,7 +120,7 @@ function featScreen(fs, map, pt) {
 }
 
 /* spec = { center: [lon, lat], houses: [{ id, name, ring: [[lon, lat]…], center: {lon, lat}, floors, devs, status, color, edge, hl, height }], poles: [{ id, name, lon, lat }], links: [{ coords: [[lon, lat], [lon, lat]] }] } */
-function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, onRename, onDelete, onOpen, onNet, onAddPole, onAddNode, onMovePoint, onLinkPick, linkFrom, onEditLink,
+function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, onRename, onDelete, onOpen, onNet, onScheme, onAddPole, onAddNode, onMovePoint, onLinkPick, linkFrom, onEditLink,
   onRenamePoint, onDeletePoint, onBindNode, onOpenRef, noOutline }) {
   const toast = useToast(); const { data } = useApp();
   const defaults = planPreferences(data.settings);
@@ -260,7 +260,7 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
     if (!pts.length) { map.easeTo({ center: spec.center, zoom: 17, duration: 600 }); return; }
     const b = new ml.LngLatBounds(pts[0], pts[0]); pts.forEach(p => b.extend(p)); map.fitBounds(b, { padding: 90, maxZoom: 19, duration: 600 }); };
   const pick = t => {
-    if (!edit) { toast('Включите «Редактирование» в меню, чтобы рисовать на карте', true); return; }
+    if (!edit) { toast('Включите редактирование (карандаш в кнопках справа), чтобы рисовать на карте', true); return; }
     onSel(null); setVedit(false); setDraft([]); onLinkPick(null); setTool(t === tool ? null : t); if (t !== tool) setFlat(true); };
   const stopTool = () => { setTool(null); setDraft([]); onLinkPick(null); };
   const [findOpen, setFindOpen] = useState(false); const [fq, setFq] = useState('');                        // поиск по плану
@@ -318,8 +318,9 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
             <option value="">Выбрать дом…</option>{[...spec.houses, ...(noOutline || [])].map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select></label> : null}
       </div> : null}
+      <div className="zoom-btns"><WorkEditBtn /></div>
       {err ? <div className="live-msg err">{err}</div> : null}
-      {ready && !tool && !vedit && !spec.houses.length ? <div className="live-msg hint">{edit ? 'Откройте меню справа вверху → «Обвести дом»: нажмите на здание на карте или отметьте его углы.' : 'Домов пока нет. Включите «Редактирование» в меню — тогда можно обвести дом на карте.'}</div> : null}
+      {ready && !tool && !vedit && !spec.houses.length ? <div className="live-msg hint">{edit ? 'Откройте меню справа вверху → «Обвести дом»: нажмите на здание на карте или отметьте его углы.' : 'Домов пока нет. Включите редактирование (карандаш в кнопках справа) — тогда можно обвести дом на карте.'}</div> : null}
       {tool ? <div className="live-bar"><div className="live-bar-t">{tool === 'link' && linkFrom ? `От «${nameOf(linkFrom)}» — нажмите на второй дом, столб или узел` : LIVE_TOOLS[tool]}{draft.length ? ` · точек: ${draft.length}` : ''}</div>
         <div className="live-bar-b">{tool === 'poly' && draft.length >= 3 ? <Btn size="sm" kind="primary" icon="check" onClick={() => finishWith(draft)}>Готово</Btn> : null}
           {draft.length ? <Btn size="sm" onClick={() => setDraft(draft.slice(0, -1))}>Убрать точку</Btn> : null}
@@ -333,6 +334,8 @@ function LiveMap3D({ spec, edit, sel, onSel, onAddHouse, onEditRing, onStyle, on
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
             <Btn size="sm" kind="primary" icon="home" style={{ flex: 1 }} onClick={() => onOpen(selHouse.id)}>Открыть дом</Btn>
             <Btn size="sm" icon="map" style={{ flex: 1 }} onClick={() => onNet(selHouse.id)}>Сеть дома</Btn></div>
+          <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <Btn size="sm" icon="scheme" style={{ flex: 1 }} onClick={() => onScheme(selHouse.id)}>Схема</Btn></div>
           {edit ? <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
             <Btn size="sm" icon="tag" onClick={() => setStyleOpen(!styleOpen)}>Цвета</Btn>
             <Btn size="sm" icon="cursor" onClick={() => { setVedit(true); setSelV(null); }}>Углы</Btn>

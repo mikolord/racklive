@@ -72,7 +72,7 @@ if os.path.isfile(dep):
 css = open(os.path.join(ROOT, 'web', 'styles.css'), encoding='utf-8').read()
 check('styles for .kind-flag (own class, not squeezed by «Test»)', '.kind-flag img' in css and 'data-look="test"] .kind-flag' in css)
 for f, needle in (('50_devices.jsx', 'nameNoFlag(d.name, d.kind)'), ('20_device.jsx', 'nameNoFlag(device.name'), ('65_tools.jsx', 'nameNoFlag(d.name'),
-                  ('40_map.jsx', 'nameNoFlag(n.label, n.kind)'), ('40_map.jsx', "'/flags/' + cc + '.svg'"), ('52_clients.jsx', 'name={c.name}'), ('40_map.jsx', 'const cc = flagOf(n.label)')):
+                  ('40_map.jsx', 'nameNoFlag(n.label, n.kind)'), ('40_map.jsx', "'/flags/' + cc + '.svg'"), ('52_clients.jsx', 'name={c.name}'), ('40_map.jsx', 'const cc = flagOf(nm)')):
     check('used in ' + f + ' (' + needle[:24] + ')', needle in open(os.path.join(ROOT, 'web', 'src', f), encoding='utf-8').read())
 dev = open(os.path.join(ROOT, 'web', 'src', '20_device.jsx'), encoding='utf-8').read()
 check('no empty «Вид» panel: only an «Добавить вид» button without a photo / model', 'Добавить вид' in dev and 'Нет фото и 3D-модели' not in dev)

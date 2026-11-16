@@ -1,0 +1,29 @@
+{
+  "app_api": 1,
+  "id": "hydra-lab",
+  "title": "Hydra Lab — учебный стенд",
+  "description": "Веб-терминал и SSH с Hydra для проверки своих устройств на слабые пароли. Только со своим оборудованием или с письменного разрешения владельца.",
+  "version": "1.1.0",
+  "home": "https://github.com/mikolord/hydra-lab",
+  "license": "AGPL-3.0",
+  "author": "mikolord",
+  "targets": ["ssh", "synology"],
+  "fields": [
+    {"id": "password", "label": "Пароль входа (веб-терминал и SSH)", "type": "password", "required": true, "hint": "Логин в обоих случаях — lab"}
+  ],
+  "services": {
+    "hydra": {
+      "image": "ghcr.io/mikolord/hydra-lab@sha256:b00fd3a27e99da06b22f17d0f716e8e2a0586f99973e82a96aafd8718142b31c",
+      "memory": "512m",
+      "cpus": 2,
+      "caps": ["SETUID", "SETGID", "DAC_OVERRIDE", "CHOWN"],
+      "ports": [
+        {"container": 7681, "host": 7681, "label": "Веб-терминал", "web": true},
+        {"container": 2222, "host": 2222, "label": "SSH (Termux, Termius и другие)"}
+      ],
+      "volumes": [{"name": "data", "path": "/data"}],
+      "env": {"TTYD_PASSWORD": "${RL_P_PASSWORD}"}
+    }
+  },
+  "ui": {"mode": "link", "service": "hydra", "port": 7681, "path": "/", "title": "Открыть веб-терминал Hydra"}
+}

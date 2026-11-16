@@ -537,6 +537,42 @@ class Cameras:
         self._rec = (time.time(), out)
         return out
 
+    CAM_NAME_RE = re.compile(r'cam|камер|ipc|nvr|dvr|hikvision|dahua|reolink|ezviz|imou|tiandy|rvi-|ps-link', re.I)
+
+    def adoptable(self):
+        """cameras that are not devices yet: router clients that look like cameras (type or name) and what the camera search found.
+        Already added ones (by address or MAC) are skipped, so pressing again never makes a copy"""
+        devs, states = self.store.cfg['devices'], self.app.states
+        have_ip, have_mac = set(), set()
+        for d in devs:
+            h = str(d.get('host') or '').strip().lower()
+            if h:
+                have_ip.add(h)
+            sm = (states.get(d['id']) or {}).get('summary') or {}
+            for m in [d.get('mac'), sm.get('mac')] + list(sm.get('macs') or []):
+                if m:
+                    have_mac.add(str(m).lower())
+        out = {}
+
+        def add(ip, mac, name, kind, vendor, src):
+            try:
+                ip = need_private(ip)
+            except CamError:
+                return
+            mac = (mac or '').lower()
+            if ip in have_ip or (mac and mac in have_mac) or ip in out:
+                return
+            out[ip] = {'ip': ip, 'mac': mac, 'name': name or ('Камера ' + ip if kind == 'camera' else 'Видеорегистратор ' + ip), 'kind': kind, 'vendor': vendor or '', 'src': src}
+        for d in devs:
+            for c in (states.get(d['id']) or {}).get('clients') or []:
+                nm = str(c.get('name') or c.get('hostname') or '')
+                if c.get('ip') and (c.get('kind') == 'camera' or c.get('kind') == 'nvr' or self.CAM_NAME_RE.search(nm + ' ' + str(c.get('vendor') or ''))):
+                    add(c['ip'], c.get('mac'), nm, 'nvr' if c.get('kind') == 'nvr' else 'camera', c.get('vendor'), 'клиент роутера «%s»' % (d.get('name') or ''))
+        for it in self.s.get('items', []):
+            if it.get('kind') in ('camera', 'recorder'):
+                add(it['ip'], it.get('mac'), (it.get('what') or '').split('·')[-1].strip() if it.get('model') else '', 'nvr' if it['kind'] == 'recorder' else 'camera', it.get('vendor'), 'поиск камер')
+        return sorted(out.values(), key=lambda x: tuple(int(p) for p in x['ip'].split('.')))
+
     def public(self):
         subs = self.app.netscan.subnets()
         s = self.s

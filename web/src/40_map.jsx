@@ -271,11 +271,12 @@ function MapNode({ n, p, sel, dim, mark, phase, onDown, onClick, onDoubleClick }
   const is = small ? 28 : 34;
   const pw = n.remoteClients ? 24 + String(n.remoteClients).length * 7 : 0;            // the pill «‹ 3» of a remote device
   const room = p.w - (is + 18) - 24, capL = Math.max(8, Math.floor(room / 7.4)), capS = Math.max(10, Math.floor(room / 6.2)) - (n.remoteClients ? Math.ceil((pw - 6) / 6.2) : 0);      // characters that fit the card (the other map views have wider cards)
-  const cc = flagOf(n.label);            // a name starting with «🇩🇪 …» or «/abh …»: the picture of the flag instead of the icon, the name without the prefix
+  const nm = (data.labels || {})[n.id] || n.label;       // подпись, заданная вручную на карте; иначе имя из сети
+  const cc = flagOf(nm);            // a name starting with «🇩🇪 …» or «/abh …»: the picture of the flag instead of the icon, the name without the prefix
   const [badFlag, setBadFlag] = useState('');
-  const brand = tagBrand(n.label) || (!spec ? brandOf(n.label, n.kind, n.mac || (String(n.id).startsWith('h:') ? String(n.id).slice(2) : '')) : ''), B = brand && BRANDS[brand];            // the maker's logo (01_brands.jsx) when the name says whose device it is
-  const role = B ? tagRole(n.label) : '';            // «/ap/keenetic …»: логотип Keenetic со значком AP
-  const flag = cc && badFlag !== cc, label = nameNoFlag(n.label, n.kind), clipId = 'fc-' + String(n.id).replace(/[^\w-]/g, '_');
+  const brand = tagBrand(nm) || (!spec ? brandOf(nm, n.kind, n.mac || (String(n.id).startsWith('h:') ? String(n.id).slice(2) : '')) : ''), B = brand && BRANDS[brand];            // the maker's logo (01_brands.jsx) when the name says whose device it is
+  const role = B ? tagRole(nm) : '';            // «/ap/keenetic …»: логотип Keenetic со значком AP
+  const flag = cc && badFlag !== cc, label = nameNoFlag(nm, n.kind), clipId = 'fc-' + String(n.id).replace(/[^\w-]/g, '_');
   return <g className={'node' + (small ? ' client' : '') + (n.kind === 'group' ? ' group' : '') + (sel ? ' sel' : '') + (dim ? ' dim-out' : '')}
     transform={`translate(${p.x},${p.y})`} onPointerDown={onDown} onClick={onClick} onDoubleClick={onDoubleClick}>
     {mark ? <rect className="spof-mark" x={-5} y={-5} width={p.w + 10} height={p.h + 10} rx={small ? 16 : 19} /> : null}
@@ -637,7 +638,7 @@ function MapView({ scope }) {
     L.edges.filter(e => e.source === sel).forEach(e => { s.add(e.id); s.add(e.target); });
     return s;
   }, [sel, L, focus]);
-  const searchHit = q ? Object.values(L.nodes).filter(n => [n.label, n.sub].join(' ').toLowerCase().includes(q.toLowerCase())).map(n => n.id) : [];
+  const searchHit = q ? Object.values(L.nodes).filter(n => [n.label, (data.labels || {})[n.id], n.sub].join(' ').toLowerCase().includes(q.toLowerCase())).map(n => n.id) : [];
   useEffect(() => {                       // a search that finds a client hidden behind a remote device opens that device
     const s = q.trim().toLowerCase(); if (s.length < 2) return;
     const want = Object.values(L.hiddenClients || {}).filter(h => [h.node.label, h.node.sub].join(' ').toLowerCase().includes(s)).map(h => h.parent);
@@ -786,7 +787,7 @@ function MapView({ scope }) {
       <span><i style={{ background: 'var(--green)' }} />1 Гбит</span><span><i style={{ background: 'var(--yellow)' }} />100 Мбит</span>
       <span><i style={{ background: 'var(--accent)' }} />Wi-Fi</span><span><i style={{ background: 'var(--teal)' }} />Mesh</span><span><i style={{ background: 'var(--purple)' }} />Интернет</span>
       <span><b style={{ color: '#ffd60a' }}>⚡</b>PoE</span></div>
-    <div className="zoom-btns"><button className="btn" onClick={() => zoomAt(1.35)}>+</button><button className="btn" onClick={() => zoomAt(1 / 1.35)}>−</button></div>
+    <div className="zoom-btns"><WorkEditBtn /><button className="btn" onClick={() => zoomAt(1.35)}>+</button><button className="btn" onClick={() => zoomAt(1 / 1.35)}>−</button></div>
     {healthOpen && data.health ? <div className="card pad fade-in health-panel">
       <div className="row" style={{ marginBottom: 4 }}><b className="grow" style={{ fontSize: 16 }}>Анализ сети</b><Btn size="sm" icon="x" onClick={() => setHealthOpen(false)} /></div>
       <HealthBody h={data.health} onCheck={c => { if (c.nodeId && L.nodes[c.nodeId] && !c.port) { openInfo(c.nodeId); if (innerWidth < 760) setHealthOpen(false); } else openCheck(c); }}
@@ -902,7 +903,13 @@ function WanSetup({ n, L, data }) {
 }
 
 function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
-  const { admin } = useApp(); const [pick, setPick] = useState(() => new URLSearchParams(location.search).get('iconpick') === '1');          // the icon picker («Иконка»)
+  const { admin, refresh } = useApp(); const toast = useToast(); const [pick, setPick] = useState(() => new URLSearchParams(location.search).get('iconpick') === '1');          // the icon picker («Иконка»)
+  const curLabel = (data.labels || {})[n.id] || '';            // своя подпись узла (переименование с карты)
+  const [ren, setRen] = useState(null);
+  const saveLabel = async (val) => {
+    try { await api('/api/labels/set', { method: 'PUT', body: { key: n.id, label: val } }); await refresh(); setRen(null); }
+    catch (e) { toast(e.message, true); }
+  };
   const [edit, setEdit] = useState(null);                     // mac → ClientEditor (a client of a router: name, fixed IP, speed, policy)
   const pe = L.edges.find(e => e.target === n.id && !e.extra);
   const parent = pe && L.nodes[pe.source];
@@ -911,8 +918,18 @@ function NodeInfo({ n, L, data, devById, onOpen, onClose }) {
   const conn = pe ? (pe.kind === 'wifi' ? `Wi-Fi · ${parent ? parent.label : ''}${pe.band ? ' · ' + pe.band : ''}${pe.rssi ? ' · ' + pe.rssi + ' дБм' : ''}`
     : pe.kind === 'mesh' ? 'Mesh (беспроводной)' : pe.kind === 'remote' ? 'Через интернет' : `${parent ? parent.label : ''}${pe.sourcePort ? ', порт ' + pe.sourcePort : ''}${pe.speed ? ' · ' + fmt.speed(pe.speed) : ''}`) : '';
   return <div className="card pad fade-in node-info">
-    <div className="row"><KindIcon kind={n.kind} name={n.label} icon={(data.icons || {})[n.id]} size={40} /><div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700 }} className="ellipsis">{nameNoFlag(n.label, n.kind)}</div>
+    <div className="row"><KindIcon kind={n.kind} name={curLabel || n.label} icon={(data.icons || {})[n.id]} size={40} /><div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 700 }} className="ellipsis">{nameNoFlag(curLabel || n.label, n.kind)}</div>
       <div className="dim" style={{ fontSize: 12.5 }}>{KIND_TEXT[n.kind] || ''}{n.model ? ' · ' + n.model : ''}</div></div><Btn size="sm" icon="x" onClick={onClose} /></div>
+    {admin && n.kind !== 'group' && !String(n.id).startsWith('x:') ? (ren === null
+      ? <button type="button" className="ni-rename" onClick={() => setRen(curLabel)}><Icon name="edit" size={13} />{curLabel ? 'Изменить подпись' : 'Переименовать'}</button>
+      : <div className="ni-rename-box">
+          <NameInput className="input" value={ren} onChange={setRen} placeholder={nameNoFlag(n.label, n.kind)} />
+          <div className="row" style={{ gap: 6, marginTop: 6 }}>
+            <Btn size="sm" kind="primary" onClick={() => saveLabel(ren)}>Сохранить</Btn>
+            {curLabel ? <Btn size="sm" onClick={() => saveLabel('')}>Сбросить</Btn> : null}
+            <Btn size="sm" onClick={() => setRen(null)}>Отмена</Btn>
+          </div>
+        </div>) : null}
     <div style={{ marginTop: 10 }}><KV rows={[['IP', n.sub ? <span className="mono">{n.sub}</span> : null], ...(n.mac ? [['MAC', <span className="mono">{n.mac}</span>]] : []),
       ...(client && client.segment ? [['Сеть', client.segment]] : []), ['Подключение', conn], ...(pe && pe.poeW ? [['PoE', pe.poeW + ' Вт']] : []),
       ...(dev ? [['Состояние', STATUS_TEXT[(dev.state || {}).status]]] : [])]} /></div>

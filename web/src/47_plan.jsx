@@ -174,6 +174,7 @@ function ZoomBtns({ setView, onFit }) {
   const zoom = (factor,e) => { const el = e.currentTarget.closest('.plan-canvas'), x = (el?.clientWidth || 0)/2, y = (el?.clientHeight || 0)/2;
     setView(v => { const k = clampK(v.k*factor); return { k, x: x-(x-v.x)*k/v.k, y: y-(y-v.y)*k/v.k }; }); };
   return <div className="zoom-btns">
+    <WorkEditBtn />
     {onFit ? <button className="btn" onClick={onFit} title="Показать всё"><Icon name="fit" size={17} /></button> : null}
     <button className="btn" aria-label="Увеличить" onClick={e => zoom(1.3,e)}>+</button>
     <button className="btn" aria-label="Уменьшить" onClick={e => zoom(1/1.3,e)}>−</button></div>;
@@ -210,11 +211,14 @@ function PlanView() {
     <Btn size="sm" onClick={() => setPinTest(null)}>Отмена</Btn></div> : null;
   if (!buildings.length) return <>{banner}<Territory plan={plan} enter={() => {}} net={() => {}} /></>;      // тот же вид разметки, что ниже: когда появится первый дом, карта не перезапускается
   const goNet = id => { setBid(id); setLevel('net'); };
+  const goScheme = id => { setBid(id); setLevel('scheme'); };
   if (level === 'building') { const b = buildings.find(x => x.id === bid) || buildings[0];
     return <>{banner}<BuildingPlan key={b.id} building={b} plan={plan} back={() => setLevel('territory')} net={() => goNet(b.id)} /></>; }
   if (level === 'net') { const b = buildings.find(x => x.id === bid) || buildings[0];
     return <MapView scope={houseScope(b, data, () => setLevel('territory'), () => { setBid(b.id); setLevel('building'); })} />; }
-  return <>{banner}<Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} net={goNet} /></>;
+  if (level === 'scheme') { const b = buildings.find(x => x.id === bid) || buildings[0];
+    return <SchemeView key={b.id} building={b} back={() => setLevel('territory')} />; }
+  return <>{banner}<Territory plan={plan} enter={id => { setBid(id); setLevel('building'); }} net={goNet} scheme={goScheme} /></>;
 }
 /* «Сеть дома»: что в доме стоит (устройства и шкафы с его этажей) — карта сети сузится до этого (см. scopeData в 40_map.jsx) */
 function houseScope(b, data, back, openHouse) {
@@ -260,7 +264,7 @@ function CoverageSurface({ mesh, metric, waves, rooms }) {
 
 /* ───────── territory: buildings + backbone links ───────── */
 const BW = 240, BH = 150;
-function Territory({ plan, enter, net }) {
+function Territory({ plan, enter, net, scheme }) {
   const { data, edit, savePlan, openDevice, openPlace, setTab } = useApp();
   const toast = useToast(); const confirm = useConfirm();
   const buildings = plan.buildings || []; const links = plan.links || []; const poles = plan.poles || []; const nodes = plan.nodes || [];
@@ -405,14 +409,14 @@ function Territory({ plan, enter, net }) {
 
   if (!buildings.length && !bgs.length && !geo) return <div className="plan-empty card pad">
     <WorkMenu title="План">
-      <WorkSec title="Карта"><WorkItem icon="map" label="Выбрать место на карте" sub="адрес участка → живая карта 3D" onClick={() => { if (edit) setBgOpen(true); else toast('Сначала включите «Редактирование»', true); }} /></WorkSec>
+      <WorkSec title="Карта"><WorkItem icon="map" label="Выбрать место на карте" sub="адрес участка → живая карта 3D" onClick={() => { if (edit) setBgOpen(true); else toast('Сначала включите редактирование (карандаш справа)', true); }} /></WorkSec>
       {edit ? <WorkSec title="Дома"><WorkItem icon="home" label="Создать дом без карты" onClick={addBuilding} /></WorkSec> : null}
     </WorkMenu>
     <div style={{ fontSize: 42 }}>🗺️</div><div style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 4px' }}>Плана пока нет</div>
     <div className="dim" style={{ marginBottom: 16, maxWidth: 440 }}>Выберите место на карте — откроется живая 3D-карта района, на ней можно обвести свои дома.
       Дальше у каждого дома есть этажи, комнаты, оборудование и своя карта сети, связанная с общей.</div>
     {edit ? <div className="row wrap" style={{ gap: 8 }}><Btn kind="primary" icon="map" onClick={() => setBgOpen(true)}>Выбрать место на карте</Btn><Btn icon="home" onClick={addBuilding}>Создать дом без карты</Btn></div>
-      : <div className="dim">Включите «Редактирование» в меню (кнопка вверху справа), чтобы начать.</div>}
+      : <div className="dim">Включите редактирование (кнопка с карандашом справа), чтобы начать.</div>}
     {bgOpen ? <PlanBgModal plan={plan} center={{ x: 400, y: 300 }} onClose={() => setBgOpen(false)} onMove={() => {}} onLive={() => {}} /> : null}
   </div>;
 
@@ -506,10 +510,11 @@ function Territory({ plan, enter, net }) {
       </WorkSec> : null}
       <WorkSec title="Карта и фон">
         <WorkItem icon="map" label={geo ? 'Место и фон карты…' : 'Выбрать место на карте'} sub={geo ? 'адрес, спутниковый снимок, свой файл' : 'адрес участка → живая карта 3D'}
-          onClick={() => { if (edit) setBgOpen(true); else toast('Включите «Редактирование», чтобы менять карту', true); }} />
+          onClick={() => { if (edit) setBgOpen(true); else toast('Включите редактирование (карандаш справа), чтобы менять карту', true); }} />
       </WorkSec>
       {selB && !is3d ? <WorkSec title={'Дом «' + selB.name + '»'}>
         <WorkItem icon="home" label="Открыть дом" sub="этажи, комнаты, оборудование" onClick={() => enter(selB.id)} />
+        <WorkItem icon="scheme" label="Схема" sub="фото чертежа, провода" onClick={() => scheme(selB.id)} />
         {edit ? <>
           <WorkItem icon="edit" label="Переименовать" onClick={() => renameB(selB.id)} />
           <WorkItem icon="tag" label="Цвета и высота" onClick={() => setStyleFor(selB.id)} />
@@ -522,7 +527,7 @@ function Territory({ plan, enter, net }) {
       </WorkSec> : null}
     </WorkMenu>
     {is3d ? <LiveMap3D spec={liveSpec()} edit={edit} sel={sel} onSel={id => setSel(id)} onAddHouse={addHouseGeo} onEditRing={editRingGeo} onStyle={styleHouse} onRename={renameB}
-      onDelete={delBuilding} onOpen={enter} onNet={net} onAddPole={addPoleGeo} onAddNode={addNodeGeo} onMovePoint={movePointGeo} onLinkPick={linkPick3} linkFrom={pickLink} onEditLink={editLink3}
+      onDelete={delBuilding} onOpen={enter} onNet={net} onScheme={scheme} onAddPole={addPoleGeo} onAddNode={addNodeGeo} onMovePoint={movePointGeo} onLinkPick={linkPick3} linkFrom={pickLink} onEditLink={editLink3}
       onRenamePoint={renamePoint} onDeletePoint={deletePoint} onBindNode={id => setNodeBind(id)} onOpenRef={openRef} noOutline={noOutline} />
     : <div className={'plan-canvas' + (tool !== 'select' && tool !== 'bg' && edit ? ' crosshair' : '')} ref={wrap} {...bind}>
       <svg>
@@ -700,6 +705,7 @@ function BuildingPlan({ building, plan, back }) {
   sceneFloors.forEach((f, i) => { animTarget['o' + f.id] = overview ? (i === indoorFloors.length - 1 ? 1 : .9) : i === floorIndex ? 1 : ghost && i < floorIndex ? .46 : 0; });
   const anim = useTween(animTarget, 520);
   const [editOpen, setEditOpen] = useState(false);
+  useEffect(() => { if (!(admin && edit)) setEditOpen(false); }, [admin, edit]);        // синий плюс и панель инструментов — только в режиме редактирования
   const [roomEditor, setRoomEditor] = useState(null);
   const [survey, setSurvey] = useState(()=>loadPlanSurvey(building.id));
   const [surveyChoose, setSurveyChoose] = useState(false);
@@ -1118,7 +1124,7 @@ function BuildingPlan({ building, plan, back }) {
         </select></label></div> : null}
       {admin && edit ? <div className="plan-tool-current plan-ovl"><Icon name={tool === 'select' ? 'cursor' : tool === 'room' ? 'tag' : tool === 'wall' ? 'wall' : tool === 'place' ? 'plus' : 'eraser'} size={14} />
         {overview ? 'Общий вид дома' : 'Инструмент: ' + ({ select: 'Выбрать / двигать', room: 'Комната', wall: 'Стена', place: 'Оборудование', erase: 'Удаление' })[tool]}</div> : null}
-      <div className="plan-edit-dock plan-ovl">
+      {admin && edit ? <div className="plan-edit-dock plan-ovl">
         {editOpen ? <div className="plan-edit-panel card pad">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}><b>Инструменты плана</b><button className="icon-btn" title="Закрыть" onClick={() => setEditOpen(false)}><Icon name="x" size={16} /></button></div>
           {admin && edit ? <>
@@ -1148,7 +1154,7 @@ function BuildingPlan({ building, plan, back }) {
         <button className={'plan-edit-fab' + (editOpen ? ' on' : '')} aria-label="Инструменты плана" title="Инструменты плана" onClick={() => setEditOpen(!editOpen)}>
           <Icon name={editOpen ? 'x' : 'plus'} size={23} stroke={2.4} />
         </button>
-      </div>
+      </div> : null}
       {cov && !overview && selTest && coverageTests.find(t => t.id === selTest) ? (() => { const t = coverageTests.find(x => x.id === selTest);
         return <div className="plan-testcard plan-ovl"><Card title={t.note || 'Замер скорости'} right={<Btn size="sm" icon="x" onClick={() => setSelTest(null)} />}>
           <div className="list"><SpeedRow t={t} now={data.now} /></div>

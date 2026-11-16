@@ -381,6 +381,7 @@ function CameraTool() {
       {info.error ? <div style={{ color: 'var(--orange)', fontSize: 13, marginTop: 8 }}>{info.error}</div> : null}
       {!info.running && info.finished && info.cidr ? <div className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Искали в: {info.cidr}{info.skipped && info.skipped.length ? '. Адреса роутеров (' + info.skipped.join(', ') + ') не проверяем: роутер принимает это за сканирование и на несколько минут закрывает доступ.' : ''}</div> : null}
     </Card>
+    <CamAdopt />
     {recs.length ? <>
       <div className="card-title" style={{ margin: '16px 0 8px' }}><Icon name="server" size={14} />Видеорегистраторы на ваших устройствах · {recs.length}</div>
       <div className="list">{recs.map((r, i) => <div className="li netscan-row cam-row" key={i}>
@@ -545,6 +546,25 @@ function CameraSheet({ item, creds, reloadCreds, onClose }) {
     {busy ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />{busy}</div> : null}
     {msg ? <div className={msg.ok ? 'cam-ok' : 'cam-err'}>{msg.text}</div> : null}
   </Modal>;
+}
+
+/* камеры, которые Rack Live уже видит (клиенты роутера с именем или типом «камера», найденное поиском), но ещё не добавил как устройства: одной кнопкой */
+function CamAdopt() {
+  const { refresh, data } = useApp(); const toast = useToast();
+  const [list, setList] = useState(null), [busy, setBusy] = useState(false), [open, setOpen] = useState(false);
+  const load = async () => { try { setList((await api('/api/cameras/adopt', { method: 'POST', body: { dry: true } })).items || []); } catch (e) { setList([]); } };
+  useEffect(() => { load(); }, [data.devices.length]);
+  if (!list || !list.length) return list ? <div className="dim3" style={{ fontSize: 12.5, margin: '10px 2px' }}>Камер среди клиентов роутеров, которые ещё не добавлены, нет.</div> : null;
+  const go = async () => { setBusy(true); try { const r = await api('/api/cameras/adopt', { method: 'POST', body: {} }); toast('Добавлено камер: ' + r.added); await refresh(); await load(); } catch (e) { toast(e.message, true); } setBusy(false); };
+  return <Card>
+    <div className="row between" style={{ gap: 8 }}>
+      <div className="card-title" style={{ margin: 0 }}><Icon name="plus" size={15} />Камеры, которые уже видны в сети · {list.length}</div>
+      <button type="button" className="btn sm" onClick={() => setOpen(o => !o)}>{open ? 'Скрыть' : 'Показать'}</button>
+    </div>
+    <div className="dim" style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 6 }}>Это клиенты роутера, похожие на камеры. Добавьте их как устройства «Камера»: появятся кадр, статус и объект на схеме. На карте сети это останется той же точкой, второй не будет. Уже добавленные пропускаются.</div>
+    {open ? <div className="list" style={{ marginTop: 8 }}>{list.map(x => <div className="li" key={x.ip}><KindIcon kind={x.kind} size={30} round={9} /><div className="grow" style={{ minWidth: 0 }}><div className="ellipsis" style={{ fontSize: 14 }}><b>{x.name}</b></div><div className="dim ellipsis" style={{ fontSize: 12 }}>{x.ip} · {x.src}</div></div></div>)}</div> : null}
+    <div className="row" style={{ marginTop: 10 }}><Btn kind="primary" icon="plus" disabled={busy} onClick={go}>Добавить все ({list.length})</Btn></div>
+  </Card>;
 }
 
 function ShotPane({ call, busy }) {

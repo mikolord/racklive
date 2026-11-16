@@ -62,6 +62,7 @@ function CappDetail({ app, devices, onBack, onRemoved }) {
   const [stat, setStat] = useState(null); const [host, setHost] = useState(''); const [err, setErr] = useState('');
   const [chosen, setChosen] = useState({}); const [portBusy, setPortBusy] = useState(false);
   const [busy, setBusy] = useState(''); const [stage, setStage] = useState(''); const [showYaml, setShowYaml] = useState(false); const [wipe, setWipe] = useState(false); const [frame, setFrame] = useState(false);
+  const [term, setTerm] = useState(false);
   const load = async () => { if (!dev) return; setStat(null); setErr(''); try { const r = await api('/api/capps/states?device=' + encodeURIComponent(dev)); setHost(r.host || ''); setStat(r.states || {}); } catch (x) { setErr(x.message); setStat({}); } };
   useEffect(() => { load(); }, [dev]);
   useEffect(() => {                         // open the card on the device where the app already runs (if several devices can run it)
@@ -93,6 +94,11 @@ function CappDetail({ app, devices, onBack, onRemoved }) {
     if (ok) run('remove', { keep_data: !wipe });
   };
   const url = capUrl(app, host, mine);
+  // контейнер, в который заходим «нашим терминалом» (через SSH на устройство и docker exec): главный сервис, иначе первый найденный
+  const mainC = mine && mine.containers && (mine.containers.find(c => c.name.endsWith('-' + ((app.ui || {}).service || '') + '-1')) || mine.containers[0]);
+  // если приложение само открывает SSH (как Hydra Lab) — отдельный порт для Termux / Termius
+  const sshDef = app.ports.find(p => !p.web && /ssh/i.test(p.label || ''));
+  const sshPort = sshDef && mine && mine.ports && (mine.ports.find(p => p.container === sshDef.container) || {}).host;
   const altScheme = (app.ui && app.ui.scheme) === 'https' ? 'http' : 'https';
   const altUrl = capUrl(app, host, mine, altScheme);
   const rk = CAPP_RISK[app.risk];
@@ -124,8 +130,15 @@ function CappDetail({ app, devices, onBack, onRemoved }) {
             {url ? <a className="btn primary" href={url} target="_blank" rel="noopener noreferrer"><Icon name="globe" size={15} />{(app.ui && app.ui.title) || 'Открыть'} ({(app.ui && app.ui.scheme) || 'http'})</a> : null}
             {altUrl ? <a className="btn" href={altUrl} target="_blank" rel="noopener noreferrer"><Icon name="globe" size={15} />по {altScheme}</a> : null}
             {app.ui && app.ui.mode === 'embed' && url ? <Btn onClick={() => setFrame(!frame)}>{frame ? 'Скрыть здесь' : 'Открыть здесь'}</Btn> : null}
+            {mainC && mainC.state === 'running' ? <Btn icon="terminal" onClick={() => setTerm(!term)}>{term ? 'Скрыть терминал' : 'Открыть в терминале Rack Live'}</Btn> : null}
+            {sshPort ? <Btn icon="terminal" onClick={() => openInTermius({ user: 'lab', host, port: sshPort }, () => { })}>В Termux / Termius</Btn> : null}
             {state !== 'running' ? <Btn busy={busy === 'start'} disabled={!!busy} onClick={() => run('start')}>Запустить</Btn> : <Btn busy={busy === 'stop'} disabled={!!busy} onClick={() => run('stop')}>Остановить</Btn>}
             <Btn busy={busy === 'restart'} disabled={!!busy} onClick={() => run('restart')}>Перезапустить</Btn></div>
+          {mainC && mainC.state === 'running' && (mainC || sshPort) ? <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+            Открыть можно двумя способами: кнопкой «Открыть в терминале Rack Live» — командная строка приложения прямо здесь,
+            {sshPort ? <> или в своей программе (Termux, Termius и похожих) — адрес <code className="mono">lab@{host}</code>, порт <code className="mono">{sshPort}</code>, пароль тот, что задали при установке.</> : ' без установки ничего дополнительного.'}
+          </div> : null}
+          {term && mainC ? <TerminalView key={mainC.name} extra={'&device=' + encodeURIComponent(dev) + '&run=capp-shell&app=' + encodeURIComponent(app.id) + '&container=' + encodeURIComponent(mainC.name)} onClose={() => setTerm(false)} /> : null}
           {url ? <div className="mono dim" style={{ fontSize: 12 }}>{url}</div> : null}
           {mine && mine.ports && mine.ports.length ? <div className="dim" style={{ fontSize: 12 }}>Порты: {mine.ports.map(p => p.host + '/' + p.proto).join(', ')}</div> : null}
           {frame && url ? <iframe src={url} title={app.title} style={{ width: '100%', height: '70vh', border: '1px solid var(--line)', borderRadius: 10 }} /> : null}

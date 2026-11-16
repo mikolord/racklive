@@ -142,7 +142,7 @@ const PASSIVE = ['patch', 'cross', 'pdu', 'shelf', 'organizer', 'blank'];
 const DEVICE_KINDS = ['router', 'switch', 'server', 'nas', 'ap', 'camera', 'nvr', 'ups', 'pc', 'laptop', 'phone', 'tv', 'printer', 'iot', 'web', 'modem', 'other'];
 
 /* Icons: 24x24 stroke paths (SF Symbols-like). */
-const ICON_PATHS = {
+const ICON_PATHS = { scheme: 'M4 19.5l1.2-4.2L15.6 4.9a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.7 18.8zM13.2 7.3l3.5 3.5M12 21h8',
   router: 'M3 14h18v5H3zM7 16.5h.01M10 16.5h.01M8 10a6 6 0 0 1 8 0M5.5 7.5a10 10 0 0 1 13 0M12 14v-2',
   switch: 'M2 8h20v8H2zM5 11h2v2H5zM9 11h2v2H9zM13 11h2v2h-2zM17 11h2v2h-2z',
   server: 'M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01M11 7h6M11 17h6',

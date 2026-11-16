@@ -223,8 +223,8 @@ function App() {
         <Icon name={t.icon} size={15} /><span className="tab-label">{t.label}</span>{t.id === 'events' && problems ? <span className="count">{badge}</span> : null}</button>)}</nav>
       <div className="grow" />
       <div className="hdr-tools hide-sm">
-        {admin ? <span data-tour="edit-toggle" style={{ display: 'inline-flex' }}><Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
-          { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /></span> : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
+        {admin ? (mapFull ? null : <span data-tour="edit-toggle" style={{ display: 'inline-flex' }}><Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' },
+          { value: 'edit', label: 'Редактирование', icon: 'edit', cls: 'editing' }]} /></span>) : <Btn size="sm" icon="lock" onClick={() => setLogin(true)}>Войти</Btn>}
         {admin && edit && cur === 'rack' ? <label className="arrange-sw" title="Двигать, менять размер, добавлять и убирать виджеты на главной"><Switch on={arrange} onChange={setArrange} /><span>Расстановка виджетов</span></label> : null}
         {admin ? <button type="button" data-tour="frank-btn" className="btn sm icon frank-btn" title="Frank — помощник: вопросы о сети" onClick={() => setAi({ n: Date.now() })}>{isAurora() ? <AuEye size={19} /> : <FrankEye size={26} round={8} />}</button> : null}
         <Btn size="sm" icon="gauge" title="Тест скорости Wi-Fi и сети" onClick={() => setSpeed(true)} />
@@ -234,9 +234,9 @@ function App() {
       {/* phones: everything above folds into one «⋯» button with a menu, like iOS */}
       <button type="button" data-tour="hdr-more" className={'hdr-more only-sm' + (edit ? ' editing' : '')} title="Меню" onClick={() => setMenu(true)}><Icon name="more" size={22} stroke={2.6} /></button>
     </header>
-    {nav ? <SideNav key={navKey} tabs={tabs} cur={cur} setTab={setTab} problems={problems} admin={admin} edit={edit} mode={mode} setMode={setMode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange}
+    {nav ? <SideNav key={navKey} tabs={tabs} cur={cur} setTab={setTab} problems={problems} admin={admin} edit={edit} noEdit={mapFull} mode={mode} setMode={setMode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange}
       theme={theme} setTheme={setTheme} onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} onClose={() => { if (tourNav.current) setNavKey(k => k + 1); else setNav(false); }} title={data.settings.title} stale={stale} live={stale ? 'нет свежих данных' : 'live · ' + fmt.ago(newest, data.now)} /> : null}
-    {menu ? <HeaderMenu admin={admin} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
+    {menu ? <HeaderMenu admin={admin} noEdit={mapFull} mode={mode} arrange={admin && edit && cur === 'rack' ? arrange : null} setArrange={setArrange} setMode={setMode} theme={theme} setTheme={setTheme} onClose={() => setMenu(false)}
       onFrank={() => setAi({ n: Date.now() })} onSpeed={() => setSpeed(true)} onRefresh={refresh} onLogin={() => setLogin(true)} onLogout={logout} /> : null}
     <main className={'page' + (mapFull ? ' page-full' : '') + (auArr ? ' au-arr' : '')}>
       {mapFull ? null : <div className="row" style={{ alignItems: 'flex-end', marginBottom: 14 }}>
@@ -405,7 +405,7 @@ function AuTuck() {
 }
 
 /* phone header menu: tiles on top (Frank, speed test, refresh), rows below (editing, theme, sign in / out) — like an iOS context menu */
-function HeaderMenu({ admin, mode, arrange, setArrange, setMode, theme, setTheme, onClose, onFrank, onSpeed, onRefresh, onLogin, onLogout }) {
+function HeaderMenu({ admin, noEdit, mode, arrange, setArrange, setMode, theme, setTheme, onClose, onFrank, onSpeed, onRefresh, onLogin, onLogout }) {
   useEffect(() => { const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
   const go = fn => () => { onClose(); fn(); };
   return <div className="hdr-menu-wrap" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -415,7 +415,7 @@ function HeaderMenu({ admin, mode, arrange, setArrange, setMode, theme, setTheme
         <button type="button" onClick={go(onSpeed)}><Icon name="gauge" size={24} /><span>Тест скорости</span></button>
         <button type="button" onClick={go(onRefresh)}><Icon name="refresh" size={24} /><span>Обновить</span></button>
       </div>
-      {admin ? <div className="hdr-row">
+      {admin && !noEdit ? <div className="hdr-row">
         <Icon name="edit" size={20} /><span className="grow">Редактирование</span><Switch on={mode === 'edit'} onChange={v => setMode(v ? 'edit' : 'view')} /></div> : null}
       {arrange != null ? <div className="hdr-row"><Icon name="list" size={20} /><span className="grow">Расстановка виджетов</span><Switch on={arrange} onChange={setArrange} /></div> : null}
       <div className="hdr-row"><Icon name={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'eye'} size={20} /><span className="grow">Тема</span>

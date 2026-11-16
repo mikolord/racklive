@@ -2,7 +2,7 @@
    (dials with needles, segment readouts, LED rows that light up one by one), and Frank as a 3D lens whose pupil follows the finger / pointer. */
 
 /* ───────── the side menu ───────── */
-function SideNav({ tabs, cur, setTab, problems, admin, edit, mode, setMode, arrange, setArrange, theme, setTheme, onFrank, onSpeed, onRefresh, onLogin, onLogout, onClose, title, live, stale }) {
+function SideNav({ tabs, cur, setTab, problems, admin, edit, noEdit, mode, setMode, arrange, setArrange, theme, setTheme, onFrank, onSpeed, onRefresh, onLogin, onLogout, onClose, title, live, stale }) {
   const [dx, setDx] = useState(0); const [out, setOut] = useState(false); const g = useRef(null);
   const shut = () => { setOut(true); setTimeout(onClose, 220); };
   useEffect(() => { const h = e => e.key === 'Escape' && shut(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
@@ -25,7 +25,7 @@ function SideNav({ tabs, cur, setTab, problems, admin, edit, mode, setMode, arra
       <div className="grow" />
       {admin ? <>
         <div className="tl-nav-k">Режим</div>
-        <div className="tl-nav-pad" data-tour="edit-toggle"><Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' }, { value: 'edit', label: 'Правка', icon: 'edit', cls: 'editing' }]} /></div>
+        {noEdit ? null : <div className="tl-nav-pad" data-tour="edit-toggle"><Seg className="edit" value={mode} onChange={setMode} options={[{ value: 'view', label: 'Просмотр', icon: 'eye' }, { value: 'edit', label: 'Правка', icon: 'edit', cls: 'editing' }]} /></div>}
         {edit && arrange != null ? <div className="tl-nav-row"><Icon name="list" size={18} /><span className="grow">Расстановка виджетов</span><Switch on={arrange} onChange={setArrange} /></div> : null}
       </> : null}
       <div className="tl-nav-k">Приборы</div>

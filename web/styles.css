@@ -3576,7 +3576,7 @@ html[data-look="aurora"] main.page { padding-top: calc(env(safe-area-inset-top) 
   html[data-look="aurora"] .au-tuck:active { transform: scale(.9); }
   html[data-look="aurora"] .au-tuck .au-tuck-n { position: absolute; top: -2px; right: -2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: grid; place-items: center; }
   /* «+» инструментов плана — круглая, над кнопками масштаба (а не на них), и сворачивается в «⋯» вместе со всеми */
-  html[data-look="aurora"] .page-full .plan-edit-dock { right: calc(env(safe-area-inset-right) + 16px); bottom: calc(var(--au-in-bot) + 222px); transition: bottom .45s cubic-bezier(.2,.9,.3,1); }
+  html[data-look="aurora"] .page-full .plan-edit-dock { right: calc(env(safe-area-inset-right) + 16px); bottom: calc(var(--au-in-bot) + 286px); transition: bottom .45s cubic-bezier(.2,.9,.3,1); }
   html[data-look="aurora"] .page-full .plan-edit-fab { width: 46px; height: 46px; border-radius: 50%; border: .5px solid var(--au-rim); box-shadow: var(--au-float); }
   /* одна ровная колонка справа: масштаб, «+», «⋯» и настройки — круги 46px по одной оси */
   html[data-look="aurora"] .page-full .zoom-btns { right: calc(env(safe-area-inset-right) + 16px); gap: 8px; align-items: center; }
@@ -3717,7 +3717,7 @@ button.vault-row:active { background: var(--fill2); }
 /* 2.54.0 — «Сделать снимок» на карте сети: вспышка и миниатюра в углу, как скриншот на iPhone */
 .map-shot-flash { position: fixed; inset: 0; z-index: 400; background: #fff; pointer-events: none; animation: map-shot-flash .45s ease-out forwards; }
 @keyframes map-shot-flash { 0% { opacity: .95; } 100% { opacity: 0; } }
-.map-shot { position: fixed; z-index: 401; left: calc(env(safe-area-inset-left) + 14px); bottom: calc(var(--bb-h, 0px) + env(safe-area-inset-bottom) + 14px); width: min(40vw, 168px);
+.map-shot { position: fixed; z-index: 401; left: calc(env(safe-area-inset-left) + 14px); bottom: calc(env(safe-area-inset-bottom) + 92px); width: min(40vw, 168px);
   display: flex; flex-direction: column; gap: 8px; transform-origin: 0 100%; animation: map-shot-in .55s cubic-bezier(.2,.9,.25,1) both; transition: opacity .4s, transform .4s; }
 .map-shot.idle { opacity: .6; transform: scale(.85); }
 .map-shot.idle:hover, .map-shot.idle:active { opacity: 1; transform: none; }
@@ -3745,3 +3745,78 @@ button.vault-row:active { background: var(--fill2); }
 .tag-suggest-it:hover { background: var(--fill); }
 .tag-suggest-it span { flex: 1; min-width: 0; font-size: 14px; color: var(--text); }
 .tag-suggest-it code { font-family: var(--mono); font-size: 12px; color: var(--text3); }
+
+/* 2.54.3 — переименование узла прямо из карточки на карте */
+.ni-rename { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 7px 12px; width: 100%; box-sizing: border-box; justify-content: center;
+  border-radius: 12px; background: var(--fill); color: var(--text); font: 600 13px var(--font); -webkit-tap-highlight-color: transparent; }
+.ni-rename:hover { background: var(--fill2); }
+.ni-rename-box { margin-top: 8px; }
+
+/* 2.55.0–2.55.2 — «Схема» дома: фото чертежа + линии/зоны поверх (провода, помещения) */
+.scheme-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+.scheme-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.15); }
+.scheme-swatch.on { border-color: var(--text); }
+.scheme-labelbox { width: 100%; }
+.scheme-labelbox .input { width: 100%; box-sizing: border-box; }
+.scheme-cable-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 160px; overflow: auto; }
+.scheme-cable-pick button { all: unset; cursor: pointer; padding: 7px 10px; border-radius: 8px; background: var(--fill); font-size: 13px; color: var(--text); }
+.scheme-cable-pick button:hover { background: var(--fill2); }
+/* 2.56.0 — редактор схемы живёт в нижнем доке: пока он открыт, обычные значки дока скрыты, вместо них инструменты, цвета и действия */
+html.scheme-edit :is(.au-dock, .bottombar) { display: none !important; }
+.scheme-real { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.scheme-real .input { flex: none; }
+.scheme-real-h { font-size: 12px; font-weight: 600; color: var(--text3); margin: 6px 2px 4px; text-transform: uppercase; letter-spacing: .04em; }
+.scheme-real-empty { padding: 16px 4px; color: var(--text3); font-size: 14px; text-align: center; }
+.scheme-lib-tile span { max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheme-lib-tile.used { opacity: .62; }
+.scheme-led-ring { transform-box: fill-box; transform-origin: center; opacity: 0; pointer-events: none; }
+.scheme-led.st-online .scheme-led-ring { animation: scheme-led-ring 2.4s ease-out infinite; }
+.scheme-led.st-online .scheme-led-dot { animation: scheme-led-soft 2.4s ease-in-out infinite; }
+.scheme-led.st-warning .scheme-led-ring { animation: scheme-led-ring 1.3s ease-out infinite; }
+.scheme-led.st-warning .scheme-led-dot { animation: scheme-led-blink 1.3s steps(1, end) infinite; }
+.scheme-led.st-offline .scheme-led-ring { animation: scheme-led-ring .8s ease-out infinite; }
+.scheme-led.st-offline .scheme-led-dot { animation: scheme-led-blink .8s steps(1, end) infinite; }
+@keyframes scheme-led-ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(2.6); opacity: 0; } }
+@keyframes scheme-led-soft { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+@keyframes scheme-led-blink { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
+@media (prefers-reduced-motion: reduce) { .scheme-led .scheme-led-ring, .scheme-led .scheme-led-dot { animation: none !important; } }
+.cam-frame { position: relative; border-radius: 14px; overflow: hidden; background: var(--bg3, #111); aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; }
+.cam-frame .cam-shot { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 0; }
+.cam-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--text3); font-size: 13.5px; }
+.cam-time { position: absolute; left: 10px; bottom: 8px; font-size: 11.5px; padding: 2px 8px; border-radius: 99px; background: rgba(0,0,0,.55); color: #fff; }
+.cam-busy { position: absolute; right: 10px; top: 10px; display: flex; padding: 6px; border-radius: 99px; background: rgba(0,0,0,.45); }
+html.scheme-edit .au-tuck { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--scheme-kb, 0px) + var(--scheme-dock-h, 190px) + 18px) !important; transition: bottom .38s cubic-bezier(.22,.8,.2,1); }
+html.scheme-edit .page-full .zoom-btns { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--scheme-kb, 0px) + var(--scheme-dock-h, 190px) + 18px + 56px) !important; }
+html.scheme-edit:not([data-look="aurora"]) .page-full .zoom-btns { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--scheme-kb, 0px) + var(--scheme-dock-h, 190px) + 18px) !important; }
+.scheme-dock { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px + var(--scheme-kb, 0px)); transition: bottom .38s cubic-bezier(.22,.8,.2,1); z-index: 60; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 12px; pointer-events: none; }
+.scheme-dock > * { pointer-events: auto; max-width: 100%; box-sizing: border-box; }
+.scheme-dock-row, .scheme-dock-card { background: var(--card-solid, rgba(28,28,30,.86)); border: .5px solid var(--line); box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(1.7); -webkit-backdrop-filter: blur(24px) saturate(1.7); }
+.scheme-dock-row { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 28px; overflow-x: auto; scrollbar-width: none; }
+.scheme-dock-row::-webkit-scrollbar { display: none; }
+.scheme-dock-card { width: min(520px, 100%); border-radius: 20px; padding: 12px; }
+.scheme-dock-row .sd { flex: none; width: 46px; height: 46px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; background: transparent; color: var(--text); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .18s cubic-bezier(.3,1.4,.6,1), background .2s; }
+.scheme-dock-row .sd:active { transform: scale(.9); }
+.scheme-dock-row .sd.on { background: var(--accent); color: #fff; }
+.scheme-dock-row .sd.danger { color: var(--red); }
+.scheme-dock-row .sd:disabled { opacity: .35; pointer-events: none; }
+.scheme-dock-row .scheme-swatch { flex: none; width: 26px; height: 26px; margin: 0 2px; }
+.scheme-dock-row .scheme-sep { flex: none; height: 26px; align-self: center; margin: 0 4px; }
+.scheme-dock-name { flex: 0 1 140px; min-width: 60px; font-weight: 600; font-size: 13px; padding: 0 6px; }
+.scheme-dock-hint { display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 99px; background: var(--accent); color: #fff; font: 600 13px var(--font); box-shadow: var(--shadow); }
+.scheme-dock-hint button { all: unset; cursor: pointer; font-size: 12px; text-decoration: underline; opacity: .9; }
+.scheme-dock-tools { justify-content: center; }
+html[data-look="aurora"] :is(.scheme-dock-row, .scheme-dock-card) { background: var(--au-glass) !important; border: .5px solid var(--au-rim) !important; backdrop-filter: blur(30px) saturate(190%) !important; -webkit-backdrop-filter: blur(30px) saturate(190%) !important; box-shadow: var(--au-float), inset 0 1px 1px rgba(255,255,255,.4) !important; }
+html.au-tucked .scheme-dock-hint { display: none; }
+.scheme-chips { gap: 4px; padding: 5px 6px; }
+.scheme-chips button { all: unset; cursor: pointer; flex: none; padding: 7px 14px; border-radius: 99px; font: 600 13px var(--font); color: var(--text); }
+.scheme-chips button.on { background: var(--accent); color: #fff; }
+.scheme-flow { animation: scheme-flow .9s linear infinite; }
+@keyframes scheme-flow { to { stroke-dashoffset: -40; } }
+@media (max-width: 480px) { .scheme-dock-row .sd { width: 42px; height: 42px; } .scheme-dock-name { flex-basis: 70px; } }
+.scheme-lib { padding: 8px 10px 10px; max-height: 46vh; display: flex; flex-direction: column; }
+.scheme-lib-tabs { display: flex; align-items: center; gap: 4px; padding-bottom: 8px; overflow-x: auto; scrollbar-width: none; }
+.scheme-lib-tabs button { all: unset; cursor: pointer; flex: none; padding: 7px 13px; border-radius: 99px; font: 600 13px var(--font); color: var(--text2, var(--text)); }
+.scheme-lib-tabs button.on { background: var(--accent); color: #fff; }
+.scheme-lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; overflow-y: auto; }
+.scheme-lib-tile { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 14px; background: var(--fill); font: 600 11.5px var(--font); color: var(--text); text-align: center; }
+.scheme-lib-tile:active { transform: scale(.94); background: var(--fill2); }

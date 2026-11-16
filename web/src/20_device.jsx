@@ -38,6 +38,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort, popup }) {
   const st = device.state || {};
   const tabs = [{ id: 'overview', label: 'Обзор' }];
   if (admin && device.driver === 'site_node' && device.siteId) tabs.push({ id: 'remote', label: 'На площадке' });       // live data and control through the site's collector
+  if (admin && (device.kind === 'camera' || device.kind === 'nvr') && device.location !== 'remote') tabs.push({ id: 'camera', label: 'Камера' });          // как порты у коммутатора: у камеры — кадр
   if ((st.ports || []).length) tabs.push({ id: 'ports', label: `Порты · ${(st.ports || []).filter(p => p.link).length}/${st.ports.length}` });
   if ((st.children || []).length) tabs.push({ id: 'children', label: `Точки · ${st.children.length}` });
   if ((st.clients || []).length) tabs.push({ id: 'clients', label: `Клиенты · ${st.clients.length}` });
@@ -48,7 +49,7 @@ function DeviceSheet({ device, onClose, initialTab, initialPort, popup }) {
   if (admin && DISK_DRIVERS.includes(device.driver)) tabs.push({ id: 'smart', label: 'Диски' });
 if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигурация' });
   if (admin && drv && drv.plugins) tabs.push({ id: 'plugins', label: 'Плагины' });
-  const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : 'overview');
+  const [tab, setTab] = useState(initialTab && tabs.find(t => t.id === initialTab) ? initialTab : tabs.find(t => t.id === 'camera') ? 'camera' : 'overview');
   return <Sheet onClose={onClose} tab={tab} setTab={setTab} tabs={tabs} popup={popup}
     head={<div className="col" style={{ gap: 10 }}>
       <DeviceHead device={device} drv={drv} />
@@ -57,6 +58,7 @@ if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигу
     </div>}>
     {tab === 'overview' ? <Overview device={device} drv={drv} /> : null}
     {tab === 'remote' ? <RemoteTab device={device} /> : null}
+    {tab === 'camera' ? <CameraTab device={device} /> : null}
     {tab === 'ports' ? <PortsTab device={device} drv={drv} initialPort={initialPort} /> : null}
     {tab === 'children' ? <ChildrenTab device={device} drv={drv} /> : null}
     {tab === 'clients' ? <ClientsTab clients={st.clients} children={st.children} device={device} drv={drv} /> : null}
@@ -68,6 +70,47 @@ if (admin && drv && drv.backup) tabs.push({ id: 'config', label: 'Конфигу
     {tab === 'plugins' ? <PluginsTab device={device} /> : null}
     {tab === 'config' ? <BackupsTab device={device} /> : null}
   </Sheet>;
+}
+
+/* кадр с камеры: берётся по ONVIF с логином из общего списка «Камеры» (при первом разе можно ввести свой — он сохранится в список); обновляется сам, пока карточка открыта */
+function CameraTab({ device }) {
+  const [r, setR] = useState(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [auto, setAuto] = useState(true);
+  const [lg, setLg] = useState({ user: 'admin', password: '' }), [ask, setAsk] = useState(false), [ago, setAgo] = useState(0);
+  const alive = useRef(true), busyRef = useRef(false);
+  useEffect(() => () => { alive.current = false; }, []);
+  const load = async (creds) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true);
+    try { const x = await api(`/api/devices/${device.id}/snapshot`, { method: 'POST', body: creds || {} }); if (!alive.current) return; setR({ ...x, at: Date.now() }); setErr(''); setAsk(false); }
+    catch (e) { if (!alive.current) return; setErr(e.message); setAuto(false); setAsk(/парол|логин|пуст/i.test(e.message)); }
+    finally { busyRef.current = false; if (alive.current) setBusy(false); }
+  };
+  useEffect(() => { load(); }, [device.id]);
+  useEffect(() => { if (!auto) return; const t = setInterval(() => { if (!document.hidden) load(); }, 10000); return () => clearInterval(t); }, [auto, device.id]);
+  useEffect(() => { const t = setInterval(() => setAgo(a => a + 1), 1000); return () => clearInterval(t); }, []);
+  const sec = r ? Math.max(0, Math.round((Date.now() - r.at) / 1000)) : 0;
+  return <div className="col" style={{ gap: 10 }}>
+    <div className="cam-frame">
+      {r && r.image ? <img className="cam-shot" src={r.image} alt={'Кадр: ' + nameNoFlag(device.name)} /> : <div className="cam-empty">{busy ? <span className="spin-dot" /> : <Icon name="camera" size={34} />}<span>{busy ? 'Запрашиваю кадр…' : 'Кадра пока нет'}</span></div>}
+      {r && r.image && busy ? <span className="cam-busy"><span className="spin-dot" /></span> : null}
+      {r && r.image ? <span className="cam-time">{sec < 2 ? 'сейчас' : sec + ' с назад'}</span> : null}
+    </div>
+    {err ? <div className="cam-warn">{err}</div> : null}
+    {ask ? <div className="card cam-box col" style={{ gap: 8 }}>
+      <b>Вход в камеру</b>
+      <div className="dim" style={{ fontSize: 12.5 }}>Логин и пароль камеры. Они сохранятся в общий список паролей камер и больше не понадобятся.</div>
+      <div className="row" style={{ gap: 8 }}>
+        <input className="input" style={{ width: 120 }} value={lg.user} placeholder="Логин" autoCapitalize="off" onChange={e => setLg({ ...lg, user: e.target.value })} />
+        <input className="input grow" type="password" value={lg.password} placeholder="Пароль" autoComplete="off" onChange={e => setLg({ ...lg, password: e.target.value })} /></div>
+      <Btn kind="primary" disabled={busy || !lg.password} onClick={() => { setAuto(true); load(lg); }}>Войти и показать кадр</Btn>
+    </div> : null}
+    <div className="row wrap" style={{ gap: 8 }}>
+      <Btn size="sm" icon="refresh" disabled={busy} onClick={() => { setAuto(true); load(); }}>Обновить</Btn>
+      <Btn size="sm" className={auto ? 'on' : ''} onClick={() => setAuto(a => !a)}>{auto ? 'Авто: каждые 10 с' : 'Авто выключено'}</Btn>
+      {!ask && err ? <Btn size="sm" onClick={() => setAsk(true)}>Ввести пароль</Btn> : null}
+    </div>
+    {r && r.rtsp ? <div className="dim" style={{ fontSize: 12.5 }}>Поток (RTSP): <span className="mono">{r.rtsp}</span></div> : null}
+  </div>;
 }
 
 function PollNow({ device }) {

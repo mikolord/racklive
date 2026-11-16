@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import models as models_mod
 from . import icons as icons_mod
 from . import planmap
+from . import scheme as scheme_mod
 from . import usage as usage_mod
 from . import frankfiles, frank_agent, frankbrowser, frankdev, webdrive
 from . import portal as portal_mod
@@ -22,7 +23,7 @@ from . import passkey as passkey_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.54.1'
+VERSION = '2.63.1'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -904,7 +905,7 @@ class App:
                 'settings': cfg['settings'] if authed else {k: cfg['settings'].get(k) for k in GUEST_SETTINGS}, 'drivers': [drv.schema() for drv in REGISTRY.values()],
                 'cards': (cfg.get('cards') or []) if authed else [], 'models': self.models.public() if authed else [],            # hand-made device cards (the «Карточки» app) for things that are not in the rack
                 'devices': devices, 'racks': power.annotate(cfg['racks'], cfg['devices'], self.states), 'map': cfg['map'], 'dashboard': cfg.get('dashboard'), 'plan': cfg.get('plan', {'buildings': [], 'links': []}), 'topology': topo,
-                'icons': cfg.get('icons') or {}, 'iconLib': cfg.get('iconLib') or [],            # the icon chosen for a map node, and the library of uploaded ones (rackd/icons.py)
+                'icons': cfg.get('icons') or {}, 'labels': cfg.get('labels') or {}, 'iconLib': cfg.get('iconLib') or [],            # the icon chosen for a map node, and the library of uploaded ones (rackd/icons.py)
                 'speedtests': self.speed.public(), 'uptime': self.uptime.public([d for d in cfg['devices'] if not health_skipped(cfg, d)]),
                 'events': self.store.events[-60:][::-1] if authed else [], 'now': time.time()}       # the journal holds admin addresses, logins and host names: not for guests
 
@@ -1397,6 +1398,18 @@ class Handler(BaseHTTPRequestHandler):
             remote = 'bash -lc \'$HOME/.racklive-agents/racklive-agent setup; echo; echo "Можно закрыть окно."; exec bash -l\''
         elif run == 'agent-attach' and re.match(r'^rl-[\w.\-]{1,40}$', q.get('session') or ''):
             remote = f"bash -lc 'tmux attach -t {q['session']} || $HOME/.racklive-agents/racklive-agent list; exec bash -l'"
+        elif run == 'capp-shell':                     # «Приложения» → «Открыть в терминале Rack Live»: зайти прямо в контейнер приложения
+            import shlex
+            aid, cname = q.get('app') or '', q.get('container') or ''
+            if not capps.ID_RE.match(aid) or not re.match(r'^rl-' + re.escape(aid) + r'-[\w.\-]{1,40}$', cname):
+                return self.err('неверный контейнер', 400)
+            inner = f'docker exec -it {cname} sh -c "id lab >/dev/null 2>&1 && exec su - lab || exec bash -l || exec sh -l"'
+            if (d or {}).get('driver') == 'synology':            # DSM: Docker только через sudo с паролем администратора (как у остальных действий Frank)
+                pw = cfg.get('password') or ''
+                sudo_cmd = "printf '%s\\n' " + shlex.quote(pw) + ' | sudo -S -p "" sh -c ' + shlex.quote(inner)
+                remote = f"bash -lc {shlex.quote(sudo_cmd + '; echo; echo \"[сессия в контейнере закрыта]\"; exec bash -l')}"
+            else:                                                  # обычный сервер: пробуем без sudo, иначе sudo без пароля (как при перезагрузке)
+                remote = f"bash -lc {shlex.quote(inner + ' || sudo -n ' + inner + '; echo; echo \"[сессия в контейнере закрыта]\"; exec bash -l')}"
         elif run:
             return self.err('неизвестная команда терминала', 400)
         from .drivers.sshhost import SSHHost
@@ -1871,6 +1884,17 @@ class Handler(BaseHTTPRequestHandler):
                     b = fh.read()
                 return self.send_raw(b, {'png': 'image/png', 'jpg': 'image/jpeg', 'webp': 'image/webp'}[f.rsplit('.', 1)[1]],
                                      {'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'"})
+            m = re.match(r'^/api/plan/scheme/([A-Za-z0-9_-]{1,40})$', path)
+            if m:                                           # «Схема» дома: фото чертежа; тоже на год, адрес несёт ?v=<версия>
+                if not self.authed() and not APP.store.cfg['settings'].get('publicView'):
+                    return self.err('нужен вход', 401)
+                f = scheme_mod.path_of(DATA, m.group(1))
+                if not f:
+                    return self.err('нет схемы', 404)
+                with open(f, 'rb') as fh:
+                    b = fh.read()
+                return self.send_raw(b, {'png': 'image/png', 'jpg': 'image/jpeg', 'webp': 'image/webp'}[f.rsplit('.', 1)[1]],
+                                     {'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'"})
             if path == '/api/portal/hello':                 # «Гостевой Wi-Fi»: the router is back after its network restart and says where it is now
                 q = self.query()
                 return self.send({'ok': portal_mod.hello(q.get('k', ''), q.get('wan', ''), q.get('lan', ''))})
@@ -2287,6 +2311,33 @@ class Handler(BaseHTTPRequestHandler):
                     st.cfg['plan'] = plan
                     st.save()
                 return self.send({'ok': True, 'plan': plan})
+            if path == '/api/plan/scheme/bg' and method in ('POST', 'DELETE'):   # «Схема» дома: фото чертежа — заменить (POST, сырые байты) или убрать (DELETE)
+                if not self.need_admin():
+                    return
+                bid = str(self.query().get('building') or '')
+                with st.lock:
+                    plan = dict(st.cfg.get('plan') or {'buildings': [], 'links': []})
+                    buildings = list(plan.get('buildings') or [])
+                    i = next((i for i, b in enumerate(buildings) if b.get('id') == bid), None)
+                    if i is None:
+                        return self.err('дом не найден', 404)
+                    b = dict(buildings[i]); b['scheme'] = dict(b.get('scheme') or {'bg': None, 'shapes': []})
+                    if method == 'DELETE':
+                        scheme_mod.remove(DATA, bid)
+                        b['scheme']['bg'] = None
+                    else:
+                        n = int(self.headers.get('Content-Length') or 0)
+                        if n <= 0 or n > planmap.MAX_BYTES:
+                            return self.err('картинка пустая или больше 3 МБ', 413)
+                        ext, err = scheme_mod.save(DATA, bid, self.rfile.read(n))
+                        if err:
+                            return self.err(err)
+                        b['scheme']['bg'] = {'ext': ext, 'v': int(time.time())}
+                    buildings[i] = b; plan['buildings'] = buildings
+                    st.cfg['plan'] = plan
+                    st.save()
+                st.add_event(bid, b.get('name'), 'info', 'схема: ' + ('фото чертежа убрано' if method == 'DELETE' else 'добавлено фото чертежа'))
+                return self.send({'ok': True, 'scheme': b['scheme']})
             if path == '/api/portal/templates' and method == 'POST':  # a guest-page design (.zip): raw bytes, checked, kept in the library
                 if not self.need_admin():
                     return
@@ -3018,6 +3069,32 @@ class Handler(BaseHTTPRequestHandler):
                         return self.err(err)
                     st.save()
                 return self.send({'ok': True, 'icons': st.cfg.get('icons') or {}})
+            if path == '/api/labels/set' and method == 'PUT':         # своя подпись одного узла карты ('' — убрать)
+                with st.lock:
+                    err = icons_mod.set_label(st.cfg, body.get('key'), body.get('label'))
+                    if err:
+                        return self.err(err)
+                    st.save()
+                return self.send({'ok': True, 'labels': st.cfg.get('labels') or {}})
+            if path == '/api/plan/scheme' and method == 'PUT':         # «Схема» дома: сами линии и зоны (фото — через /api/plan/scheme/bg)
+                if not self.need_admin():
+                    return
+                bid = str(body.get('building') or '')
+                with st.lock:
+                    plan = dict(st.cfg.get('plan') or {'buildings': [], 'links': []})
+                    buildings = list(plan.get('buildings') or [])
+                    i = next((i for i, b in enumerate(buildings) if b.get('id') == bid), None)
+                    if i is None:
+                        return self.err('дом не найден', 404)
+                    try:
+                        shapes = scheme_mod.clean_shapes(body.get('shapes'))
+                    except ValueError as e:
+                        return self.err(str(e))
+                    b = dict(buildings[i]); b['scheme'] = {**(b.get('scheme') or {'bg': None}), 'shapes': shapes}
+                    buildings[i] = b; plan['buildings'] = buildings
+                    st.cfg['plan'] = plan
+                    st.save()
+                return self.send({'ok': True, 'scheme': b['scheme']})
             if path == '/api/plan' and method == 'PUT':
                 b = body.get('buildings')
                 if not isinstance(b, list):
@@ -3257,6 +3334,21 @@ class Handler(BaseHTTPRequestHandler):
                     APP.uptime.forget(did)
                     APP.states.pop(did, None)
                     return self.send({'ok': True})
+                if sub == 'snapshot' and method == 'POST':             # кадр камеры в карточке устройства: логин берётся из общего списка паролей инструмента «Камеры»
+                    if not self.need_admin():
+                        return
+                    if d.get('kind') not in ('camera', 'nvr'):
+                        return self.err('это не камера')
+                    req = {'op': 'snapshot', 'ip': str(d.get('host') or '').strip()}
+                    for k in ('user', 'password', 'credId', 'offset'):
+                        if body.get(k):
+                            req[k] = body[k]
+                    try:
+                        res = APP.cameras.op(req)
+                    except cameras.CamError as e:
+                        return self.err(str(e), 400)
+                    res.pop('rtspAuth', None)                           # адрес потока с паролем в карточку не отдаём
+                    return self.send(res)
                 if sub == 'poll' and method == 'POST':
                     return self.send({'ok': True, 'state': APP.poll_device(d)})
                 if sub == 'disks' and method == 'POST':               # S.M.A.R.T. of the disks (the device card, tab «Диски»)
@@ -3574,6 +3666,24 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send({'ok': True, 'job': APP.cameras.bulk_start(body)})
                 except cameras.CamError as e:
                     return self.err(str(e), 400)
+            if path == '/api/cameras/adopt' and method == 'POST':       # «Добавить найденные камеры»: клиенты роутера и найденное поиском становятся устройствами «Камера» (с MAC — на карте это та же точка, а не вторая)
+                if not self.need_admin():
+                    return
+                found = APP.cameras.adoptable()
+                if body.get('dry'):
+                    return self.send({'ok': True, 'items': found})
+                want = {str(x) for x in (body.get('ips') or [])}
+                made = 0
+                for it in found:
+                    if want and it['ip'] not in want:
+                        continue
+                    d = {'driver': 'ping', 'kind': it['kind'], 'name': it['name'], 'host': it['ip'], 'location': 'local', 'notes': ' · '.join(x for x in (it['vendor'], it['mac']) if x)}
+                    if it['mac']:
+                        d['mac'] = it['mac']
+                    nd = APP.store.upsert_device(d)
+                    APP.store.add_event(nd['id'], nd.get('name'), 'info', 'камера добавлена автоматически (' + it['src'] + ')')
+                    made += 1
+                return self.send({'ok': True, 'added': made})
             if path in ('/api/cameras/start', '/api/cameras/stop', '/api/cameras/probe', '/api/cameras/op') and method == 'POST':
                 if not self.need_admin():
                     return

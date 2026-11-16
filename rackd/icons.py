@@ -116,3 +116,19 @@ def choose(cfg, key, icon):
     if len(ch) > 3000:
         return 'слишком много назначенных иконок'
     return ''
+
+
+def set_label(cfg, key, label):
+    """задать (или очистить, label='') свою подпись одного узла карты; вернёт текст ошибки или ''"""
+    key = str(key or '')
+    if not re.match(r'^[A-Za-z0-9:_.\-]{2,80}$', key):
+        return 'неверный адрес узла'
+    lb = cfg.setdefault('labels', {})
+    label = str(label or '').strip()[:60]
+    if not label:
+        lb.pop(key, None)
+        return ''
+    lb[key] = label
+    if len(lb) > 3000:
+        return 'слишком много подписей'
+    return ''

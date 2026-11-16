@@ -34,8 +34,16 @@ function WorkColors({ value, onChange, autoLabel = 'Авто' }) {
     {WORK_COLORS.map(c => <button key={c} type="button" className={value === c ? 'on' : ''} style={{ background: c }} onClick={() => onChange(c)} aria-label={c} />)}</div>;
 }
 
+/* кнопка «Редактирование» для карты, плана и схемы: лежит в колонке кнопок экрана рядом с «+» и «−» (в «Авроре» эта колонка прячется в кружок «⋯»),
+   вместо тумблера в шапке и в меню */
+function WorkEditBtn() {
+  const { admin, edit, setMode } = useApp();
+  if (!admin) return null;
+  return <button type="button" className={'btn' + (edit ? ' primary' : '')} title={edit ? 'Редактирование включено — нажмите, чтобы выйти' : 'Включить редактирование'} aria-label="Редактирование" aria-pressed={!!edit} onClick={() => setMode(edit ? 'view' : 'edit')}><Icon name="edit" size={17} /></button>;
+}
+
 /* title — заголовок панели; children — разделы этого окна. «Карта» и «План» открываются отдельно через основную навигацию; здесь редактирование и Frank. */
-function WorkMenu({ title, children, hideEditing = false }) {
+function WorkMenu({ title, children, hideEditing = true }) {
   const { admin, mode, setMode, openFrank, refresh } = useApp();
   const [open, setOpen] = useState(() => new URLSearchParams(location.search).get('wm') === '1');       // ?wm=1 — меню сразу открыто (для проверок)
   const close = () => setOpen(false);

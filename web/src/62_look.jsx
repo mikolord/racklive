@@ -6,8 +6,8 @@
    The choice is kept per device in localStorage (rl_skin = test | net | classic | graphite | <id of a custom look>, default test, rl_theme_meta, rl_accent, rl_theme);
    the page applies it before the first paint (index.html). */
 const SKINS = [
-  { id: 'test', name: 'Витрина', text: 'Строгий стиль приборной панели: в тёмной теме чёрный алюминий, в светлой белый, тонкие линии вместо теней, моно-подписи, монохромные иконки, приборы вместо кругов. Основное оформление.', rows: ['Сводка', 'Роутер'] },
-  { id: 'aurora', name: 'Аврора', text: 'Как в iOS 26 и macOS: стекло только у кнопок и панелей, они парят над содержимым. На телефоне — круглые кнопки и маленький док снизу, на компьютере — стеклянная боковая панель. Холст с точками, как в «Заметках».', rows: ['Сводка', 'Роутер'] },
+  { id: 'test', name: 'Витрина', text: 'Строгий стиль приборной панели: в тёмной теме чёрный алюминий, в светлой белый, тонкие линии вместо теней, моно-подписи, монохромные иконки, приборы вместо кругов.', rows: ['Сводка', 'Роутер'] },
+  { id: 'aurora', name: 'Аврора', text: 'Как в iOS 26 и macOS: стекло только у кнопок и панелей, они парят над содержимым. На телефоне — круглые кнопки и маленький док снизу, на компьютере — стеклянная боковая панель. Холст с точками, как в «Заметках». Основное оформление.', rows: ['Сводка', 'Роутер'] },
   { id: 'net', name: 'Лазурь', text: 'Яркий синий акцент как у сетевых контроллеров, без оранжевого (жёлтый вместо него) и фиолетового, плоские иконки без картинок на плитках.', rows: ['Сводка', 'Роутер'] },
   { id: 'classic', name: 'Стекло', text: 'Прозрачные карточки, мягкие градиенты и синий акцент — как в iOS. Первое оформление Rack Live.', rows: ['Сводка', 'Роутер'] },
   { id: 'graphite', name: 'Графит', text: 'Чёрный фон, плоские серые карточки, тонкие рамки, зелёный акцент — без размытия и теней.', rows: ['Сводка', 'Роутер'] },
@@ -16,7 +16,7 @@ const ACCENTS = [['', 'По умолчанию у оформления', null], 
   ['orange', 'Оранжевый', '#f5870a'], ['red', 'Красный', '#f2453d'], ['teal', 'Бирюзовый', '#20b4cc'], ['pink', 'Розовый', '#ee3d73']];
 
 const BUILTIN_SKINS = ['classic', 'graphite', 'net', 'test', 'aurora'];
-const DEFAULT_SKIN = 'test';                                    // the flagship look: shown on a fresh device and after a custom look goes away
+const DEFAULT_SKIN = 'aurora';                                    // the flagship look: shown on a fresh device and after a custom look goes away
 const getSkin = () => lsGet('rl_skin', DEFAULT_SKIN) || DEFAULT_SKIN;
 const getAccent = () => { const a = lsGet('rl_accent', ''); return ACCENTS.some(x => x[0] === a) ? a : ''; };
 const themeMeta = () => { try { return JSON.parse(lsGet('rl_theme_meta', '') || 'null'); } catch (e) { return null; } };
