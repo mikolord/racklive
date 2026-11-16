@@ -23,7 +23,7 @@ from . import passkey as passkey_mod
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.63.1'
+VERSION = '2.63.2'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))

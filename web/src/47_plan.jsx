@@ -200,8 +200,8 @@ function PlanView() {
   const { data, edit } = useApp();
   const plan = data.plan || { buildings: [], links: [] };
   const buildings = plan.buildings || [];
-  const deep = new URLSearchParams(location.search).get('building');
-  const [level, setLevel] = useState(deep && buildings.find(b => b.id === deep) ? 'building' : 'territory');
+  const qs = new URLSearchParams(location.search), deepS = qs.get('scheme'), deep = deepS || qs.get('building');      // ?building=<дом> — план дома, ?scheme=<дом> — его схема
+  const [level, setLevel] = useState(deep && buildings.find(b => b.id === deep) ? (deepS ? 'scheme' : 'building') : 'territory');
   const [bid, setBid] = useState((deep && buildings.find(b => b.id === deep) && deep) || (buildings[0] && buildings[0].id));
   useEffect(() => { if (level === 'building' && !buildings.find(x => x.id === bid)) setLevel('territory'); }, [buildings.length]);
 

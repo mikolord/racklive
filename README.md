@@ -12,14 +12,15 @@
 
 <table>
 <tr>
+<td width="50%"><img src="docs/screenshots/home.jpg" alt="Главная из виджетов"></td>
 <td width="50%"><img src="docs/screenshots/map.jpg" alt="Карта сети"></td>
-<td width="50%"><img src="docs/screenshots/tools.jpg" alt="Инструменты"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/plan.jpg" alt="План дома"></td>
+<td width="50%"><img src="docs/screenshots/scheme.jpg" alt="Схема на чертеже"></td>
 </tr>
 </table>
-<p align="center">
-<img src="docs/screenshots/mobile-home.jpg" alt="Главная на телефоне" width="31%">
-<img src="docs/screenshots/mobile-map.jpg" alt="Карта на телефоне" width="31%">
-</p>
+<p align="center"><img src="docs/screenshots/mobile.jpg" alt="На телефоне" width="100%"></p>
 
 ## Что умеет
 
