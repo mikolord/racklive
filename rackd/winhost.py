@@ -8,11 +8,72 @@ REMOTE = 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
 
 PRELUDE = "$ErrorActionPreference='SilentlyContinue'\n$ProgressPreference='SilentlyContinue'\n[Console]::OutputEncoding=[Text.Encoding]::UTF8\n"
 
-ENABLE_SSH = ('Откройте PowerShell «от имени администратора» на этом компьютере и выполните:\n'
-              'Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0\n'
-              'Start-Service sshd; Set-Service -Name sshd -StartupType Automatic\n'
-              'Дальше в Rack Live: адрес компьютера, порт 22, имя пользователя Windows (локального администратора) и его пароль. '
-              'Пароль не должен быть пустым. Если вход по паролю не принимается для учётной записи Microsoft, используйте локальную учётку или ключ.')
+SETUP_SSH = r'''$ErrorActionPreference = 'Stop'
+if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+}
+Set-Service sshd -StartupType Automatic
+Start-Service sshd
+$rule = 'RackLive-SSH-LAN'
+if (Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue) {
+    Set-NetFirewallRule -Name $rule -Enabled True -Direction Inbound -Action Allow -Profile Any -Protocol TCP -LocalPort 22 -RemoteAddress LocalSubnet
+} else {
+    New-NetFirewallRule -Name $rule -DisplayName 'Rack Live: SSH in LAN' -Direction Inbound -Action Allow -Profile Any -Protocol TCP -LocalPort 22 -RemoteAddress LocalSubnet | Out-Null
+}
+Get-Service sshd | Select-Object Status, StartType'''
+
+WINDOWS_IDENTITY = r'''whoami
+Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+    Select-Object InterfaceAlias, IPAddress'''
+
+SETUP_KEY = r'''$ErrorActionPreference = 'Stop'
+$dir = Join-Path $env:USERPROFILE '.ssh'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$key = Join-Path $dir 'racklive_rsa'
+if (-not (Test-Path $key)) {
+    $argsForKey = @('-q','-t','rsa','-b','3072','-N','""','-f',('"'+$key+'"'),'-C','RackLive')
+    $p = Start-Process ssh-keygen.exe -ArgumentList $argsForKey -Wait -NoNewWindow -PassThru
+    if ($p.ExitCode -ne 0) { throw 'SSH key generation failed' }
+}
+$file = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+$public = (Get-Content -LiteralPath ($key + '.pub') -Raw).Trim()
+$previous = if (Test-Path $file) { [IO.File]::ReadAllText($file) } else { '' }
+if (-not ($previous -split '\r?\n' | Where-Object { $_.Trim() -eq $public })) {
+    [IO.File]::WriteAllText($file, $previous.TrimEnd() + "`r`n" + $public + "`r`n", [Text.Encoding]::ASCII)
+}
+icacls.exe $file /inheritance:r /grant '*S-1-5-18:F' '*S-1-5-32-544:F'
+if ($LASTEXITCODE -ne 0) { throw 'Cannot set SSH key permissions' }'''
+
+COPY_KEY = r'''Get-Content -LiteralPath (Join-Path $env:USERPROFILE '.ssh\racklive_rsa') -Raw | Set-Clipboard'''
+
+ENABLE_SSH = {
+    'title': 'Подключение Windows',
+    'intro': 'Для ПК в одной локальной сети с Rack Live. Windows 10/11 или Windows Server; для состояния физических дисков нужен локальный администратор.',
+    'steps': [
+        {'title': 'Подготовь компьютер', 'text': 'На самом ПК открой Пуск → PowerShell → «Запуск от имени администратора». Скопируй и выполни весь блок. В конце должно быть Running и Automatic.',
+         'code': SETUP_SSH, 'note': 'SSH разрешается только из локальной сети, в том числе если Windows считает её общедоступной. Порты на роутере открывать не нужно.'},
+        {'title': 'Узнай логин и адрес ПК', 'text': 'В том же PowerShell выполни команду. Первая строка — логин; ниже выбери IPv4 подключения Ethernet или Wi-Fi к домашней сети.', 'code': WINDOWS_IDENTITY},
+        {'title': 'Заполни поля ниже', 'fields': [
+            ['Адрес', 'IPv4 компьютера из предыдущего шага'], ['Порт SSH', '22'],
+            ['Пользователь Windows', 'логин из whoami; для локальной учётной записи можно только имя после обратного слеша'],
+            ['Пароль', 'пароль учётной записи Windows, а не PIN Windows Hello']],
+         'note': 'Пустой пароль не подходит. Если пароля нет или входишь только по PIN — раскрой «Вход по SSH-ключу» ниже.',
+         'text': 'Нажми «Проверить». Если появились сведения о Windows — нажми «Сохранить». В списке устройств появятся CPU, память и диски.'},
+    ],
+    'key': {'title': 'Вход по SSH-ключу — без пароля Windows', 'steps': [
+        {'title': 'Создай ключ и разреши вход', 'text': 'Выполни в PowerShell от имени администратора под той учётной записью, которую указываешь в Rack Live. Скрипт сохраняет отдельный ключ и добавляет его открытую часть; существующие ключи остаются.', 'code': SETUP_KEY},
+        {'title': 'Скопируй приватный ключ в Rack Live', 'code': COPY_KEY,
+         'text': 'Эта команда копирует ключ в буфер обмена. Вставь его целиком в поле «Приватный ключ (вместо пароля)», поле «Пароль» оставь пустым. Затем «Проверить» → «Сохранить».',
+         'note': 'Приватный ключ даёт доступ к этому ПК. Вставляй его только в свою панель Rack Live; не отправляй в чат.'},
+    ]},
+    'troubleshoot': [
+        ['Таймаут / нет соединения', 'Проверь, что ПК включён и адрес верный. Повтори шаг 1 с правами администратора: стандартное правило OpenSSH может работать только для частной сети.'],
+        ['Неверный логин, пароль или ключ', 'Нужен пароль учётной записи, не PIN. Проверь логин через whoami или используй SSH-ключ.'],
+        ['Нет состояния SSD / HDD', 'Для физических дисков нужны права локального администратора. Температуру и ресурс Windows отдаёт не для каждого диска.'],
+    ],
+    'source': 'https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse',
+}
 
 POLL = PRELUDE + r'''$os=Get-CimInstance Win32_OperatingSystem
 $cs=Get-CimInstance Win32_ComputerSystem

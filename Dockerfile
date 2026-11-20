@@ -21,6 +21,7 @@ COPY web/look-aurora ./web/look-aurora/
 COPY web/vendor ./web/vendor
 COPY web/flags ./web/flags/
 COPY web/plan.html web/plan-manifest.json web/plan-icon.svg web/plan-icon-192.png web/plan-icon-512.png web/plan-apple-touch-icon.png ./web/
+COPY web/desktop.html ./web/
 ENV RL_DATA=/data RL_WEB=/app/web RL_PORT=8080 PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8080

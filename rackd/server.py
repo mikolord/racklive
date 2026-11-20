@@ -2,6 +2,7 @@
 import base64, concurrent.futures, datetime, gzip, ipaddress, json, mimetypes, os, queue, re, secrets, select, signal, socket, threading, time, traceback, urllib.parse, urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from . import models as models_mod
 from . import icons as icons_mod
@@ -20,10 +21,11 @@ from . import rackcords
 from . import snapshots as snapshots_mod
 from . import vault as vault_mod
 from . import passkey as passkey_mod
+from . import windesktop
 from .store import Store
 from .util import DriverError
 
-VERSION = '2.63.2'
+VERSION = '2.64.22'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.environ.get('RL_WEB', os.path.join(ROOT, 'web'))
 DATA = os.environ.get('RL_DATA', os.path.join(ROOT, 'data'))
@@ -128,6 +130,7 @@ class App:
         self.vpnload = vpnload_mod.Collector(self.store, REGISTRY)         # «Клиенты VPN» of the servers that have the switch on
         self.speed =speedtest.SpeedTests(self.store)
         self.jobs = {}
+        self.desktop = windesktop.Desktops(DATA)
         self.inet = inet.InetSpeed(self)
         self.backups = backups.Backups(self.store)
         self.newdev = newdev.NewDevices(self.store)
@@ -1439,6 +1442,34 @@ class Handler(BaseHTTPRequestHandler):
                     pass
         APP.store.add_event(None, 'Терминал', 'info', f"терминал на «{d.get('name')}» {why} (длился {secs // 60} мин {secs % 60} с)")
 
+    def desktop_socket(self):
+        ticket = APP.desktop.consume(str(self.query().get('t') or ''))
+        if not ticket:
+            return self.err('подключение истекло — открой рабочий стол заново', 401)
+        if self.token() and self.token() != ticket['session']:
+            return self.err('это подключение другого пользователя', 403)
+        self.headers['X-RL-Session'] = ticket['session']
+        if not self.need_admin():
+            return
+        origin = self.headers.get('Origin')
+        if not origin or urllib.parse.urlparse(origin).netloc != (self.headers.get('Host') or ''):
+            return self.err('запрос с чужого сайта', 403)
+        if 'websocket' not in (self.headers.get('Upgrade') or '').lower() or not self.headers.get('Sec-WebSocket-Key'):
+            return self.err('это адрес WebSocket', 400)
+        d = APP.store.device(ticket['device'])
+        if DEMO or not d or d.get('driver') != 'windows' or not d.get('enabled', True):
+            return self.err('рабочий стол недоступен', 400)
+        process, keyfile, initial = APP.desktop.spawn(d)
+        try:
+            self._upgrade()
+        except Exception:
+            APP.desktop.cleanup(process, keyfile)
+            raise
+        token, ip, ua = ticket['session'], self.client_ip(), self.headers.get('User-Agent') or ''
+        APP.desktop.relay(self.connection, d, process, keyfile, initial,
+                          lambda: APP.sessions.valid(token, ip, ua),
+                          lambda text: APP.store.add_event(d['id'], d.get('name'), 'info', text))
+
     def _upgrade(self):
         self.send_response(101)
         self.send_header('Upgrade', 'websocket')
@@ -1547,6 +1578,42 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     # ── static ──
+    def desktop_app(self, path):
+        """Install metadata is public at an opaque URL; desktop access stays admin-only."""
+        import html
+        installing = path.startswith('/desktop-install/')
+        m = re.fullmatch(r'/desktop-(?:app|install)/([0-9a-f]{32})/(manifest.webmanifest|icon-(?:192|512).png|sw.js)?', path)
+        if not m:
+            return False
+        item = APP.desktop.find_app(m.group(1), APP.store.cfg['devices'])
+        if not item:
+            self.err('приложение не найдено', 404)
+            return True
+        base = '/desktop-app/' + m.group(1) + '/'
+        headers = {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}
+        part = m.group(2)
+        if part == 'manifest.webmanifest':
+            man = {'id': base, 'name': item['name'], 'short_name': item['name'][:32], 'start_url': base, 'scope': base,
+                   'display': 'standalone', 'background_color': '#101216', 'theme_color': '#101216',
+                   'icons': [{'src': base + 'icon-' + str(size) + '.png', 'sizes': f'{size}x{size}', 'type': 'image/png', 'purpose': 'any'} for size in (192, 512)]}
+            self.send_raw(json.dumps(man, ensure_ascii=False).encode(), 'application/manifest+json; charset=utf-8', headers)
+        elif part and part.startswith('icon-'):
+            self.send_raw(base64.b64decode(item['icons'][part[5:-4]]), 'image/png', headers)
+        elif part == 'sw.js':
+            # No authenticated response, screen, ticket or password is cached.
+            code = "self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));self.addEventListener('fetch',e=>{if(e.request.mode==='navigate')e.respondWith(fetch(e.request).catch(()=>new Response('<meta charset=utf-8><title>Нет связи</title><p>Нет связи с Rack Live. Подключись к сети и обнови страницу.</p>',{headers:{'Content-Type':'text/html; charset=utf-8'}})));});"
+            self.send_raw(code.encode(), 'application/javascript; charset=utf-8', headers)
+        else:
+            text = Path(WEB, 'desktop.html').read_text(encoding='utf-8')
+            title = html.escape(item['name'], quote=True)
+            text = text.replace('<title>Рабочий стол · Rack Live</title>', '<title>' + title + '</title>')
+            text = text.replace('content="Рабочий стол"', 'content="' + title + '"', 1)
+            meta = '<link rel="manifest" href="' + base + 'manifest.webmanifest"><link rel="apple-touch-icon" href="' + base + 'icon-512.png"><link rel="icon" href="' + base + 'icon-192.png">'
+            data = json.dumps({'device': item['device'], 'base': base, 'name': item['name'], 'installing': installing}).replace('<', '\\u003c')
+            text = text.replace('<head>', '<head>' + meta + '<script>window.RL_DESKTOP_APP=' + data + ';</script>' + look_script().decode(), 1)
+            self.send_raw(text.encode(), 'text/html; charset=utf-8', headers)
+        return True
+
     def static(self, path):
         if path in ('', '/'):
             path = '/index.html'
@@ -1788,12 +1855,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split('?')[0]
         try:
+            if self.desktop_app(path):
+                return
             if self.local_plugins('GET', path):
                 return
             if self.learn_routes('GET', path):
                 return
             if path == '/api/term/ws':
                 return self.terminal()
+            if path == '/api/desktop/ws':
+                return self.desktop_socket()
             if path == '/api/site/link':                   # the control channel of a site collector (key auth; the collector dials out)
                 return self.site_link()
             if path == '/api/site/pack':                   # a collector being installed over SSH (plugin «Сборщик площадки») downloads this installation's own code; the site key is the pass
@@ -2228,6 +2299,42 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         st = APP.store
         try:
+            if path == '/api/desktop/visual' and method == 'POST':
+                if not self.need_admin():
+                    return
+                body = self.body()
+                d = st.device(str(body.get('device') or ''))
+                if DEMO or not d or d.get('driver') != 'windows' or not d.get('enabled', True):
+                    return self.err('нужен настоящий включённый ПК Windows', 400)
+                full = body.get('full') if body.get('op') == 'set' else None
+                if body.get('op') == 'set' and not isinstance(full, bool):
+                    return self.err('нужен режим изображения', 400)
+                try:
+                    return self.send(APP.desktop.visual(d, full))
+                except DriverError as e:
+                    return self.err(str(e), 400)
+            if path == '/api/desktop/app' and method == 'POST':
+                if not self.need_admin():
+                    return
+                body = self.body()
+                d = st.device(str(body.get('device') or ''))
+                if DEMO or not d or d.get('driver') != 'windows' or not d.get('enabled', True):
+                    return self.err('нужен настоящий включённый ПК Windows', 400)
+                try:
+                    return self.send(APP.desktop.create_app(d, body.get('name'), body.get('icons') or {}))
+                except DriverError as e:
+                    return self.err(str(e), 400)
+            if path == '/api/desktop/open':
+                if not self.need_admin():
+                    return
+                if method != 'POST':
+                    return self.err('нужен POST', 405)
+                if DEMO:
+                    return self.err('в демо рабочий стол не открывается', 400)
+                d = st.device(str(self.body().get('device') or ''))
+                if not d or d.get('driver') != 'windows' or not d.get('enabled', True):
+                    return self.err('нужен включённый компьютер Windows', 400)
+                return self.send(dict(APP.desktop.ticket(d, self.token()), ok=True, name=d.get('name')))
             if self.local_plugins(method, path):
                 return
             if self.learn_routes(method, path):
@@ -2843,9 +2950,23 @@ class Handler(BaseHTTPRequestHandler):
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/map' and method == 'PUT':
+                if 'wifiGroups' in body:
+                    groups = body['wifiGroups']
+                    if not isinstance(groups, dict) or len(groups) > 500:
+                        return self.err('Некорректные группы клиентов', 400)
+                    clean = {}
+                    for ident, anchor in groups.items():
+                        if not isinstance(ident, str) or len(ident) > 200 or not isinstance(anchor, dict):
+                            return self.err('Некорректная группа клиентов', 400)
+                        dx, dy = anchor.get('dx'), anchor.get('dy')
+                        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not -100000 <= v <= 100000 for v in (dx, dy)):
+                            return self.err('Некорректные координаты группы', 400)
+                        clean[ident] = {'dx': dx, 'dy': dy}
                 for k in ('positions', 'links', 'collapsed', 'wan'):
                     if k in body:
                         st.cfg['map'][k] = body[k]
+                if 'wifiGroups' in body:
+                    st.cfg['map']['wifiGroups'] = clean
                 st.save()
                 return self.send({'ok': True})
             if path == '/api/tglink/start' and method == 'POST':
@@ -3393,6 +3514,8 @@ class Handler(BaseHTTPRequestHandler):
                     if body.get('op') == 'status':
                         res = dict(drv.plugins(d), ok=True) if hasattr(drv, 'plugins') else {'ok': True, 'plugins': []}
                         for card in res['plugins']:
+                            if card.get('id') == 'desktop' and d.get('driver') == 'windows':
+                                card.update(APP.desktop.card(d, drv, DEMO))
                             if card.get('id') == 'portal':
                                 card['templates'] = APP.portal_tpl.list()
                                 card['saved'] = portal_mod.public(d.get('portal'))
@@ -3439,6 +3562,20 @@ class Handler(BaseHTTPRequestHandler):
                             job_body['_source'] = st.device(meta.get('device'))
                             st.add_event(did, d.get('name'), 'warning', f"восстановление слепка «{meta.get('deviceName')}» подтверждено администратором — сервер будет перезаписан и перезагружен")
                         return self.send({'ok': True, 'job': APP.start_plugin_job(d, APP.snapshots, 'snapshot', op, job_body)['id']})
+                    if pid == 'desktop':
+                        if d.get('driver') == 'windows' and not DEMO and op in ('network-status', 'network-setup'):
+                            if not self.need_admin():
+                                return
+                            try:
+                                result = windesktop.keendns(st.cfg['devices'], apply=op == 'network-setup')
+                                if op == 'network-setup':
+                                    st.add_event(did, d.get('name'), 'info', 'рабочий стол: проверены и настроены заголовки KeenDNS')
+                                return self.send(result)
+                            except DriverError as e:
+                                return self.err(str(e), 400)
+                        if d.get('driver') != 'windows' or DEMO or op not in ('install', 'remove'):
+                            return self.err('рабочий стол устанавливается только на настоящий ПК Windows', 400)
+                        return self.send({'ok': True, 'job': APP.start_plugin_job(d, APP.desktop, pid, op, {'_drv': drv})['id']})
                     if pid.startswith('x-'):                    # a community plugin: only install / remove, as a background job, after the administrator confirmed the exact commands (digest)
                         if not comm or op not in ('install', 'remove', 'run'):
                             return self.err('неверный запрос плагина')
@@ -3544,9 +3681,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(APP.run_action(d, body.get('action'), body.get('params') or {}))
             if path in ('/api/ai', '/api/ai/test') and method in ('PUT', 'POST'):
                 cur =assistant.merged(st.cfg.get('ai'))
-                new = assistant.merged(dict(cur, **{k: v for k, v in body.items() if k in assistant.DEFAULT and k != 'key'}))
-                # empty key = keep the saved one, but only for the same provider (a DeepSeek key must not go to another service)
-                new['key'] = str(body.get('key') or '').strip() or (cur['key'] if new['preset'] == cur['preset'] else '')
+                try:
+                    new = assistant.update_settings(cur, body)
+                except assistant.AiError as e:
+                    return self.err(str(e), 400)
                 new['limit'] = max(0, int(new.get('limit') or 0))
                 new['window'] = max(0, min(10_000_000, int(new.get('window') or 0)))
                 new['agent'] = bool(new.get('agent'))

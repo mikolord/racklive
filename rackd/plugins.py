@@ -19,6 +19,9 @@ DNS_PRESETS = [
 ]
 
 CATALOG = [
+    {'id': 'desktop', 'drivers': ['windows'], 'title': 'Рабочий стол Rack Live', 'icon': 'pc', 'kind': 'desktop',
+     'description': 'Экран Windows, мышь и клавиатура в браузере. TightVNC + noVNC через SSH, без проброса портов.',
+     'author': 'Rack Live / TightVNC / noVNC', 'home': 'https://novnc.com/'},
     {'id': 'entware', 'drivers': ['keenetic'], 'title': 'Entware (OPKG)', 'icon': 'box', 'kind': 'guide',
      'description': 'Репозиторий пакетов Linux на роутере. Нужен для HydraRoute Neo, AWG Manager и других дополнений. '
                     'Ставится вручную по инструкции — Rack Live проверит каждый шаг.'},

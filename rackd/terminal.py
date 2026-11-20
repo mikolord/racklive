@@ -35,8 +35,9 @@ def frame(payload, opcode=2):
 
 class Reader:
     """client → server frames (masked), parsed from a growing buffer"""
-    def __init__(self):
+    def __init__(self, require_mask=False):
         self.buf = b''
+        self.require_mask = require_mask
 
     def feed(self, data):
         self.buf += data
@@ -47,6 +48,8 @@ class Reader:
                 break
             op, ln, i = b[0] & 0x0F, b[1] & 0x7F, 2
             masked = bool(b[1] & 0x80)
+            if self.require_mask and not masked:
+                raise ValueError('кадр клиента должен быть маскирован')
             if ln == 126:
                 if len(b) < 4:
                     break

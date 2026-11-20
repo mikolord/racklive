@@ -1,5 +1,5 @@
 /* Network map: the rack in the middle, cables from its units to everything else. */
-const M = { NW: 214, NH: 56, CW: 196, CH: 46, COL: 130, GAP: 12, RW: 310, RU: 38, MT: 150, MTH: 48 };     // MT×MTH: a box tile
+const M = { NW: 196, NH: 46, CW: 196, CH: 46, COL: 130, GAP: 12, RW: 310, RU: 38, MT: 150, MTH: 48 };     // MT×MTH: a box tile
 
 function layoutMap(data, collapsed, remoteOpen = true) {
   const topo = data.topology || { nodes: [], edges: [] };
@@ -63,7 +63,7 @@ function layoutMap(data, collapsed, remoteOpen = true) {
   const hiddenClients = {};                                          // client id → { node, parent }: «Найти устройство» opens the right device
   Object.values(nodes).filter(n => n.remote).forEach(n => {
     const es = kids[n.id] || [];
-    const leaves = es.filter(e => nodes[e.target] && nodes[e.target].client && !kids[e.target] && !rackNode[e.target]);
+    const leaves = es.filter(e => nodes[e.target] && nodes[e.target].client && !nodes[e.target].phantom && !kids[e.target] && !rackNode[e.target]);
     if (!leaves.length) return;
     n.remoteClients = leaves.length;
     n.remoteOpen = remoteOpen === true || !!remoteOpen[n.id];
@@ -144,6 +144,105 @@ function layoutMap(data, collapsed, remoteOpen = true) {
   return { nodes, pos, edges, groups, hasRack, rackNode, racks: Object.values(rackMeta), rooms, hiddenClients };
 }
 
+/* Live Wi-Fi associations, keyed by the actual client identity; never infer a
+   transition from the absence of an AP in a temporary/offline poll. */
+function mapIsWifiClient(n) {
+  return !!n && !n.phantom && !n.rackUnit && (n.client || ['phone', 'tablet', 'pc', 'laptop', 'iot', 'tv', 'speaker', 'other'].includes(n.kind));
+}
+function mapWifiParents(data) {
+  const t = data.topology || { nodes: [], edges: [] }, nodes = Object.fromEntries(t.nodes.map(n => [n.id, n]));
+  const out = {};
+  t.edges.forEach(e => { if (e.kind === 'wifi' && !e.extra && !e.manual && mapIsWifiClient(nodes[e.target]) && nodes[e.source]) out[e.target] = e.source; });
+  return out;
+}
+
+function placeStableMap(L0, data, dragPos, style, stable, groupOrder) {
+    if (style !== 'columns') return L0;
+    const pos = Object.fromEntries(Object.entries(L0.pos).map(([id, p]) => [id, { ...p }]));
+    const parent = {}; L0.edges.filter(e => !e.extra && !e.manual).forEach(e => { parent[e.target] = e.source; });
+    const old = stable, pinned = data.map.positions || {}, wifi = mapWifiParents(data);
+    old.wifiSeen = old.wifiSeen || {}; old.autoWifi = old.autoWifi || {}; old.autoGroups = old.autoGroups || {}; old.groupOptOut = old.groupOptOut || {};
+    let groups = { ...old.autoGroups, ...(data.map.wifiGroups || {}) };
+    const beforeWifi = { ...old.wifiSeen }, moved = new Set(), routes = [];
+    Object.entries(wifi).forEach(([id, pid]) => {
+      let before = old.wifiSeen[id];
+      // Migration for old hand-placed clients without an association snapshot:
+      // only infer their old AP when the saved card is clearly closer to another AP.
+      if (!before && pinned[id] && pos[id] && pos[pid]) {
+        const card = pos[id], apPos = p => { const a = pos[p], g = groups[p]; return a && { x: a.x + (g?.dx ?? a.w + 70), y: a.y + (g?.dy ?? 0) }; };
+        const distance = p => { const q = apPos(p); return q ? Math.hypot(card.x - q.x, card.y - q.y) : Infinity; };
+        const candidates = Object.values(L0.nodes).filter(n => n.kind === 'ap' && pos[n.id]).map(n => n.id);
+        const closest = candidates.sort((a, b) => distance(a) - distance(b))[0];
+        const nearPeer = closest && Object.entries(wifi).some(([other, p]) => other !== id && p === closest && pos[other] &&
+          Math.abs(pos[other].x - card.x) < 32 && Math.abs(pos[other].y - card.y) < (card.h + M.GAP) * 3);
+        if (nearPeer && closest !== pid && distance(pid) > distance(closest) * 1.6 + 100) before = closest;
+      }
+      if (!beforeWifi[id]) beforeWifi[id] = before || pid;
+      if (before && before !== pid) { old.autoWifi[id] = true; moved.add(id); routes.push({ id, before, after: pid }); }
+      old.wifiSeen[id] = pid;
+    });
+    Object.entries(pos).forEach(([id, p]) => {
+      const prev = old.pos[id], auto = !!old.autoWifi[id];
+      if (!p.rack && prev && (!pinned[id] || auto) && !moved.has(id) && (!L0.nodes[id]?.phantom || old.parents[id] === parent[id])) { p.x = prev.x; p.y = prev.y; }
+    });
+    Object.entries(dragPos).forEach(([id, [x, y]]) => { if (pos[id] && !old.autoWifi[id]) Object.assign(pos[id], { x, y }); });
+    // When a real roaming event is observed, preserve a clearly aligned client
+    // column as an automatic group. This closes the vacated slot and lets later
+    // arrivals join without requiring the person to configure each AP manually.
+    const makeAutoGroup = (pid, source) => {
+      if (!pos[pid] || groups[pid] || old.groupOptOut[pid]) return;
+      const ids = Object.keys({ ...beforeWifi, ...wifi }).filter(id => source ? beforeWifi[id] === pid : wifi[id] === pid && !moved.has(id));
+      const ap = pos[pid], expectedX = ap.x + ap.w + 70;
+      // Automatically generated coordinates may still belong to the AP's old
+      // layout column; only trust them if they are actually near the moved AP.
+      // Deliberately pinned cards remain valid anchors wherever the user put them.
+      const pts = ids.map(id => ({ id, p: old.pos[id] || pos[id] })).filter(x => x.p &&
+        (source || pinned[x.id] || Math.abs(x.p.x - expectedX) < 200)).map(x => x.p);
+      if (source && pts.length < 2) return;
+      if (pts.length > 1 && Math.max(...pts.map(p => p.x)) - Math.min(...pts.map(p => p.x)) > 32) return;
+      pts.sort((a, b) => a.y - b.y || a.x - b.x);
+      const first = pts[0];
+      old.autoGroups[pid] = { dx: first ? first.x - ap.x : ap.w + 70, dy: first ? first.y - ap.y : ap.h + M.GAP };
+      groups[pid] = old.autoGroups[pid];
+    };
+    routes.forEach(r => { makeAutoGroup(r.before, true); makeAutoGroup(r.after, false); });
+    // Only newcomers and confirmed roaming clients move to make room.
+    const needsAuto = id => !!old.autoWifi[id] && (!old.pos[id] || moved.has(id));
+    const isMovedFake = id => L0.nodes[id]?.phantom && old.parents[id] !== parent[id];
+    const fixed = Object.entries(pos).filter(([id, p]) => p.rack || (!needsAuto(id) && (pinned[id] || old.pos[id]) && !isMovedFake(id)));
+    const frames = (L0.racks || []).map(r => ({ x: -14, y: r.y - 46, w: r.w + 28, h: r.h + 60 }));
+    const occupied = [...fixed.map(([, p]) => p), ...frames];
+    const overlaps = (p, q) => p.x < q.x + q.w + 12 && p.x + p.w + 12 > q.x && p.y < q.y + q.h + 12 && p.y + p.h + 12 > q.y;
+    Object.entries(pos).filter(([id, p]) => !p.rack && (needsAuto(id) || (!pinned[id] && (!old.pos[id] || isMovedFake(id))))).forEach(([id, p]) => {
+      const pid = wifi[id] || parent[id], ap = pos[pid];
+      if ((L0.nodes[id]?.phantom || needsAuto(id)) && ap) {
+        const peers = L0.edges.filter(e => e.kind === 'wifi' && e.source === pid && e.target !== id && (mapIsWifiClient(L0.nodes[e.target]) || L0.nodes[e.target]?.phantom) && pos[e.target] && !needsAuto(e.target)).map(e => pos[e.target]);
+        if (peers.length && !L0.nodes[id]?.phantom) {
+          const nearest = peers.sort((a, b) => Math.hypot(a.x - ap.x, a.y - ap.y) - Math.hypot(b.x - ap.x, b.y - ap.y))[0];
+          const column = peers.filter(q => Math.abs(q.x - nearest.x) < 24); p.x = nearest.x; p.y = Math.max(...column.map(q => q.y + q.h)) + M.GAP;
+        } else { p.x = ap.x + ap.w + 70; p.y = ap.y; }
+      }
+      let steps = 0; while (occupied.some(q => overlaps(p, q)) && steps++ < 500) p.y += M.NH + M.GAP;
+      occupied.push(p);
+    });
+    const groupedIds = new Set(L0.edges.filter(e => e.kind === 'wifi' && groups[e.source] && (mapIsWifiClient(L0.nodes[e.target]) || L0.nodes[e.target]?.phantom) && pos[e.target] && !pos[e.target].rack).map(e => e.target));
+    const blockers = [...Object.entries(pos).filter(([id]) => !groupedIds.has(id)).map(([, p]) => p), ...frames];
+    Object.entries(groups).forEach(([pid, anchor]) => {
+      const p = pos[pid]; if (!p || !anchor || typeof anchor.dx !== 'number' || typeof anchor.dy !== 'number') return;
+      const ids = L0.edges.filter(e => e.kind === 'wifi' && e.source === pid && groupedIds.has(e.target)).map(e => e.target);
+      const prev = groupOrder[pid] || [], order = [...prev.filter(id => ids.includes(id)), ...ids.filter(id => !prev.includes(id)).sort((a, b) => pos[a].y - pos[b].y || pos[a].x - pos[b].x || String(a).localeCompare(String(b)))];
+      groupOrder[pid] = order;
+      let y = p.y + anchor.dy;
+      order.forEach(id => {
+        const q = pos[id]; q.x = p.x + anchor.dx; q.y = y;
+        let steps = 0; while (blockers.some(b => overlaps(q, b)) && steps++ < 500) q.y += M.NH + M.GAP;
+        blockers.push(q); y = q.y + q.h + M.GAP;
+      });
+    });
+    stable.pos = Object.fromEntries(Object.entries(pos).map(([id, p]) => [id, { ...p }])); stable.parents = parent;
+    return { ...L0, pos };
+}
+
 /* other ways to see the same network (the choice is kept in this browser): a classic top-down tree, rings around the internet / main router, and columns by network.
    They use the same nodes and wires as the default scheme; only the places differ (no rack frames, and dragging cards is for the default scheme). */
 const MAP_STYLES = [['columns', 'Схема со шкафом'], ['tree', 'Дерево сверху вниз'], ['radial', 'Кольца вокруг роутера'], ['groups', 'Столбцы по сетям']];
@@ -152,7 +251,7 @@ function layoutAlt(data, style, collapsed, remoteOpen) {
   const base = layoutMap(data, collapsed, remoteOpen);
   const nodes = base.nodes;
   const CWA = M.CW + 44;                                              // cards of these views are wider than in the default scheme: long names fit
-  const sizeOf = id => { const n = nodes[id]; return n.kind === 'group' || n.client ? [CWA, M.CH] : [M.NW + 40, M.NH]; };
+  const sizeOf = () => [CWA, M.NH];
   const tree = base.edges.filter(e => !e.extra && !e.manual && nodes[e.source] && nodes[e.target]);
   const kids = {}, hasParent = new Set();
   tree.forEach(e => { if (hasParent.has(e.target)) return; hasParent.add(e.target); (kids[e.source] = kids[e.source] || []).push(e.target); });
@@ -211,9 +310,76 @@ function layoutAlt(data, style, collapsed, remoteOpen) {
   return { nodes, pos, edges, groups: base.groups, hasRack: false, rackNode: {}, racks: [], rooms: base.rooms, style, headers, hiddenClients: base.hiddenClients };
 }
 
-function edgePath(e, L) {
+/* Orthogonal routing: choose facing card edges and search straight corridors around
+   the other cards and rack frames. It is recalculated as cards move. */
+function mapOrthogonal(e, L) {
+  const a = L.pos[e.source], b = L.pos[e.target]; if (!a || !b) return null;
+  const pad = 9, obstacles = Object.entries(L.pos).filter(([id]) => id !== e.source && id !== e.target).map(([, p]) =>
+    ({ l: p.x - pad, r: p.x + p.w + pad, t: p.y - pad, b: p.y + p.h + pad }));
+  (L.racks || []).filter(r => r.id !== a.rackId && r.id !== b.rackId).forEach(r => obstacles.push({ l: -23, r: r.w + 23, t: r.y - 55, b: r.y + r.h + 23 }));
+  const blocked = (p, q, o) => p.x === q.x ? p.x > o.l && p.x < o.r && Math.max(Math.min(p.y, q.y), o.t) < Math.min(Math.max(p.y, q.y), o.b)
+    : p.y === q.y ? p.y > o.t && p.y < o.b && Math.max(Math.min(p.x, q.x), o.l) < Math.min(Math.max(p.x, q.x), o.r) : true;
+  const clean = pts => pts.filter((p, i) => !i || p.x !== pts[i - 1].x || p.y !== pts[i - 1].y);
+  const port = (p, side) => side === 'left' ? { x: p.x, y: p.y + p.h / 2, dx: -1, dy: 0 }
+    : side === 'right' ? { x: p.x + p.w, y: p.y + p.h / 2, dx: 1, dy: 0 }
+    : side === 'top' ? { x: p.x + p.w / 2, y: p.y, dx: 0, dy: -1 }
+    : { x: p.x + p.w / 2, y: p.y + p.h, dx: 0, dy: 1 };
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const sidesA = a.rack ? [bc.x < ac.x ? 'left' : 'right', bc.x < ac.x ? 'right' : 'left']
+    : [bc.x < ac.x ? 'left' : 'right', bc.y < ac.y ? 'top' : 'bottom'];
+  const sidesB = b.rack ? [ac.x < bc.x ? 'left' : 'right', ac.x < bc.x ? 'right' : 'left']
+    : [ac.x < bc.x ? 'left' : 'right', ac.y < bc.y ? 'top' : 'bottom'];
+  let best = null, fallback = null;
+  const finish = result => { const pts = result.pts, mid = pts[Math.floor((pts.length - 1) / 2)], near = pts[Math.max(0, pts.length - 2)];
+    return { d: pts.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' '), lx: near.x, ly: near.y, mx: mid.x, my: mid.y,
+      inside: !!(a.rack && b.rack), cross: !!(a.rack && b.rack && a.rackId !== b.rackId) }; };
+  const sourceBox = { l: a.x, r: a.x + a.w, t: a.y, b: a.y + a.h }, targetBox = { l: b.x, r: b.x + b.w, t: b.y, b: b.y + b.h };
+  const nearOptimal = () => best && best.score <= Math.abs(ac.x - bc.x) + Math.abs(ac.y - bc.y) + 160;
+  const consider = raw => {
+    const pts = clean(raw); let collisions = 0, length = 0;
+    for (let i = 1; i < pts.length; i++) { const p = pts[i - 1], q = pts[i]; length += Math.abs(p.x - q.x) + Math.abs(p.y - q.y); for (const o of obstacles) if (blocked(p, q, o)) collisions++;
+      if (i > 1 && blocked(p, q, sourceBox)) collisions++; if (i < pts.length - 1 && blocked(p, q, targetBox)) collisions++; }
+    const score = length + pts.length * 14;
+    if (!collisions && (!best || score < best.score)) best = { pts, score };
+    if (!fallback || collisions < fallback.collisions || (collisions === fallback.collisions && score < fallback.score)) fallback = { pts, score, collisions };
+  };
+  const endpoints = [];
+  for (const sa of sidesA) for (const sb of sidesB) {
+    const p = port(a, sa), q = port(b, sb), start = { x: p.x + p.dx * 16, y: p.y + p.dy * 16 }, end = { x: q.x + q.dx * 16, y: q.y + q.dy * 16 };
+    const nearby = obstacles.slice().sort((u, v) => {
+      const dist = o => Math.max(0, o.l - Math.max(start.x, end.x), Math.min(start.x, end.x) - o.r) + Math.max(0, o.t - Math.max(start.y, end.y), Math.min(start.y, end.y) - o.b);
+      return dist(u) - dist(v);
+    }).slice(0, 12);
+    const xs = [...new Set([(start.x + end.x) / 2, ...nearby.flatMap(o => [o.l - 3, o.r + 3]), Math.min(start.x, end.x, ...obstacles.map(o => o.l)) - 20, Math.max(start.x, end.x, ...obstacles.map(o => o.r)) + 20])];
+    const ys = [...new Set([(start.y + end.y) / 2, ...nearby.flatMap(o => [o.t - 3, o.b + 3]), Math.min(start.y, end.y, ...obstacles.map(o => o.t)) - 20, Math.max(start.y, end.y, ...obstacles.map(o => o.b)) + 20])];
+    const head = { x: p.x, y: p.y }, tail = { x: q.x, y: q.y };
+    consider([head, start, { x: end.x, y: start.y }, end, tail]); if (nearOptimal()) return finish(best);
+    consider([head, start, { x: start.x, y: end.y }, end, tail]); if (nearOptimal()) return finish(best);
+    for (const x of xs) { consider([head, start, { x, y: start.y }, { x, y: end.y }, end, tail]); if (nearOptimal()) return finish(best); }
+    for (const y of ys) { consider([head, start, { x: start.x, y }, { x: end.x, y }, end, tail]); if (nearOptimal()) return finish(best); }
+    endpoints.push({ head, tail, start, end, xs, ys });
+  }
+  // More crowded layouts sometimes need two corridors, not one.
+  if (!best) for (const z of endpoints) for (const x of z.xs.slice(0, 12)) for (const y of z.ys.slice(0, 12)) {
+    consider([z.head, z.start, { x, y: z.start.y }, { x, y }, { x: z.end.x, y }, z.end, z.tail]);
+    consider([z.head, z.start, { x: z.start.x, y }, { x, y }, { x, y: z.end.y }, z.end, z.tail]);
+  }
+  return finish(best || fallback);
+}
+
+function edgePath(e, L, wireStyle = 'curved') {
   const a = L.pos[e.source], b = L.pos[e.target];
   if (!a || !b) return null;
+  if (wireStyle === 'orthogonal') return mapOrthogonal(e, L);
+  if (wireStyle === 'straight' && !(a.rack && b.rack) && !((e.source === 'inet' || (L.nodes[e.source] || {}).wan) && b.rack && !a.rack)) {
+    const acx = a.x + a.w / 2, acy = a.y + a.h / 2, bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+    const horizontal = a.rack || b.rack || Math.abs(bcx - acx) >= Math.abs(bcy - acy);
+    const sx = horizontal ? (bcx >= acx ? a.x + a.w : a.x) : acx;
+    const sy = horizontal ? acy : (bcy >= acy ? a.y + a.h : a.y);
+    const tx = horizontal ? (bcx >= acx ? b.x : b.x + b.w) : bcx;
+    const ty = horizontal ? bcy : (bcy >= acy ? b.y : b.y + b.h);
+    return { d: `M${sx},${sy} L${tx},${ty}`, lx: sx * .35 + tx * .65, ly: sy * .35 + ty * .65, mx: (sx + tx) / 2, my: (sy + ty) / 2 };
+  }
   if (L.style === 'tree') {                                           // from the bottom of the parent to the top of the child
     const ax = a.x + a.w / 2, ay = a.y + a.h, bx = b.x + b.w / 2, by = b.y, my = (ay + by) / 2;
     if (by > ay + 4) return { d: `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`, lx: bx, ly: by - 18, mx: bx, my };
@@ -255,9 +421,14 @@ function edgePath(e, L) {
     return { d: `M${a.x + a.w / 2},${a.y + a.h} C${a.x + a.w / 2},${ty} ${tx - 60},${ty} ${tx},${ty}`, lx: tx - 40, ly: ty - 8 };
   }
   const sx = a.x + a.w, sy = a.y + a.h / 2, tx = b.x, ty = b.y + b.h / 2;
-  if (tx < sx) {                     // target to the left (user moved it): connect centres
-    const ax = a.x + a.w / 2, bx = b.x + b.w / 2;
-    return { d: `M${ax},${a.y + a.h} C${ax},${ty} ${bx},${a.y + a.h} ${bx},${b.y}`, lx: (ax + bx) / 2, ly: (sy + ty) / 2 };
+  if (tx < sx) {                     // choose facing edges when the target is moved left
+    if (b.x + b.w <= a.x) {
+      const from = a.x, to = b.x + b.w, dx = Math.max(25, (from - to) * .45);
+      return { d: `M${from},${sy} C${from - dx},${sy} ${to + dx},${ty} ${to},${ty}`, lx: to + 22, ly: ty, mx: (from + to) / 2, my: (sy + ty) / 2 };
+    }
+    const ax = a.x + a.w / 2, bx = b.x + b.w / 2, down = b.y >= a.y;
+    const ay = down ? a.y + a.h : a.y, by = down ? b.y : b.y + b.h, mid = (ay + by) / 2;
+    return { d: `M${ax},${ay} C${ax},${mid} ${bx},${mid} ${bx},${by}`, lx: (ax + bx) / 2, ly: mid };
   }
   const dx = Math.max(50, (tx - sx) * .5);
   return { d: `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`, lx: tx - 22, ly: ty, mx: (sx + tx) / 2, my: (sy + ty) / 2 };
@@ -335,9 +506,40 @@ function scopeData(data, seed) {
   return { ...data, topology: { ...topo, nodes: topo.nodes.filter(n => keep.has(n.id)), edges }, racks };
 }
 
+/* Local view omits remote branches before layout, including their clients and rack slots. */
+function localMapData(data) {
+  const topo = data.topology || { nodes: [], edges: [] };
+  const hidden = new Set(topo.nodes.filter(n => n.remote).map(n => n.id));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    topo.edges.forEach(e => { if (!e.extra && !e.manual && hidden.has(e.source) && e.target !== 'inet' && !hidden.has(e.target)) { hidden.add(e.target); changed = true; } });
+  }
+  const racks = (data.racks || []).map(r => ({ ...r, units: r.units.filter(u => { const ids = unitDevIds(u); return !ids.length || ids.some(id => !hidden.has('d:' + id)); }).map(u => ({ ...u,
+    deviceIds: u.deviceIds?.filter(id => !hidden.has('d:' + id)), deviceId: hidden.has('d:' + u.deviceId) ? null : u.deviceId })) }));
+  return { ...data, racks: racks.filter((r, i) => r.units.length || !data.racks[i].units.length), topology: { ...topo,
+    nodes: topo.nodes.filter(n => !hidden.has(n.id)), edges: topo.edges.filter(e => !hidden.has(e.source) && !hidden.has(e.target)) } };
+}
+
 function MapView({ scope }) {
   const { data: dataAll, edit, openDevice, saveMap } = useApp();
-  const data = useMemo(() => scope ? scopeData(dataAll, scope.seed) : dataAll, [dataAll, scope && scope.key]);
+  const [showRemote, setShowRemote] = useState(false);
+  const [allWifi, setAllWifi] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
+  const [testParent, setTestParent] = useState('');
+  const [testPick, setTestPick] = useState('all');
+  const [testClients, setTestClients] = useState([]);
+  const testSeq = useRef(0);
+  const testFocus = useRef(null);
+  useEffect(() => { if (!edit) { setTestClients([]); setTestPick('all'); setTestOpen(false); testFocus.current = null; } }, [edit]);
+  const data = useMemo(() => {
+    const base = scope ? scopeData(dataAll, scope.seed) : showRemote ? dataAll : localMapData(dataAll);
+    if (!testClients.length) return base;
+    const t = base.topology || { nodes: [], edges: [] }, valid = new Set(t.nodes.map(n => n.id));
+    const fakes = testClients.filter(c => valid.has(c.parent));
+    return { ...base, topology: { ...t, nodes: [...t.nodes, ...fakes.map(c => ({ id: c.id, label: c.label, sub: 'тестовый клиент', kind: 'other', status: 'online', client: true, phantom: true }))],
+      edges: [...t.edges, ...fakes.map(c => ({ id: 'test-edge:' + c.id, source: c.parent, target: c.id, kind: 'wifi', phantom: true }))] } };
+  }, [dataAll, scope && scope.key, showRemote, testClients]);
   const toast = useToast(); const confirm = useConfirm();
   const [collapsed, setCollapsed] = useState(data.map.collapsed || {});
   const [remoteOpenIds, setRemoteOpenIds] = useState({});  // the remote devices showing who is connected to them; closed again after a reload
@@ -361,14 +563,41 @@ function MapView({ scope }) {
   const spofSet = healthOpen && data.health ? new Set(data.health.spof.filter(s => s.affected >= 3).map(s => s.id)) : null;
   const openCheck = useCheckOpener();
   const wrap = useRef(null); useFillScreen(wrap);
+  const [wireStyle, setWireStyle] = useState(() => { const v = lsGet('rl_map_wire_style', 'curved'); return ['curved', 'straight', 'orthogonal'].includes(v) ? v : 'curved'; });
   const [style, setStyle] = useState(() => { const v = new URLSearchParams(location.search).get('mapstyle') || lsGet('rl_map_style', 'columns'); return MAP_STYLES.some(x => x[0] === v) ? v : 'columns'; });
-  const L0 = useMemo(() => style !== 'columns' ? layoutAlt(data, style, collapsed, remoteOpen) : layoutMap(data, collapsed, remoteOpen), [data, collapsed, style, remoteOpen]);       // раскладка считается один раз, а не на каждое движение карточки
-  const L = useMemo(() => {
-    if (style !== 'columns' || !Object.keys(dragPos).length) return L0;
-    const pos = { ...L0.pos };
-    Object.entries(dragPos).forEach(([id, [x, y]]) => { if (pos[id]) pos[id] = { ...pos[id], x, y }; });
-    return { ...L0, pos };
-  }, [L0, dragPos, style]);
+  const stableRef = useRef(null);
+  if (!stableRef.current) {
+    let saved = {}; try { saved = JSON.parse(lsGet('rl_map_wifi_roaming_v1', '{}')); } catch (_) { /* first visit */ }
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved = {};
+    stableRef.current = { pos: {}, parents: {}, wifiSeen: saved.seen && typeof saved.seen === 'object' ? saved.seen : {},
+      autoWifi: saved.auto && typeof saved.auto === 'object' ? saved.auto : {}, autoGroups: saved.groups && typeof saved.groups === 'object' ? saved.groups : {},
+      groupOptOut: saved.optOut && typeof saved.optOut === 'object' ? saved.optOut : {}, autoOpen: {}, autoSuppress: false };
+  }
+  const groupOrderRef = useRef({});
+  const wifiCollapsed = useMemo(() => {
+    const out = allWifi ? Object.fromEntries((data.topology?.edges || []).filter(e => e.kind === 'wifi').map(e => [e.source, false])) : { ...collapsed };
+    const associations = mapWifiParents(data), memory = stableRef.current;
+    Object.entries(associations).forEach(([id, pid]) => {
+      if (memory.wifiSeen[id] && memory.wifiSeen[id] !== pid) { memory.autoOpen[pid] = true; memory.autoOpen[memory.wifiSeen[id]] = true; memory.autoSuppress = false; }
+      if (memory.autoWifi[id]) memory.autoOpen[pid] = true;
+    });
+    if (!memory.autoSuppress) {
+      Object.keys(memory.autoOpen).forEach(id => { out[id] = false; });
+      Object.keys({ ...memory.autoGroups, ...(data.map.wifiGroups || {}) }).forEach(id => { out[id] = false; });
+    }
+    testClients.forEach(c => { out[c.parent] = false; });
+    return out;
+  }, [data, collapsed, allWifi, testClients]);
+  const L0 = useMemo(() => style !== 'columns' ? layoutAlt(data, style, wifiCollapsed, remoteOpen) : layoutMap(data, wifiCollapsed, remoteOpen), [data, wifiCollapsed, style, remoteOpen]);       // раскладка считается один раз, а не на каждое движение карточки
+  const L = useMemo(() => placeStableMap(L0, data, dragPos, style, stableRef.current, groupOrderRef.current), [L0, dragPos, style, data.map]);
+
+  const lastWifiSaved = useRef('');
+  useEffect(() => {
+    const memory = stableRef.current, raw = JSON.stringify({ seen: memory.wifiSeen || {}, auto: memory.autoWifi || {}, groups: memory.autoGroups || {}, optOut: memory.groupOptOut || {} });
+    if (raw !== lastWifiSaved.current) { lsSet('rl_map_wifi_roaming_v1', raw); lastWifiSaved.current = raw; }
+  }, [L]);
+
+  const edgeGeometry = useMemo(() => new Map(L.edges.map(e => [e.id, edgePath(e, L, wireStyle)])), [L, wireStyle]);
 
   const bbox = () => {
     const ps = Object.values(L.pos); if (!ps.length) return { x: 0, y: 0, w: 100, h: 100 };
@@ -456,6 +685,17 @@ function MapView({ scope }) {
     }
     if (Math.abs(x - v.x) > 1 || Math.abs(y - v.y) > 1 || Math.abs(k - v.k) > .001) glideTo({ k, x, y });
   }, [L]);
+  useEffect(() => {
+    const pid = testFocus.current, el = wrap.current, v = viewRef.current;
+    if (!pid || !el || !v) return;
+    const clients = testClients.filter(c => c.parent === pid).map(c => L.pos[c.id]).filter(Boolean);
+    const parent = L.pos[pid]; if (!clients.length || !parent) return;
+    testFocus.current = null;
+    const points = [parent, ...clients], x1 = Math.min(...points.map(p => p.x)), x2 = Math.max(...points.map(p => p.x + p.w));
+    const y1 = Math.min(...points.map(p => p.y)), y2 = Math.max(...points.map(p => p.y + p.h));
+    const W = el.clientWidth, H = el.clientHeight, k = Math.min(v.k, Math.max(.2, Math.min((W - 50) / (x2 - x1 + 1), (H - 70) / (y2 - y1 + 1))));
+    glideTo({ k, x: W / 2 - (x1 + x2) / 2 * k, y: H / 2 - (y1 + y2) / 2 * k });
+  }, [L, testClients]);
   // viewRef is set at once: the next wheel / finger event may come before React re-renders, and then it must not start from the old view (that was the jump back)
   const commitView = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } if (liveV.current) { viewRef.current = liveV.current; setView(liveV.current); liveV.current = null; } if (wrap.current) wrap.current.classList.remove('moving'); };
   const baseline = () => {
@@ -575,7 +815,8 @@ function MapView({ scope }) {
   const dragEnd = useRef(0), ptr = useRef('');            // when the last drag ended / which pointer was used (mouse | touch | pen)
   const nodeDown = (id, e) => {
     ptr.current = e.pointerType || '';
-    if (!edit || L.pos[id].rack || linking || L.style) return;            // cards are dragged in the default scheme only
+    if (!edit || L.nodes[id]?.phantom || L.pos[id].rack || linking || L.style) return;
+    if (L.edges.some(e => e.target === id && e.kind === 'wifi' && (data.map.wifiGroups?.[e.source] || stableRef.current.autoGroups?.[e.source]))) { toast('Чтобы переместить клиента, сначала отключи группировку этой точки'); return; }            // cards are dragged in the default scheme only
     e.stopPropagation(); const p0 = { ...L.pos[id] }; const sx = e.clientX, sy = e.clientY; let moved = false;
     // magnet: a card sticks to the grid and to the edges / centres of its neighbours (same idea as the tiles in «Размещение»)
     const others = Object.entries(L.pos).filter(([oid, o]) => oid !== id && !o.rack && L.nodes[oid]).map(([, o]) => o);
@@ -583,13 +824,18 @@ function MapView({ scope }) {
       const x = p0.x + (ev.clientX - sx) / view.k, y = p0.y + (ev.clientY - sy) / view.k, T = 9 / view.k;
       let nx = Math.round(x / MAP_GRID) * MAP_GRID, ny = Math.round(y / MAP_GRID) * MAP_GRID, gx = null, gy = null, bx = T, by = T;
       others.forEach(o => {
-        [o.x, o.x + o.w - p0.w, o.x + (o.w - p0.w) / 2].forEach(c => { if (Math.abs(x - c) < bx) { bx = Math.abs(x - c); nx = Math.round(c); gx = c === o.x ? o.x : c === o.x + o.w - p0.w ? o.x + o.w : o.x + o.w / 2; } });
-        [o.y, o.y + o.h - p0.h, o.y + (o.h - p0.h) / 2].forEach(c => { if (Math.abs(y - c) < by) { by = Math.abs(y - c); ny = Math.round(c); gy = c === o.y ? o.y : c === o.y + o.h - p0.h ? o.y + o.h : o.y + o.h / 2; } });
+        [o.x, o.x + o.w - p0.w, o.x + (o.w - p0.w) / 2, o.x + o.w + MAP_GRID, o.x - p0.w - MAP_GRID].forEach(c => { if (Math.abs(x - c) < bx) { bx = Math.abs(x - c); nx = Math.round(c); gx = c === o.x ? o.x : c === o.x + o.w - p0.w ? o.x + o.w : c === o.x + (o.w - p0.w) / 2 ? o.x + o.w / 2 : null; } });
+        [o.y, o.y + o.h - p0.h, o.y + (o.h - p0.h) / 2, o.y + o.h + MAP_GRID, o.y - p0.h - MAP_GRID].forEach(c => { if (Math.abs(y - c) < by) { by = Math.abs(y - c); ny = Math.round(c); gy = c === o.y ? o.y : c === o.y + o.h - p0.h ? o.y + o.h : c === o.y + (o.h - p0.h) / 2 ? o.y + o.h / 2 : null; } });
       });
       return { np: [nx, ny], gx, gy };
     };
     let raf = 0, lastEv = null;
-    const move = ev => { moved = true; lastEv = ev; if (raf) return;
+    const move = ev => {
+      if (!moved) { // A deliberate drag establishes a new position for the present AP.
+        if (stableRef.current.autoWifi?.[id]) delete stableRef.current.autoWifi[id];
+        const currentAP = mapWifiParents(data)[id]; if (currentAP) stableRef.current.wifiSeen[id] = currentAP;
+      }
+      moved = true; lastEv = ev; if (raf) return;
       raf = requestAnimationFrame(() => { raf = 0; const r = at(lastEv); setDragPos(d => ({ ...d, [id]: r.np })); setGuides({ x: r.gx, y: r.gy }); }); };
     const up = ev => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); cancelAnimationFrame(raf); setGuides(null);
@@ -602,6 +848,7 @@ function MapView({ scope }) {
   const popOf = id => { const n = L.nodes[id]; const r = n && n.remoteOf; return r ? (closingIds[r] && !remoteOpenIds[r] ? 'out' : 'in') : ''; };   // a client of a remote device: flying out of it or back in
   const nodeClick = async (id) => {
     const n = L.nodes[id];
+    if (n?.phantom) { setTestPick(id); setTestOpen(true); return; }
     if (linking) {
       if (linking === 'pick') { setLinking(id); toast('Теперь выберите второе устройство'); return; }
       if (linking !== id) {
@@ -657,15 +904,9 @@ function MapView({ scope }) {
   const selNode = info && info === sel && L.nodes[info];
   const [findOpen, setFindOpen] = useState(false);
   const [racksOpen, setRacksOpen] = useState(false);
-  const anyCollapsedOpen = Object.values(collapsed).some(v => v === false);
-  /* «Показать все устройства»: раскрыть всех клиентов у удалённых устройств и все свёрнутые группы Wi-Fi-клиентов, потом уместить карту на экран */
-  const remoteIds = Object.values(L.nodes).filter(n => n.remoteClients).map(n => n.id).concat(Object.values(L.hiddenClients || {}).map(h => h.parent));
-  const allShown = remoteIds.every(id => remoteOpenIds[id]) && !Object.keys(L.groups || {}).length;
-  const showAll = () => {
-    if (allShown) { setRemoteOpenIds({}); setCollapsed(data.map.collapsed || {}); setView(null); return; }
-    const nc = { ...collapsed }; Object.keys(L.groups || {}).forEach(g => { nc[g.slice(2)] = false; });
-    setCollapsed(nc); setRemoteOpenIds(Object.fromEntries(remoteIds.map(id => [id, true]))); setSel(null); setView(null);
-  };
+  const anyCollapsedOpen = allWifi || Object.values(collapsed).some(v => v === false) || (!stableRef.current.autoSuppress && (Object.keys(stableRef.current.autoOpen).length > 0 || Object.keys(stableRef.current.autoGroups).length > 0 || Object.keys(data.map.wifiGroups || {}).length > 0));
+  const toggleWifi = () => { stableRef.current.autoSuppress = anyCollapsedOpen; if (anyCollapsedOpen) stableRef.current.autoOpen = {}; setAllWifi(!anyCollapsedOpen); setCollapsed({}); setView(null); };
+  const toggleDevices = () => { setShowRemote(v => !v); setRemoteOpenIds({}); setClosingIds({}); setSel(null); setInfo(null); setView(null); };
   /* «Сделать снимок»: вся карта (не только видимая часть) картинкой PNG — как скриншот на iPhone: вспышка, миниатюра в углу, по нажатию сохранить */
   const [shot, setShot] = useState(null);                  // {url, blob, name}
   const snap = async () => {
@@ -711,6 +952,28 @@ function MapView({ scope }) {
     URL.revokeObjectURL(shot.url); setShot(null);                       // после скачивания миниатюру убираем
   };
   useEffect(() => { if (!shot) return; const t = setTimeout(() => setShot(s => s && s.t === shot.t ? { ...s, idle: true } : s), 6000); return () => clearTimeout(t); }, [shot && shot.t]);
+  const wifiParents = Object.values(L.nodes).filter(n => !n.phantom && n.kind !== 'group' && (n.kind === 'ap' || n.kind === 'router' || L.edges.some(e => e.kind === 'wifi' && e.source === n.id)))
+    .sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru'));
+  const selectedParent = wifiParents.some(n => n.id === testParent) ? testParent : (wifiParents[0]?.id || '');
+  const toggleWifiGroup = () => {
+    const p = L.pos[selectedParent]; if (!p) return;
+    const groups = { ...(data.map.wifiGroups || {}) };
+    if (groups[selectedParent] || stableRef.current.autoGroups[selectedParent]) {
+      delete groups[selectedParent]; delete stableRef.current.autoGroups[selectedParent]; stableRef.current.groupOptOut[selectedParent] = true;
+    } else {
+      delete stableRef.current.groupOptOut[selectedParent];
+      const children = L.edges.filter(e => e.kind === 'wifi' && e.source === selectedParent && !L.nodes[e.target]?.phantom && L.nodes[e.target]?.client && L.pos[e.target]).map(e => L.pos[e.target]).sort((a, b) => a.y - b.y || a.x - b.x);
+      const first = children[0]; groups[selectedParent] = { dx: first ? first.x - p.x : p.w + 80, dy: first ? first.y - p.y : p.h + 20 };
+    }
+    saveMap({ wifiGroups: groups });
+  };
+  const addTestClients = count => {
+    if (!selectedParent) return;
+    testFocus.current = selectedParent;
+    setTestClients(cs => [...cs, ...Array.from({ length: Math.min(count, Math.max(0, 50 - cs.length)) }, () => {
+      const n = ++testSeq.current; return { id: 'test:phantom:' + n, label: 'Тестовый клиент ' + n, parent: selectedParent };
+    })]);
+  };
   if (!view) return <div className="map-wrap" ref={wrap} />;
   const tv = liveV.current || (animRef.current && animV.current) || view;      // the view the layer is really at (a gesture or a glide may be running)
   return <div className={'map-wrap' + (scope ? ' scoped' : '')} ref={wrap}>
@@ -719,21 +982,33 @@ function MapView({ scope }) {
         <WorkItem icon="search" label="Найти устройство" onClick={() => { setFindOpen(true); setRacksOpen(false); }} />
         {((L.racks || []).length + (L.rooms || []).length) > 1 ? <WorkItem icon="rack" label="Шкафы и места" on={racksOpen} onClick={() => setRacksOpen(!racksOpen)} /> : null}
         <WorkItem icon="fit" label="Показать всё" onClick={fit} />
-        {remoteIds.length || Object.keys(L.groups || {}).length || allShown && anyCollapsedOpen ? <WorkItem icon="list" label={allShown ? 'Свернуть все устройства' : 'Показать все устройства'}
-          sub={allShown ? null : 'раскрыть всех клиентов'} on={allShown} onClick={showAll} /> : null}
         <WorkItem icon="camera" label="Сделать снимок" sub="вся карта картинкой" onClick={snap} />
       </WorkSec>
       <WorkSec title="Вид">
         <WorkChoice value={style} keep options={MAP_STYLES.map(([value, label]) => ({ value, label }))} onChange={v => { setStyle(v); lsSet('rl_map_style', v); setView(null); setSel(null); }} />
+        <WorkChoice value={wireStyle} keep options={[{ value: 'curved', label: 'Плавные линии' }, { value: 'straight', label: 'Прямые линии' }, { value: 'orthogonal', label: 'Прямые углы' }]} onChange={v => { setWireStyle(v); lsSet('rl_map_wire_style', v); }} />
         {data.health ? <WorkItem icon="pulse" label="Анализ сети" sub="узкие места и советы" on={healthOpen} onClick={() => setHealthOpen(!healthOpen)} /> : null}
-        <WorkItem icon="wifi" label={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'}
-          onClick={() => { const nc = {}; if (!anyCollapsedOpen) Object.keys(L.groups).forEach(g => nc[g.slice(2)] = false); setCollapsed(nc); setView(null); }} />
       </WorkSec>
       {edit ? <WorkSec title="Правка">
+        <WorkItem icon="plus" label="Группы и тест клиентов" on={testOpen} onClick={() => setTestOpen(!testOpen)} />
         <WorkItem icon="link" label={linking ? 'Отменить связь' : 'Провести связь'} on={!!linking} onClick={() => setLinking(linking ? null : 'pick')} />
         <WorkItem icon="refresh" label="Сбросить расположение узлов" onClick={async () => { if (await confirm('Сбросить ручное расположение узлов?')) { setDragPos({}); saveMap({ positions: {} }); } }} />
       </WorkSec> : null}
     </WorkMenu>
+    {edit && testOpen ? <div className="map-panel" style={{ position: 'absolute', zIndex: 5, top: 110, right: 16, width: 'min(330px, calc(100% - 32px))', padding: 14, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100% - 125px)', overflow: 'auto' }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}><b>Группы и тест клиентов</b><Btn size="sm" title="Закрыть панель" onClick={() => setTestOpen(false)}>Закрыть</Btn></div>
+      <div className="dim" style={{ fontSize: 12, marginBottom: 5 }}>Точка доступа или роутер</div>
+      <select className="input" value={selectedParent} onChange={e => setTestParent(e.target.value)} style={{ width: '100%' }}>
+        {!wifiParents.length ? <option value="">Нет доступных точек</option> : null}
+        {wifiParents.map(n => <option key={n.id} value={n.id}>{nameNoTag(n.label)}</option>)}
+      </select>
+      <Btn size="sm" style={{ width: '100%', marginTop: 8 }} disabled={!selectedParent || style !== 'columns'} onClick={toggleWifiGroup}>{(data.map.wifiGroups?.[selectedParent] || stableRef.current.autoGroups?.[selectedParent]) ? 'Отключить группировку' : 'Собрать клиентов у точки'}</Btn>
+      {style !== 'columns' ? <div className="dim" style={{ fontSize: 12 }}>Группировка доступна в виде «Схема со шкафом».</div> : null}
+      <div className="dim" style={{ fontSize: 12, margin: '12px 0 6px' }}>Тестовые клиенты существуют только в этой вкладке.</div>
+      <div className="row" style={{ gap: 6 }}><Btn size="sm" disabled={!selectedParent} onClick={() => addTestClients(1)}>+ 1</Btn><Btn size="sm" disabled={!selectedParent} onClick={() => addTestClients(5)}>+ 5</Btn><Btn size="sm" disabled={!testClients.length} onClick={() => { setTestClients([]); setTestPick('all'); }}>Очистить</Btn></div>
+      {testClients.length ? <><select className="input" value={testPick} onChange={e => setTestPick(e.target.value)} style={{ width: '100%', marginTop: 8 }}><option value="all">Все тестовые клиенты</option>{testClients.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+        <Btn size="sm" style={{ width: '100%', marginTop: 6 }} disabled={!selectedParent} onClick={() => { testFocus.current = selectedParent; setTestClients(cs => cs.map(c => testPick === 'all' || c.id === testPick ? { ...c, parent: selectedParent } : c)); }}>Переключить на выбранную точку</Btn></> : null}
+    </div> : null}
     {findOpen || q ? <div className="map-tools"><div className="map-panel map-find">
       <div className="map-search"><SearchBox value={q} onChange={setQ} placeholder="Найти устройство" autoFocus /></div>
       <Btn size="sm" icon="x" title="Закрыть поиск" onClick={() => { setQ(''); setFindOpen(false); }} /></div></div> : null}
@@ -758,7 +1033,7 @@ function MapView({ scope }) {
         {L.hasRack ? <RackBox L={L} data={data} devById={devById} dimSet={pathSet} markSet={spofSet} onOpen={d => openDevice(d)} onSel={openInfo} /> : null}
         {(L.headers || []).map(h => <g key={h.label} pointerEvents="none"><text x={h.x + 4} y={h.y + 16} fontSize="15" fontWeight="700" fill="var(--text)">{trunc(h.label, 28)}</text>
           <text x={h.x + 4} y={h.y + 34} fontSize="11.5" fill="var(--text3)">{h.count} {ruPlural(h.count, 'устройство', 'устройства', 'устройств')}</text><rect x={h.x} y={h.y + 40} width={h.w} height={2} rx={1} fill="var(--accent)" opacity=".5" /></g>)}
-        {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null; const col = speedColor(e.speed, e.kind);
+        {L.edges.map(e => { const g = edgeGeometry.get(e.id); if (!g) return null; const col = speedColor(e.speed, e.kind);
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : ''; const pop = popOf(e.target);
           return <g key={e.id} className={dim + (pop ? ' edge-' + pop : '')}>
             <path className={'edge' + (e.speed >= 1000 && e.kind !== 'wifi' && e.kind !== 'mesh' ? ' fast' : e.speed > 0 && e.speed < 1000 ? ' slow' : '') + (e.kind === 'wifi' || e.kind === 'mesh' ? ' wifi' : '') + (e.kind === 'remote' || e.extra || e.kind === 'lan' ? ' dashed' : '') + (e.kind === 'isp' ? ' isp' : '')} d={g.d} stroke={col} opacity={e.extra ? .55 : 1} />
@@ -766,7 +1041,7 @@ function MapView({ scope }) {
             {e.manual ? <path className="edge-hit" d={g.d} onClick={() => edgeClick(e)} /> : null}
           </g>; })}
         {/* labels in their own layer: above every wire, with the watts lifted over the line so it stays readable */}
-        {L.edges.map(e => { const g = edgePath(e, L); if (!g) return null;
+        {L.edges.map(e => { const g = edgeGeometry.get(e.id); if (!g) return null;
           const dim = pathSet && !pathSet.has(e.id) ? ' dim-out' : ''; const pop = popOf(e.target);
           return <g key={'l' + e.id} className={dim + (pop ? ' edge-' + pop : '')} pointerEvents="none">
             {e.sourcePort && !g.inside ? <g className="port-pill" transform={`translate(${g.lx - 14},${g.ly - 9})`}><rect width="28" height="18" rx="9" /><text x="14" y="12.5" textAnchor="middle">{e.sourcePort}</text></g> : null}
@@ -787,7 +1062,10 @@ function MapView({ scope }) {
       <span><i style={{ background: 'var(--green)' }} />1 Гбит</span><span><i style={{ background: 'var(--yellow)' }} />100 Мбит</span>
       <span><i style={{ background: 'var(--accent)' }} />Wi-Fi</span><span><i style={{ background: 'var(--teal)' }} />Mesh</span><span><i style={{ background: 'var(--purple)' }} />Интернет</span>
       <span><b style={{ color: '#ffd60a' }}>⚡</b>PoE</span></div>
-    <div className="zoom-btns"><WorkEditBtn /><button className="btn" onClick={() => zoomAt(1.35)}>+</button><button className="btn" onClick={() => zoomAt(1 / 1.35)}>−</button></div>
+    <div className="zoom-btns">
+      <button type="button" className={'btn' + (anyCollapsedOpen ? ' primary' : '')} aria-pressed={anyCollapsedOpen} title={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'} aria-label={anyCollapsedOpen ? 'Свернуть Wi-Fi-клиентов' : 'Показать всех Wi-Fi-клиентов'} onClick={toggleWifi}><Icon name="wifi" size={19} /></button>
+      {!scope ? <button type="button" className={'btn' + (showRemote ? ' primary' : '')} aria-pressed={showRemote} title={showRemote ? 'Показать только локальные устройства' : 'Показать все устройства, включая удалённые'} aria-label={showRemote ? 'Показать только локальные устройства' : 'Показать все устройства, включая удалённые'} onClick={toggleDevices}><Icon name="list" size={19} /></button> : null}
+      <WorkEditBtn /><button className="btn" aria-label="Увеличить" onClick={() => zoomAt(1.35)}>+</button><button className="btn" aria-label="Уменьшить" onClick={() => zoomAt(1 / 1.35)}>−</button></div>
     {healthOpen && data.health ? <div className="card pad fade-in health-panel">
       <div className="row" style={{ marginBottom: 4 }}><b className="grow" style={{ fontSize: 16 }}>Анализ сети</b><Btn size="sm" icon="x" onClick={() => setHealthOpen(false)} /></div>
       <HealthBody h={data.health} onCheck={c => { if (c.nodeId && L.nodes[c.nodeId] && !c.port) { openInfo(c.nodeId); if (innerWidth < 760) setHealthOpen(false); } else openCheck(c); }}

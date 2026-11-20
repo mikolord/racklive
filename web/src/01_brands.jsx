@@ -2,6 +2,7 @@
    The pictures are from simple-icons (CC0, 24×24, one path each); the tile colour is the brand's. What gets a logo is decided by the name
    (and the kind: an Android logo only on a phone / tablet, a TV maker's logo only on a TV). A hand-chosen icon always wins over this. */
 const BRANDS = {
+  reckcontroller: { n: 'ReckController', c: '#1477ec', i: '#fff', d: 'M2 7h5l2-3 3 6 2-4 1.5 1H22v1.2h-7l-.7-.5-2.4 4.4-3-6-1.2 2H2zM4 14h7v4H4zM13 14h7v4h-7zM11 20h2v2h-2z' },
   apple: { n: "Apple", c: '#1d1d1f', i: '#fff', d: 'M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701' },
   android: { n: "Android", c: '#3ddc84', i: '#fff', d: 'M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z' },
   samsung: { n: "Samsung", c: '#1428a0', i: '#fff', d: 'M19.8166 10.2808l.0459 2.6934h-.023l-.7793-2.6934h-1.2837v3.3925h.8481l-.0458-2.785h.023l.8366 2.785h1.2264v-3.3925zm-16.149 0l-.6418 3.427h.9284l.4699-3.1175h.0229l.4585 3.1174h.9169l-.6304-3.4269zm5.1805 0l-.424 2.6132h-.023l-.424-2.6132H6.5788l-.0688 3.427h.8596l.023-3.0832h.0114l.573 3.0831h.8711l.5731-3.083h.023l.0228 3.083h.8596l-.0802-3.4269zm-7.2664 2.4527c.0343.0802.0229.1949.0114.2522-.0229.1146-.1031.2292-.3324.2292-.2177 0-.3438-.126-.3438-.3095v-.3323H0v.2636c0 .7679.6074.9971 1.2493.9971.6189 0 1.1346-.2178 1.2149-.7794.0458-.298.0114-.4928 0-.5616-.1605-.722-1.467-.9283-1.5588-1.3295-.0114-.0688-.0114-.1375 0-.1834.023-.1146.1032-.2292.3095-.2292.2063 0 .321.126.321.3095v.2063h.8595v-.2407c0-.745-.6762-.8596-1.1576-.8596-.6074 0-1.1117.2063-1.2034.7564-.023.149-.0344.2866.0114.4585.1376.7106 1.364.9169 1.5358 1.3524m11.152 0c.0343.0803.0228.1834.0114.2522-.023.1146-.1032.2292-.3324.2292-.2178 0-.3438-.126-.3438-.3095v-.3323h-.917v.2636c0 .7564.596.9857 1.2379.9857.6189 0 1.1232-.2063 1.2034-.7794.0459-.298.0115-.4814 0-.5616-.1375-.7106-1.4327-.9284-1.5243-1.318-.0115-.0688-.0115-.1376 0-.1835.0229-.1146.1031-.2292.3094-.2292.1948 0 .321.126.321.3095v.2063h.848v-.2407c0-.745-.6647-.8596-1.146-.8596-.6075 0-1.1004.1948-1.192.7564-.023.149-.023.2866.0114.4585.1376.7106 1.341.9054 1.513 1.3524m2.8882.4585c.2407 0 .3094-.1605.3323-.2522.0115-.0343.0115-.0917.0115-.126v-2.533h.871v2.4642c0 .0688 0 .1948-.0114.2292-.0573.6419-.5616.8482-1.192.8482-.6303 0-1.1346-.2063-1.192-.8482 0-.0344-.0114-.1604-.0114-.2292v-2.4642h.871v2.533c0 .0458 0 .0916.0115.126 0 .0917.0688.2522.3095.2522m7.1518-.0344c.2522 0 .3324-.1605.3553-.2522.0115-.0343.0115-.0917.0115-.126v-.4929h-.3553v-.5043H24v.917c0 .0687 0 .1145-.0115.2292-.0573.6303-.596.8481-1.2034.8481-.6075 0-1.1461-.2178-1.2034-.8481-.0115-.1147-.0115-.1605-.0115-.2293v-1.444c0-.0574.0115-.172.0115-.2293.0802-.6419.596-.8482 1.2034-.8482s1.1347.2063 1.2034.8482c.0115.1031.0115.2292.0115.2292v.1146h-.8596v-.1948s0-.0803-.0115-.1261c-.0114-.0802-.0802-.2521-.3438-.2521-.2521 0-.321.1604-.3438.2521-.0115.0458-.0115.1032-.0115.1605v1.5702c0 .0458 0 .0916.0115.126 0 .0917.0917.2522.3323.2522' },
@@ -95,6 +96,41 @@ const BRANDS = {
   aqara: { n: "Aqara", c: '#1d1d1f', i: '#fff', t: "aqara" },
   tuya: { n: "Tuya", c: '#ff4800', i: '#fff', t: "tuya" },
   sonoff: { n: "Sonoff", c: '#1e9be8', i: '#fff', t: "SONOFF" },
+  tapo: { n: 'Tapo', c: '#16a9a2', i: '#fff', t: 'tapo' },
+  kasa: { n: 'Kasa', c: '#1ba9a0', i: '#fff', t: 'kasa' },
+  meross: { n: 'Meross', c: '#19a7d8', i: '#fff', t: 'meross' },
+  switchbot: { n: 'SwitchBot', c: '#e93b40', i: '#fff', t: 'SwitchBot' },
+  broadlink: { n: 'BroadLink', c: '#167ac6', i: '#fff', t: 'BroadLink' },
+  govee: { n: 'Govee', c: '#00a8c6', i: '#fff', t: 'Govee' },
+  yeelight: { n: 'Yeelight', c: '#e62e38', i: '#fff', t: 'Yeelight' },
+  nanoleaf: { n: 'Nanoleaf', c: '#45a75a', i: '#fff', t: 'nanoleaf' },
+  roborock: { n: 'Roborock', c: '#e22c35', i: '#fff', t: 'roborock' },
+  dreame: { n: 'Dreame', c: '#252525', i: '#fff', t: 'dreame' },
+  eufy: { n: 'Eufy', c: '#009bd9', i: '#fff', t: 'eufy' },
+  smartlife: { n: 'Smart Life', c: '#2588ed', i: '#fff', t: 'Smart Life' },
+  haier: { n: 'Haier', c: '#005aaa', i: '#fff', t: 'Haier' },
+  tcl: { n: 'TCL', c: '#e21b23', i: '#fff', t: 'TCL' },
+  hisense: { n: 'Hisense', c: '#008e91', i: '#fff', t: 'Hisense' },
+  midea: { n: 'Midea', c: '#0094d4', i: '#fff', t: 'Midea' },
+  gree: { n: 'Gree', c: '#0067b1', i: '#fff', t: 'GREE' },
+  daikin: { n: 'Daikin', c: '#0088ce', i: '#fff', t: 'DAIKIN' },
+  electrolux: { n: 'Electrolux', c: '#062b58', i: '#fff', t: 'Electrolux' },
+  bosch: { n: 'Bosch', c: '#e21a2c', i: '#fff', t: 'BOSCH' },
+  siemens: { n: 'Siemens', c: '#009999', i: '#fff', t: 'SIEMENS' },
+  miele: { n: 'Miele', c: '#8d0710', i: '#fff', t: 'Miele' },
+  whirlpool: { n: 'Whirlpool', c: '#e6a000', i: '#fff', t: 'Whirlpool' },
+  beko: { n: 'Beko', c: '#0089d0', i: '#fff', t: 'beko' },
+  candy: { n: 'Candy', c: '#0068b5', i: '#fff', t: 'Candy' },
+  hotpoint: { n: 'Hotpoint', c: '#242424', i: '#fff', t: 'Hotpoint' },
+  indesit: { n: 'Indesit', c: '#0074b9', i: '#fff', t: 'Indesit' },
+  ariston: { n: 'Ariston', c: '#d4242e', i: '#fff', t: 'ARISTON' },
+  polaris: { n: 'Polaris', c: '#22376e', i: '#fff', t: 'POLARIS' },
+  redmond: { n: 'Redmond', c: '#b9272d', i: '#fff', t: 'REDMOND' },
+  dyson: { n: 'Dyson', c: '#262626', i: '#fff', t: 'dyson' },
+  philips: { n: 'Philips', c: '#0b5ed7', i: '#fff', t: 'PHILIPS' },
+  ballu: { n: 'Ballu', c: '#087cb8', i: '#fff', t: 'Ballu' },
+  casarte: { n: 'Casarte', c: '#2a2a2a', i: '#fff', t: 'Casarte' },
+  iot: { n: 'Умное устройство', c: '#168fba', i: '#fff', d: 'M7 7h10v10H7zM3 3h4v4H3zm14 0h4v4h-4zM3 17h4v4H3zm14 0h4v4h-4zM4 7h2v4h1v2H4zm14 0h2v6h-3v-2h1zM4 13h2v4H4zm14 0h2v4h-2zM7 4h10v2H7zm0 14h10v2H7z' },
   xbox: { n: "Xbox", c: '#107c10', i: '#fff', t: "XBOX" },
   canon: { n: "Canon", c: '#cc0000', i: '#fff', t: "Canon" },
   brother: { n: "Brother", c: '#0d2ea0', i: '#fff', t: "brother" },
@@ -108,13 +144,18 @@ const BRANDS = {
    (also a hand-chosen icon) and is not shown in the name. A tag is a brand key of BRANDS or one of these short names. */
 /* «/ap/keenetic Кухня»: перед брендом можно поставить короткую роль (до 4 латинских букв) — на логотипе появится значок AP, SW… */
 const TAG_RE = /^\s*\/(?:([a-z]{1,4})\/)?([a-z0-9а-яё-]+)(?:\s+|$)/i;
-const TAG_ALIAS = { win: 'windows', win10: 'windows', win11: 'windows', mac: 'apple', macos: 'apple', macbook: 'apple', ios: 'apple', iphone: 'apple', ipad: 'apple', imac: 'apple',
+const TAG_ALIAS = { rcos: 'reckcontroller', rackcontroller: 'reckcontroller', reckcontrol: 'reckcontroller', 'рекконтроллер': 'reckcontroller', win: 'windows', win10: 'windows', win11: 'windows', mac: 'apple', macos: 'apple', macbook: 'apple', ios: 'apple', iphone: 'apple', ipad: 'apple', imac: 'apple',
   kn: 'keenetic', nc: 'netcraze', owrt: 'openwrt', ha: 'homeassistant', hass: 'homeassistant', rpi: 'raspberrypi', pi: 'raspberrypi', raspberry: 'raspberrypi',
   mint: 'linuxmint', kali: 'kalilinux', arch: 'archlinux', alpine: 'alpinelinux', wd: 'westerndigital', 'tp-link': 'tplink', tp: 'tplink', 'd-link': 'dlink',
   ps: 'playstation', ps4: 'playstation', ps5: 'playstation', switch: 'nintendoswitch', nintendo: 'nintendoswitch', hue: 'philipshue', alexa: 'amazonalexa', echo: 'amazonalexa',
   nest: 'googlehome', chromecast: 'googlehome', esp: 'espressif', esphome: 'espressif', esp32: 'espressif', ya: 'yandex', 'яндекс': 'yandex', alice: 'yandex', 'алиса': 'yandex',
   mikrotik: 'mikrotik', unifi: 'ubiquiti', hik: 'hikvision', mi: 'xiaomi', galaxy: 'samsung', rhel: 'redhat', esxi: 'vmware', truenas: 'truenas', nvidia: 'nvidia',
-  abonent: 'abon', client: 'abon', 'абон': 'abon', 'абонент': 'abon', camera: 'cam', kam: 'cam', cctv: 'cam', ipcam: 'cam', 'кам': 'cam', 'камера': 'cam',
+  ab: 'abon', abonent: 'abon', client: 'abon', 'абон': 'abon', 'абонент': 'abon', camera: 'cam', kam: 'cam', cctv: 'cam', ipcam: 'cam', 'кам': 'cam', 'камера': 'cam',
+  toya: 'tuya', 'туя': 'tuya', 'туйя': 'tuya', 'тойя': 'tuya', 'акара': 'aqara', 'аквара': 'aqara', 'сонофф': 'sonoff', 'шелли': 'shelly',
+  'тапо': 'tapo', 'меросс': 'meross', 'свитчбот': 'switchbot', 'броадлинк': 'broadlink', 'гови': 'govee', 'йилайт': 'yeelight', 'нанолиф': 'nanoleaf', 'роборок': 'roborock', 'дрим': 'dreame', 'умный': 'iot',
+  'хайер': 'haier', 'хаер': 'haier', 'хайр': 'haier', 'тсл': 'tcl', 'тисил': 'tcl', 'хайсенс': 'hisense', 'мидеа': 'midea', 'гри': 'gree', 'дайкин': 'daikin',
+  'электролюкс': 'electrolux', 'бош': 'bosch', 'сименс': 'siemens', 'миле': 'miele', 'вирпул': 'whirlpool', 'беко': 'beko', 'канди': 'candy',
+  'хотпоинт': 'hotpoint', 'индезит': 'indesit', 'аристон': 'ariston', 'поларис': 'polaris', 'редмонд': 'redmond', 'дайсон': 'dyson', 'филипс': 'philips', 'баллу': 'ballu', 'касарте': 'casarte',
   'кинетик': 'keenetic', 'кинетика': 'keenetic', kinetic: 'keenetic', 'микротик': 'mikrotik', 'тплинк': 'tplink', 'тп-линк': 'tplink', 'сяоми': 'xiaomi', 'ксиаоми': 'xiaomi',
   'самсунг': 'samsung', 'хуавей': 'huawei', 'хуавэй': 'huawei', 'асус': 'asus', 'эпл': 'apple', 'айфон': 'apple', 'виндовс': 'windows', 'убунту': 'ubuntu', 'дебиан': 'debian',
   'линукс': 'linux', 'синолоджи': 'synology', 'проксмокс': 'proxmox', 'юбикити': 'ubiquiti', 'хиквижн': 'hikvision', 'дахуа': 'dahua', 'тенда': 'tenda', 'нетгир': 'netgear',
@@ -142,13 +183,13 @@ function tagBrand(name) {
 }
 /* роль перед брендом: «/ap/keenetic» → «AP»; только вместе с найденным брендом */
 function tagRole(name) {
-  const m = TAG_RE.exec(String(name || '')); return m && m[1] && tagBrand(name) ? m[1].toUpperCase() : '';
+  const m = TAG_RE.exec(String(name || '')); return m && tagBrand(name) ? (m[1] || (tagBrand(name) === 'iot' ? 'iot' : '')).toUpperCase() : '';
 }
 function nameNoTag(name) { return tagBrand(name) ? (String(name).replace(TAG_RE, '') || name) : name; }
 
 /* ───────── подсказки по «/» при вводе имени устройства ───────── */
-const TAG_POPULAR = ['keenetic', 'mikrotik', 'tplink', 'ubiquiti', 'asus', 'xiaomi', 'apple', 'android', 'windows', 'ubuntu', 'synology', 'proxmox', 'homeassistant', 'hikvision', 'dahua', 'yandex', 'abon', 'cam'];
-const TAG_ROLES = [['ap', 'точка доступа'], ['sw', 'коммутатор'], ['rt', 'роутер'], ['nvr', 'регистратор'], ['srv', 'сервер']];
+const TAG_POPULAR = ['reckcontroller', 'keenetic', 'tuya', 'aqara', 'sonoff', 'iot', 'abon', 'cam', 'mikrotik', 'tplink', 'ubiquiti', 'asus', 'xiaomi', 'apple', 'android', 'windows', 'ubuntu', 'synology', 'proxmox', 'homeassistant', 'hikvision', 'dahua', 'yandex'];
+const TAG_ROLES = [['ap', 'точка доступа'], ['sw', 'коммутатор'], ['rt', 'роутер'], ['nvr', 'регистратор'], ['srv', 'сервер'], ['iot', 'умное устройство']];
 // показываем, только пока пользователь ещё печатает метку в начале имени (до пробела)
 const TAG_TYPING = /^\s*\/([a-zа-яё]{1,4}\/)?([a-z0-9а-яё-]*)$/i;
 function tagSuggestions(text) {
@@ -165,18 +206,57 @@ function tagSuggestions(text) {
   const roles = role || q ? [] : TAG_ROLES;      // роли подсказываем только в самом начале, когда метки ещё нет
   return { role, items: items.slice(0, 7), roles };
 }
+/* One catalogue for canonical tags and aliases; suggestions and the full list use the same keys. */
+function tagCatalogItems(query = '') {
+  const q = query.trim().toLowerCase().replace(/^\//, '');
+  return Object.entries(BRANDS).map(([key, b]) => ({ key, name: b.n, aliases: Object.entries(TAG_ALIAS).filter(([a, k]) => k === key && a !== key).map(([a]) => a) }))
+    .concat(Object.entries(NAME_CODES).map(([key, flag]) => ({ key, flag, name: key === 'abh' ? 'Абхазия' : key.toUpperCase(), aliases: [] })))
+    .filter(it => [it.key, it.name, ...it.aliases].some(s => s.toLowerCase().includes(q)))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+function nameWithTag(value, key, role = '') {
+  const s = String(value || ''), m = TAG_RE.exec(s);
+  const tail = m && (tagBrand(s) || NAME_CODES[m[2].toLowerCase()]) ? s.slice(m[0].length) : TAG_TYPING.test(s) ? '' : s;
+  return '/' + (role ? role + '/' : '') + key + ' ' + tail;
+}
+function TagCatalog({ value, onPick, onClose }) {
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const escape = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } };
+    document.addEventListener('keydown', escape, true);
+    return () => document.removeEventListener('keydown', escape, true);
+  }, [onClose]);
+  const [role, setRole] = useState(() => { const m = TAG_TYPING.exec(value || ''); return (m && m[1] ? m[1].slice(0, -1) : tagRole(value)).toLowerCase(); });
+  const items = tagCatalogItems(query);
+  return <Modal title="Метки в имени" icon={<Icon name="list" size={21} color="#0a84ff" />} onClose={onClose}>
+    <div className="tag-catalog">
+      <p className="dim">Выбери значок и, если нужно, роль. Например: <code>/iot/tuya Розетка</code>. Название устройства сохранится.</p>
+      <div className="tag-catalog-roles"><button type="button" className={!role ? 'on' : ''} onClick={() => setRole('')}>Без роли</button>{TAG_ROLES.map(([key, label]) =>
+        <button type="button" key={key} className={role === key ? 'on' : ''} onClick={() => setRole(role === key ? '' : key)}><b>/{key}</b><span>{label}</span></button>)}</div>
+      <SearchBox value={query} onChange={setQuery} placeholder="Бренд или метка — Tuya, /toya, /ab…" />
+      <div className="tag-catalog-list">{items.map(it => <button type="button" className="tag-catalog-item" key={it.key} onClick={() => onPick(it.key, it.flag || ['iot', 'abon', 'cam'].includes(it.key) ? '' : role)}>
+        {it.flag ? <div className="kind-flag" style={{ width: 36, height: 36, borderRadius: 10 }}><img src={'/flags/' + it.flag + '.svg'} alt="" /></div> : <BrandTile brand={it.key} size={36} role={['iot', 'abon', 'cam'].includes(it.key) ? '' : role.toUpperCase()} />}
+        <span className="tag-catalog-label"><b>{it.name}</b><code>/{role && !it.flag && !['iot', 'abon', 'cam'].includes(it.key) ? role + '/' : ''}{it.key}</code>{it.aliases.length ? <small>Также: {it.aliases.map(a => '/' + a).join(' · ')}</small> : null}</span><Icon name="plus" size={16} />
+      </button>)}{!items.length ? <div className="dim pad">Таких меток нет. Попробуй другое название.</div> : null}</div>
+    </div>
+  </Modal>;
+}
 // поле имени с подсказками: onChange получает строку; в остальном как обычный <input className="input">
 function NameInput({ value, onChange, className = 'input', grow, ...rest }) {
   const [open, setOpen] = useState(false);
+  const [catalog, setCatalog] = useState(false);
+  const input = useRef(null);
   const sug = open ? tagSuggestions(value || '') : null;
   const pickBrand = it => { onChange((sug.role ? '/' + sug.role + '/' : '/') + it.typed + ' '); setOpen(true); };
   const pickRole = r => { onChange('/' + r + '/'); setOpen(true); };
   const show = sug && (sug.items.length || sug.roles.length);
   return <div className={'name-input' + (grow || / grow(\s|$)/.test(className) ? ' grow' : '')}>
-    <input className={className} value={value} {...rest}
+    <input ref={input} className={className} value={value} {...rest}
       onChange={e => { onChange(e.target.value); setOpen(true); }}
       onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 180)} />
+    <button type="button" className="tag-catalog-btn" aria-label="Все метки /…" title="Все метки /…" onClick={() => { setOpen(false); setCatalog(true); }}>/</button>
     {show ? <div className="tag-suggest">
+      <div className="tag-suggest-head"><span>Значок и роль</span><button type="button" onClick={() => { setOpen(false); setCatalog(true); }}>Все метки <Icon name="list" size={13} /></button></div>
       {sug.roles.length ? <div className="tag-suggest-roles">Роль (необязательно):{sug.roles.map(([r, lbl]) =>
         <button type="button" key={r} className="tag-role-chip" onMouseDown={e => { e.preventDefault(); pickRole(r); }} title={lbl}>{r.toUpperCase()}</button>)}</div> : null}
       {sug.role ? <div className="tag-suggest-cur">Роль: <b>{sug.role.toUpperCase()}</b> + бренд</div> : null}
@@ -184,9 +264,11 @@ function NameInput({ value, onChange, className = 'input', grow, ...rest }) {
         <BrandTile brand={it.key} size={22} round={6} role={sug.role ? sug.role.toUpperCase() : ''} />
         <span className="ellipsis">{it.name}</span><code>/{sug.role ? sug.role + '/' : ''}{it.typed}</code></button>)}
     </div> : null}
+    {catalog ? <TagCatalog value={value} onClose={() => setCatalog(false)} onPick={(key, role) => { onChange(nameWithTag(value, key, role)); setCatalog(false); setOpen(false); input.current?.focus(); }} /> : null}
   </div>;
 }
 const BRAND_RULES = [
+  ['reckcontroller', /(?:reck|rack)[\s_-]?controller|\brcos\b|рек[\s_-]?контроллер/i],
   ['apple', /iphone|ipad|ipod|macbook|\bimac\b|mac[\s_-]?(mini|studio|pro)\b|\bmac\b|apple|airpods|homepod|айфон|айпад|макбук/i],
   ['android', /android|galaxy|\bsm-[a-z]\d{3}|pixel|redmi|poco|xiaomi|\bmi[\s_-]?\d|huawei|honor|oneplus|realme|oppo|vivo|motorola|\bmoto\b|nokia|infinix|tecno|\bzte\b|samsung/i, ['phone', 'tablet']],
   ['samsung', /samsung|tizen/i, ['tv', 'media', 'soundbar', 'fridge', 'washer', 'ac']],
@@ -201,7 +283,15 @@ const BRAND_RULES = [
   ['dlink', /d-?link|\bdir-\d{3}/i], ['netgear', /netgear|\borbi\b/i], ['linksys', /linksys/i], ['cisco', /cisco|catalyst/i], ['huawei', /huawei/i],
   ['hikvision', /hikvision|hik-?connect|\bds-2cd/i], ['dahua', /dahua|\bimou\b/i], ['ezviz', /ezviz/i], ['reolink', /reolink/i],
   ['yandex', /yandex|яндекс|алиса|\balice\b|станци/i], ['aqara', /aqara|lumi\./i], ['tuya', /\btuya|smart[\s_-]?life/i], ['sonoff', /sonoff|itead|ewelink/i],
+  ['haier', /\bhaier\b|хайер|хаер/i], ['tcl', /\btcl\b|тсл/i], ['hisense', /\bhisense\b|хайсенс/i], ['midea', /\bmidea\b|мидеа/i],
+  ['gree', /\bgree\b/i], ['daikin', /\bdaikin\b|дайкин/i], ['electrolux', /electrolux|электролюкс/i], ['bosch', /\bbosch\b|бош/i],
+  ['siemens', /\bsiemens\b|сименс/i], ['miele', /\bmiele\b/i], ['whirlpool', /\bwhirlpool\b|вирпул/i], ['beko', /\bbeko\b|беко/i],
+  ['candy', /\bcandy\b/i], ['hotpoint', /\bhotpoint\b/i], ['indesit', /\bindesit\b|индезит/i], ['ariston', /\bariston\b|аристон/i],
+  ['polaris', /\bpolaris\b|поларис/i], ['redmond', /\bredmond\b|редмонд/i], ['dyson', /\bdyson\b|дайсон/i], ['philips', /\bphilips\b|филипс/i],
+  ['ballu', /\bballu\b|баллу/i], ['casarte', /\bcasarte\b|касарте/i],
   ['shelly', /shelly/i], ['espressif', /esp32|esp8266|espressif|esphome|\bwled\b/i], ['zigbee', /zigbee|slzb/i], ['ikea', /\bikea|tradfri|dirigera/i],
+  ['tapo', /\btapo\b/i], ['kasa', /\bkasa\b/i], ['meross', /meross/i], ['switchbot', /switch[\s_-]?bot/i], ['broadlink', /broadlink/i],
+  ['govee', /govee/i], ['yeelight', /yeelight/i], ['nanoleaf', /nanoleaf/i], ['roborock', /roborock/i], ['dreame', /dreame/i], ['eufy', /\beufy\b/i],
   ['xbox', /xbox/i], ['steamdeck', /steam[\s_-]?deck/i], ['steam', /steam/i], ['nvidia', /nvidia|\bshield\b/i], ['kodi', /\bkodi|libreelec|\bosmc/i],
   ['plex', /\bplex\b/i], ['jellyfin', /jellyfin/i], ['truenas', /truenas|freenas/i], ['unraid', /unraid/i], ['pfsense', /pfsense/i], ['opnsense', /opnsense/i],
   ['qnap', /qnap/i], ['westerndigital', /western[\s_-]?digital|my[\s_-]?cloud/i], ['pihole', /pi-?hole/i], ['adguard', /adguard/i], ['vmware', /vmware|esxi/i],

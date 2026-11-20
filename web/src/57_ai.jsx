@@ -53,7 +53,7 @@ function CtxMeter({ ctx, busy, onCompact }) {
   const pct = Math.min(100, ctx.pct), tone = pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--orange)' : 'var(--accent)';
   return <div className="ai-ctx" title={`Системная часть ≈${tokK(ctx.parts.system + ctx.parts.tools)}, сводка ≈${tokK(ctx.parts.summary)}, разговор ≈${tokK(ctx.parts.chat)}${ctx.exact ? '' : ' (оценка)'}`}>
     <div className="ai-ctx-bar"><i style={{ width: pct + '%', background: tone }} /></div>
-    <div className="ai-ctx-row"><span>Контекст · {ctx.exact ? '' : '≈'}{tokK(ctx.used)} из {tokK(ctx.window)} ({Math.round(ctx.pct)}%){ctx.squeezed ? ' · сжат' : ''}</span>
+    <div className="ai-ctx-row"><span>Контекст · {ctx.exact ? '' : '≈'}{tokK(ctx.used)} из {ctx.windowSource === 'estimate' ? '≈' : ''}{Number(ctx.window).toLocaleString('ru-RU')} ({Math.round(ctx.pct)}%){ctx.squeezed ? ' · сжат' : ''}</span>
       {pct >= 60 && !busy ? <button type="button" className="ai-ctx-btn" onClick={onCompact}>Сжать</button> : null}</div>
   </div>;
 }
@@ -195,48 +195,45 @@ const money = b => b ? (b.currency === 'USD' ? '$' + b.amount.toFixed(2) : b.amo
 const AGENT_MODES = [['ask', 'Спрашивать', 'Смотрит сам; запись файлов и команды — по кнопке «Выполнить».'],
   ['edits', 'Правки сам', 'Файлы читает и меняет сам; команды, которые что-то меняют, — по кнопке.'],
   ['full', 'Полный доступ', 'Всё выполняет сразу. Никогда: удалять систему, форматировать диски, выключать машину, трогать пароли и данные Rack Live.']];
-function FrankMenu({ onClose }) {
-  const { refresh, data } = useApp(); const toast = useToast();
-  const [m, setM] = useState(null); const [err, setErr] = useState(null); const [saving, setSaving] = useState(null); const [mem, setMem] = useState(false);
-  const load = () => api('/api/ai/models', { method: 'POST', body: {} }).then(setM).catch(e => setErr(e.message));
-  useEffect(() => { load(); const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, []);
-  const save = async (part, what) => {
-    setSaving(what);
-    try { await api('/api/ai', { method: 'PUT', body: part }); setM(x => ({ ...x, ...part })); refresh(); }
-    catch (e) { toast(e.message, true); } finally { setSaving(null); }
-  };
-  const cur = m && (m.models.find(x => x.id === m.model) || {});
-  const t = (m && m.today) || {}, mo = (m && m.month) || {};
-  return <div className="fr-menu-wrap" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-    <div className="fr-menu">
-      {!m ? <div className="dim row" style={{ gap: 8, padding: 8 }}>{err || <><span className="spin-dot" />Спрашиваю у {'сервиса'}…</>}</div> : <>
-        <div className="fr-bal">
-          {m.balance ? <><b>{money(m.balance)}</b><span>на балансе {m.title.split(' ')[0]}</span></>
-            : <><b>{t.q || 0}</b><span>{ruPlural(t.q || 0, 'вопрос', 'вопроса', 'вопросов')} сегодня · {m.title.split(' ')[0]} не сообщает баланс</span></>}
-          <div className="dim3" style={{ fontSize: 12, marginTop: 4 }}>Сегодня {t.q || 0} · за месяц {mo.q || 0} {ruPlural(mo.q || 0, 'вопрос', 'вопроса', 'вопросов')}, ≈{Math.round(((mo.in || 0) + (mo.out || 0)) / 1000)}k токенов</div>
-        </div>
-        <div className="fr-menu-title">Модель</div>
-        <div className="fr-models">{m.models.map(x => <button key={x.id} type="button" className={'fr-model-opt' + (x.id === m.model ? ' on' : '')}
-          onClick={() => x.id !== m.model && save({ model: x.id, effort: '' }, x.id)}>
-          <span className="fr-radio">{saving === x.id ? <span className="spin-dot" /> : x.id === m.model ? <Icon name="check" size={14} stroke={2.6} /> : null}</span>
-          <span className="grow" style={{ minWidth: 0 }}><b>{x.name}</b>{x.desc ? <small>{x.desc}</small> : <small className="mono">{x.id}</small>}</span>
-        </button>)}</div>
-        {cur && cur.efforts && cur.efforts.length ? <>
-          <div className="fr-menu-title">Как глубоко думать</div>
-          <Seg value={m.effort || ''} onChange={v => save({ effort: v }, 'effort')} options={EFFORTS.filter(([v]) => !v || cur.efforts.includes(v)).map(([value, label]) => ({ value, label }))} />
-          <div className="dim3" style={{ fontSize: 12, lineHeight: 1.4 }}>Глубже — точнее на сложных вопросах, но дольше и дороже. «Обычно» — как задумал сервис.</div>
-        </> : null}
-        {data.ai && data.ai.agent ? <>
-          <div className="fr-menu-title">Агент: права</div>
-          <Seg value={data.ai.agentMode || 'ask'} onChange={v => save({ agentMode: v }, 'agentMode')} options={AGENT_MODES.map(([value, label]) => ({ value, label }))} />
-          <div className="dim3" style={{ fontSize: 12, lineHeight: 1.4 }}>{(AGENT_MODES.find(x => x[0] === (data.ai.agentMode || 'ask')) || [])[2]}</div>
-        </> : null}
-        <button type="button" className="fr-model-opt" onClick={() => setMem(true)}><span className="fr-radio"><Icon name="brain" size={15} /></span>
-          <span className="grow" style={{ minWidth: 0 }}><b>Память Frank</b><small>FRANK.md — правила и заметки, которые Frank читает в каждом разговоре</small></span></button>
-      </>}
-    </div>
-    {mem ? <MemoryEditor onClose={() => setMem(false)} /> : null}
-  </div>;
+function FrankMenu({ onClose, mode, onConfigure }) {
+  const { refresh, data } = useApp(); const toast = useToast(); const ai = data.ai || {};
+  const [m, setM] = useState(null); const [err, setErr] = useState(''); const [saving, setSaving] = useState(''); const [section, setSection] = useState('home');
+  useEffect(() => { if (ai.ready) api('/api/ai/models', { method: 'POST', body: {} }).then(setM).catch(e => setErr(e.message));
+    const h = e => e.key === 'Escape' && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, [mode]);
+  const save = async (part, id) => { setSaving(id); try { await api('/api/ai', { method: 'PUT', body: part }); await refresh(); onClose(); } catch (e) { toast(e.message, true); } finally { setSaving(''); } };
+  return <div className="fr-menu-wrap" onMouseDown={e => e.target === e.currentTarget && onClose()}><div className="fr-menu">
+    {mode === 'provider' && section === 'home' ? <>
+      <div className="fr-eye-head"><div><b>Frank</b><span>Провайдер, лимиты и настройки</span></div><button type="button" className="btn sm" onClick={onClose}>Готово</button></div>
+      <button type="button" className="fr-eye-action" onClick={() => setSection('providers')}><span><b>Провайдер</b><small>{ai.title || 'Выбрать сервис'}</small></span><Icon name="chevron" size={17} /></button>
+      <div className="fr-eye-limits"><div className="fr-eye-label">Лимиты и баланс</div>
+        {!ai.ready ? <div className="fr-eye-note">Подключи провайдера, чтобы увидеть его данные.</div> : ai.preset === 'mozg' ? <><div className="fr-eye-note">Mozg не передаёт остаток кредитов через API. Посмотри его в профиле Mozg.</div><a className="fr-eye-link" href="https://ru.app.mozg.world/" target="_blank" rel="noreferrer">Открыть Mozg ↗</a></> : !m && !err ? <div className="fr-eye-note">Загружаю данные…</div> : m && m.balance ? <><div className="fr-eye-amount">{money(m.balance)}</div><div className="fr-eye-note">Баланс {ai.title} по данным сервиса</div></>
+          : ['deepseek','openrouter'].includes(ai.preset) ? <div className="fr-eye-note">Не удалось получить баланс {ai.title}. Попробуй открыть меню позже.</div>
+          : <div className="fr-eye-note">Этот сервис не сообщает баланс Frank.</div>}
+        <div className="fr-eye-stats"><span>Вопросы Frank сегодня</span><b>{(m?.today || ai.today || {}).q || 0}{ai.limit ? ' / ' + ai.limit : ' · без лимита'}</b></div>
+        {ai.limit ? <div className="fr-eye-caption">Осталось вопросов сегодня: {Math.max(0, ai.limit - Number((m?.today || ai.today || {}).q || 0))}</div> : null}
+        {m?.month ? <div className="fr-eye-stats"><span>Токены за месяц</span><b>{Number((m.month.in || 0) + (m.month.out || 0)).toLocaleString('ru-RU')}</b></div> : null}
+        <div className="fr-eye-caption">Вопросы и токены считаются во Frank по всем провайдерам. Это не остаток подписки.</div>
+      </div>
+      <button type="button" className="fr-eye-action" onClick={() => onConfigure(ai.preset)}><span><b>Настройки Frank</b><small>Доступ, ключи и параметры</small></span><Icon name="chevron" size={17} /></button>
+    </> : <>
+    <div className="fr-menu-title">{mode === 'provider' ? 'Провайдер' : 'Модель'}</div>
+    {mode === 'provider' ? <>
+      <button type="button" className="fr-eye-back" onClick={() => setSection('home')}>‹ Назад</button>
+      {(ai.presets || []).map(p => { const ready = (ai.configuredPresets || []).includes(p.id) || p.noKey;
+        return <button key={p.id} type="button" className={'fr-model-opt' + (p.id === ai.preset ? ' on' : '')} disabled={!!saving}
+          onClick={() => p.id === ai.preset ? onClose() : ready ? save({ preset: p.id }, p.id) : onConfigure(p.id)}>
+          <span className="fr-radio">{saving === p.id ? <span className="spin-dot" /> : p.id === ai.preset ? <Icon name="check" size={14} /> : null}</span>
+          <span className="grow"><b>{p.title}</b><small>{ready ? 'Настроен' : 'Добавить ключ'}</small></span></button>; })}
+    </> : !m ? <div className="dim" style={{padding:12}}>{err || 'Загружаю модели…'}</div> : <>
+      <div className="fr-models">{m.models.map(x => <button key={x.id} type="button" className={'fr-model-opt' + (x.id === m.model ? ' on' : '')} disabled={!!saving}
+        onClick={() => x.id === m.model ? onClose() : save({ model: x.id, effort: '' }, x.id)}>
+        <span className="fr-radio">{saving === x.id ? <span className="spin-dot" /> : x.id === m.model ? <Icon name="check" size={14} /> : null}</span>
+        <span className="grow"><b>{x.name}</b><small>{x.desc || x.id}{x.vision ? ' · видит изображения' : ''}</small></span></button>)}</div>
+      {(() => { const current = m.models.find(x => x.id === m.model); return current && current.efforts && current.efforts.length ? <><div className="fr-menu-title">Глубина ответа</div><Seg value={m.effort || ''} onChange={v => save({effort:v}, 'effort')} options={EFFORTS.filter(([v]) => !v || current.efforts.includes(v)).map(([value,label]) => ({value,label}))} /></> : null; })()}
+      <div className="dim3" style={{padding:12,fontSize:12}}>Список зависит от выбранного провайдера и ключа.</div>
+    </>}
+    </>}
+  </div></div>;
 }
 
 /* messages written while Frank was busy: they leave one by one; each can be taken back */
@@ -388,7 +385,8 @@ function AiPanel({ initial, onClose, standalone }) {
   };
   const title = view === 'list' ? 'Разговоры' : T('frank.name', 'Frank');
   const [quick, setQuick] = useState(false);
-  const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1');
+  const [menu, setMenu] = useState(() => !!standalone && new URLSearchParams(location.search).get('menu') === '1' ? 'provider' : '');
+  const [frSettings, setFrSettings] = useState('');
   const act = async (p, run) => {
     try { const r = await api('/api/ai/act', { method: 'POST', body: { chat: cid, proposal: p.id, run } }); if (r.chat) { setMsgs(r.chat.messages); setCtx(r.chat.ctx || null); }
       if (run) toast(r.proposal.status === 'done' ? '✓ ' + r.proposal.result : r.proposal.result, r.proposal.status !== 'done'); }
@@ -408,7 +406,7 @@ function AiPanel({ initial, onClose, standalone }) {
             <Icon name={view === 'list' ? 'chevronLeft' : 'menu'} size={22} stroke={2} /></button> : null}</div>
         <div className="fr-title"><b>{title}</b><span>{sub}</span></div>
         <div className="fr-side r">
-          <button type="button" className="fr-circle eye" title={busy ? busy.stage : 'Модель и баланс'} onClick={() => ai.ready && setMenu(true)}><FrankEye size={46} mood={frankMood(busy)} round={23} /></button>
+          <button type="button" className="fr-circle eye" title={busy ? busy.stage : 'Провайдер и настройки'} onClick={() => !busy && setMenu('provider')}><FrankEye size={46} mood={frankMood(busy)} round={23} /></button>
           {ai.ready && view !== 'list' && cid && msgs.length ? <button type="button" className="fr-circle" title="Удалить разговор" aria-label="Удалить разговор" onClick={() => del({ id: cid, title: (chats && (chats.find(y => y.id === cid) || {}).title) || (msgs.find(m => m.role === 'user') || {}).text || 'этот разговор' })}><Icon name="trash" size={20} stroke={2} /></button> : null}
           {ai.ready ? <button type="button" className="fr-circle" title="Новый разговор" onClick={() => open(null)}><Icon name="plus" size={22} stroke={2} /></button> : null}
         </div>
@@ -432,7 +430,7 @@ function AiPanel({ initial, onClose, standalone }) {
             ? 'Ключ уже сохранён — осталось включить переключатель «Включить Frank» в настройках и нажать «Сохранить».'
             : 'Frank отвечает на вопросы о вашей сети простыми словами: сам смотрит устройства, порты, Wi-Fi, журнал и безопасность. ' +
               'Нужен ключ API одного из сервисов: DeepSeek, Claude, ChatGPT — или своя модель в Ollama.'}</div>
-          {standalone ? <div className="dim3" style={{ fontSize: 12.5 }}>Настраивается в Rack Live: Настройки → Frank</div> : <Btn kind="primary" icon="settings" onClick={() => { lsSet('rl_set_sec', 'frank'); onClose(); setTab('settings'); }}>Открыть настройки</Btn>}
+          <Btn kind="primary" icon="settings" onClick={() => setFrSettings(ai.preset || 'deepseek')}>Открыть настройки</Btn>
         </div> : loading ? <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Загружаю разговор…</div>
         : !msgs.length ? <div className="ai-empty">
           <FrankEye size={68} />
@@ -452,7 +450,8 @@ function AiPanel({ initial, onClose, standalone }) {
         {busy && view === 'chat' ? <div className="ai-msg assistant"><div className="ai-bubble ai-busy"><span className="spin-dot" />{busy.stage}
           {busy.tools.length ? <div className="ai-tools">{[...new Set(busy.tools)].map(t => <span key={t}><Icon name="check" size={11} />{t}</span>)}</div> : null}</div></div> : null}
       </div>}
-      {menu ? <FrankMenu onClose={() => setMenu(false)} /> : null}
+      {menu ? <FrankMenu mode={menu} onClose={() => setMenu('')} onConfigure={id => { setMenu(''); setFrSettings(id || ai.preset); }} /> : null}
+      {frSettings ? <div className="fr-settings-overlay" onMouseDown={e => e.target === e.currentTarget && setFrSettings('')}><div className="fr-settings-sheet"><div className="fr-settings-head"><b>Настройки Frank</b><button className="btn sm" onClick={() => setFrSettings('')}>Готово</button></div><AiCard initialPreset={frSettings} compact /></div></div> : null}
       {ai.ready && view === 'chat' ? <div className="fr-dock" ref={dockRef}>
         {quick ? <div className="fr-quick">{AI_SUGGEST.map(s => <button key={s} type="button" onClick={() => { setQuick(false); send(s); }}>{s}</button>)}</div> : null}
         <CmdHint q={q} onPick={c => setQ(c + ' ')} />
@@ -465,7 +464,7 @@ function AiPanel({ initial, onClose, standalone }) {
         <div className="fr-dock-row">
           <button type="button" className={'fr-dbtn' + (quick ? ' on' : '')} title="Быстрые вопросы" onClick={() => setQuick(!quick)} disabled={!!busy}><Icon name="plus" size={22} stroke={2} /></button>
           <button type="button" className="fr-dbtn" title="Прикрепить фото или файл" onClick={() => fileRef.current && fileRef.current.click()}><Icon name="clip" size={20} stroke={2} /></button>
-          <div className="fr-model"><b>{ai.title.split(' ')[0]}</b><span>{ai.effModel}</span></div>
+          <button type="button" className="fr-model" disabled={!!busy} onClick={() => setMenu('model')} title="Выбрать модель"><b>{ai.title.split(' ')[0]}</b><span>{ai.effModel}</span><Icon name="chevron" size={14} style={{ transform: 'rotate(90deg)' }} /></button>
           <div className="grow" />
           {busy && !(q.trim() || att.length) ? <button type="button" className="fr-send on stop" onClick={stop} title="Остановить Frank"><Icon name="x" size={21} stroke={2.4} /></button>
             : <button type="button" className={'fr-send' + ((q.trim() || att.length) ? ' on' : '')} disabled={!q.trim() && !att.length} onClick={() => send(q)} title={busy ? 'Поставить в очередь' : 'Отправить'}>
@@ -581,16 +580,17 @@ function ProjectCard({ ai }) {
     {running ? <div className="row" style={{ gap: 8, fontSize: 12.5 }}><span className="spin-dot" />{(job && job.stage) || 'Работаю…'}</div> : null}
   </div>;
 }
-function AiCard() {
+function AiCard({ initialPreset, compact = false }) {
   const { data, refresh } = useApp(); const toast = useToast();
   const ai = data.ai;
   const [s, setS] = useState(() => ({ enabled: ai.enabled, preset: ai.preset, base: ai.base, model: ai.model, proxy: ai.proxy, limit: ai.limit, key: '', actions: ai.actions !== false, telegram: ai.telegram !== false, admin: !!ai.admin,
     window: ai.window || 0, autoCompact: ai.autoCompact !== false, agent: !!ai.agent, agentMode: ai.agentMode || 'ask', full: !!ai.full, browser: ai.browser !== false }));
   const [res, setRes] = useState(null); const [mem, setMem] = useState(() => new URLSearchParams(location.search).get('memory') === '1');
+  useEffect(() => { if (initialPreset && initialPreset !== ai.preset) setS(x => ({ ...x, preset: initialPreset, base: '', model: '', key: '' })); }, [initialPreset]);
   const p = ai.presets.find(x => x.id === s.preset) || ai.presets[0];
   const set = (k, v) => setS(x => ({ ...x, [k]: v }));
   const pick = id => { setS(x => ({ ...x, preset: id, base: '', model: '', key: '' })); setRes(null); };
-  const keySaved = ai.keySet && s.preset === ai.preset;
+  const keySaved = (ai.configuredPresets || []).includes(s.preset) || (ai.keySet && s.preset === ai.preset);
   const save = async () => { try { await api('/api/ai', { method: 'PUT', body: s }); toast('Сохранено'); setS(x => ({ ...x, key: '' })); refresh(); } catch (e) { toast(e.message, true); } };
   const test = async () => { setRes(null); try { const r = await api('/api/ai/test', { method: 'POST', body: s }); setRes(r); } catch (e) { setRes({ ok: false, error: e.message }); } };
   const t = ai.today || {};
@@ -599,38 +599,12 @@ function AiCard() {
       <div className="col" style={{ gap: 12 }}>
         <div className="row"><Switch on={!!s.enabled} onChange={v => set('enabled', v)} /><div className="grow"><div>Включить Frank</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Кнопка с глазом вверху: вопросы о сети простыми словами.</div></div></div>
-        <div className="row"><Switch on={!!s.actions} onChange={v => set('actions', v)} /><div className="grow"><div>Frank может предлагать действия</div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Перезапуск PoE или порта, проверка кабеля, перезагрузка точки, выключатели Home Assistant, исправления безопасности. Сам Frank ничего не делает: под ответом появится карточка, и действие выполнится только после вашей кнопки «Выполнить».</div></div></div>
-        {s.actions ? <div className={'row' + (s.admin ? ' ai-admin-on' : '')}><Switch on={!!s.admin} onChange={v => set('admin', v)} /><div className="grow"><div>Полный доступ <span className="ai-badge">админ</span></div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Frank сам работает на устройствах через командную строку — Keenetic, OpenWrt, Synology (docker, контейнеры), TP-Link, серверы по SSH:
-            настроить роутер, запустить контейнер, посмотреть логи. <b>Смотрит</b> — когда нужно для ответа. <b>Меняет</b> — только то, о чём вы прямо попросили
-            (сервер сверяет с вашим сообщением). <b>Опасное</b> (перезагрузка, WAN, VPN, firewall, порты, удаление) — карточкой «Выполнить». Сброс и пароли запрещены.
-            Каждая команда — в журнале событий.</div>
-          {s.admin ? <div className="ai-admin-warn">Модель может ошибиться в команде и, например, отрезать интернет — исправлять тогда придётся вручную у роутера.
-            Для Synology включите SSH (Панель управления → Терминал); вход — тем же пользователем DSM.</div> : null}</div></div> : null}
-        <div className="row"><Switch on={!!s.telegram} onChange={v => set('telegram', v)} /><div className="grow"><div>Отвечать в Telegram</div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Напишите вопрос боту Rack Live в личку — ответит Frank. Только привязанным аккаунтам (Настройки → Уведомления → «Привязать Telegram»); /new — новый разговор. Разговоры видны и в приложении Frank.</div></div></div>
-        <div className={'row' + (s.agent ? ' ai-admin-on' : '')}><Switch on={!!s.agent} onChange={v => set('agent', v)} /><div className="grow"><div>Агент: файлы и команды <span className="ai-badge">как Claude Code</span></div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Frank становится универсальным помощником: читает и пишет файлы, ищет по ним, выполняет команды на машине, где работает Rack Live
-            ({ai.agentWhere}). Своя рабочая папка для проектов и скриптов; ваши вложения он тоже может открыть. Не только про сеть — любые задачи.</div>
-          {s.agent ? <div style={{ marginTop: 8 }}>{s.full ? null : <Seg value={s.agentMode || 'ask'} onChange={v => set('agentMode', v)} options={AGENT_MODES.map(([value, label]) => ({ value, label }))} />}
-            <div className="dim3" style={{ fontSize: 12.5, marginTop: 6 }}>{s.full ? 'Права: полный доступ — все шаги без подтверждения (включается галочкой «Полный доступ» ниже).'
-              : ((AGENT_MODES.find(x => x[0] === (s.agentMode || 'ask')) || [])[2] + ' Каждое изменение и команда — в журнале событий.')}</div>
-            {!s.full && s.agentMode === 'full' ? <div className="ai-admin-warn">Модель может ошибиться — например, удалить не тот файл в рабочей папке или установить лишнее. Данные и программа Rack Live
-              защищены, разрушительные команды запрещены всегда, но остальное Frank делает без вопросов.</div> : null}</div> : null}</div></div>
-        {s.agent ? <div className="row"><Switch on={s.browser !== false} onChange={v => set('browser', v)} /><div className="grow"><div>Мини-браузер <span className="ai-badge">скриншоты</span></div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Frank может открыть страницу (роутер, панель, VPS, любой сайт) в headless-браузере, прочитать её и прислать скриншот в
-            чат — «покажи, как это выглядит». {ai.browserReady ? <>Браузер есть: <b className="mono">{ai.browserBin}</b>.</> : <b style={{ color: 'var(--orange)' }}>В этой установке браузера нет — он ставится в образ Docker при сборке.</b>}
-            <b>Вход в панели — можно</b>: скажи «войди» и дай логин с паролем в чате (или попроси сохранить их в память) — он войдёт и будет нажимать/печатать в этой же сессии. {ai.browserLogin ? <>Управление браузером: <b className="mono">{ai.browserLoginBin}</b>.</> : <b style={{ color: 'var(--orange)' }}>Управления браузером (chromedriver) нет — вход недоступен, но снимки работают.</b>} Только http/https. Пароль из чата уходит сервису модели и остаётся в истории — если это важно, лучше пусть доступы лежат в памяти (FRANK.md).</div></div></div> : null}
-        {s.agent ? <div className={'row' + (s.full ? ' ai-admin-on' : '')}><Switch on={!!s.full} onChange={v => setS(x => ({ ...x, full: v, agent: v ? true : x.agent, agentMode: v ? 'full' : (x.agentMode === 'full' ? 'edits' : x.agentMode) }))} /><div className="grow">
-          <div>Полный доступ <span className="ai-badge">как opencode</span></div>
-          <div className="dim3" style={{ fontSize: 12.5 }}>Frank становится самостоятельным агентом со своим проектом Rack Live: работает без карточек, правит код проекта, собирает,
-            проверяет тестами и по вашей просьбе выкладывает его в панель — панель остаётся связанной с проектом, что в проекте, то и работает.
-            По умолчанию выключено: без галочки Frank такой же, как раньше.</div>
-          {s.full && !ai.full ? <div className="ai-admin-warn">Сохраните настройки — после этого Frank получит полный доступ и появится карточка проекта.</div> : null}
-          {s.full && ai.full ? <div className="ai-admin-warn">Полный доступ разрешает модели менять и саму панель — по вашей просьбе. Прежний код всегда остаётся в .prev: «Откатить» вернёт его,
-            и при сбое панель откатится сама. Данные панели (пароли устройств, вход, история) Frank не трогает, разрушительные команды запрещены всегда.</div> : null}
-          {ai.full ? <ProjectCard ai={ai} /> : null}</div></div> : null}
+        <div className="fr-access"><div style={{fontWeight:600,marginBottom:8}}>Доступ Frank</div>
+          <Seg value={s.full ? 'full' : 'normal'} onChange={v => setS(x => ({ ...x, actions: true, admin: v === 'full', agent: true, agentMode: v === 'full' ? 'full' : 'ask', full: v === 'full', browser: true }))}
+            options={[{value:'normal',label:'Обычный'},{value:'full',label:'Полный'}]} />
+          <div className="dim3" style={{fontSize:12.5,marginTop:8,lineHeight:1.5}}>{s.full ? 'Frank работает с устройствами, файлами и экраном по твоей просьбе. Некоторые опасные действия требуют подтверждения; запрещённые действия остаются недоступны.' : 'Frank смотрит данные и предлагает изменения карточкой для подтверждения.'}</div></div>
+        <div className="row"><Switch on={!!s.telegram} onChange={v => set('telegram', v)} /><div className="grow"><div>Отвечать в Telegram</div><div className="dim3" style={{fontSize:12.5}}>Только привязанным аккаунтам.</div></div></div>
+        {s.full && ai.full ? <ProjectCard ai={ai} /> : null}
         <div className="row"><span className="ico-circle"><Icon name="brain" size={16} /></span><div className="grow"><div>Память Frank (FRANK.md)</div>
           <div className="dim3" style={{ fontSize: 12.5 }}>Ваши правила и заметки, которые Frank читает в каждом разговоре — как CLAUDE.md у Claude Code. Попросите «запомни…» в разговоре или впишите сами.</div></div>
           <Btn size="sm" onClick={() => setMem(true)}>Открыть</Btn></div>
@@ -640,7 +614,7 @@ function AiCard() {
           <div className="row wrap" style={{ gap: 6 }}>{ai.presets.map(x => <button key={x.id} type="button" className={'chip' + (s.preset === x.id ? ' on' : '')} onClick={() => pick(x.id)}>{x.title}</button>)}</div></Field>
         {!p.noKey ? <Field label="Ключ API" hint={p.keyUrl ? <>Получить: <a href={p.keyUrl} target="_blank" rel="noreferrer">{p.keyUrl.replace(/^https:\/\//, '')}</a></> : null}>
           <input className="input" type="password" autoComplete="off" value={s.key} placeholder={keySaved ? '•••••••• (не менять)' : 'sk-…'} onChange={e => set('key', e.target.value)} /></Field> : null}
-        <Field label="Модель" hint={s.preset === 'claude' ? 'По умолчанию самая умная; дешевле — claude-sonnet-5-5 или claude-haiku-5-5' : s.preset === 'ollama' ? 'Модель с поддержкой инструментов (tools): qwen2.5, llama3.1 и т.п.' : 'Пусто — модель по умолчанию'}>
+        <Field label="Модель" hint={s.preset === 'claude' ? 'По умолчанию самая умная; дешевле — claude-sonnet-5-5 или claude-haiku-5-5' : s.preset === 'mozg' ? 'Для управления рабочим столом выберите модель с поддержкой изображений; список зависит от вашей подписки.' : s.preset === 'ollama' ? 'Модель с поддержкой инструментов (tools): qwen2.5, llama3.1 и т.п.' : 'Пусто — модель по умолчанию'}>
           <input className="input mono" value={s.model} placeholder={p.model || 'имя модели'} onChange={e => set('model', e.target.value)} /></Field>
         <details className="guide"><summary>Дополнительно: адрес API, прокси, лимит</summary>
           <div className="col" style={{ gap: 10, marginTop: 8 }}>
@@ -664,11 +638,12 @@ function AiCard() {
           <li><b>Claude</b>: <a href="https://console.anthropic.com" target="_blank" rel="noreferrer">console.anthropic.com</a> → Billing (пополнить) → API Keys → Create Key.
             Из России API недоступен — пустите <code>api.anthropic.com</code> через VPN на роутере или укажите прокси.</li>
           <li><b>ChatGPT</b>: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">platform.openai.com</a> → Billing → API keys. Ограничения по стране — как у Claude.</li>
+          <li><b>Mozg AI</b>: в приложении откройте профиль → «API-ключи» → «Создать ключ». Нужна подписка с доступом к API; вставьте ключ сюда, нажмите «Проверить», затем «Сохранить». Для рабочего стола выбирайте модель с поддержкой изображений, например Mozg Black Standard.</li>
           <li><b>Ollama</b> — бесплатно и без отправки данных наружу: модель работает на вашем компьютере (нужна хорошая видеокарта или много памяти).</li>
         </ol></details>
         <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
           <b>Что уходит в сервис:</b> вопрос и данные, которые Frank посмотрел: имена и статусы устройств, порты, клиенты (имена, IP, MAC), журнал, замечания.
-          Пароли, ключи, токены и SNMP-community вырезаются до отправки. Ответы стоят денег у провайдера: обычно доли цента (DeepSeek) — несколько центов (Claude, ChatGPT) за вопрос.</div>
+          Пароли, ключи, токены и SNMP-community из данных устройств вырезаются до отправки; на снимках экрана видимый текст не скрывается. Ответы стоят денег у провайдера: обычно доли цента (DeepSeek) — несколько центов (Claude, ChatGPT) за вопрос.</div>
         <div className="frank-install">
           <AppIcon app="frank" size={40} radius={10} />
           <div className="grow" style={{ fontSize: 12.5, lineHeight: 1.45 }}><b style={{ fontSize: 13.5 }}>Frank отдельным приложением</b><br />

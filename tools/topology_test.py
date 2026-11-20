@@ -58,5 +58,18 @@ ok('у «Интернета» нет цепочки: удалённые не в�
 ok('клиенты удалённого роутера — под ним', parent.get('h:aa:bb:cc:00:00:28') == 'd:rr2', parent.get('h:aa:bb:cc:00:00:28'))
 ok('домашние устройства по-прежнему от главного роутера', parent.get('d:ow') in ('d:kn', None) and parent.get('d:kn') == 'inet', (parent.get('d:ow'), parent.get('d:kn')))
 
+# The primary router wins when a secondary router appears first in configuration.
+prior_devs = [{'id':'secondary','name':'secondary','driver':'openwrt'}, {'id':'primary','name':'primary','driver':'keenetic'}]
+shared = 'aa:00:00:00:00:04'
+prior_states = {
+ 'secondary': {'ports':[{'n':1,'link':True}], 'clients':[{'mac':shared,'name':'secondary record','ip':'192.0.2.2','ap':'self'}], 'children':[{'key':'sec-ap','mac':'aa:00:00:00:00:05','name':'secondary AP'}]},
+ 'primary': {'ports':[{'n':1,'link':True}], 'clients':[{'mac':shared,'name':'primary record','ip':'198.51.100.2','ap':'self'}], 'children':[{'key':'main-ap','mac':'aa:00:00:00:00:05','name':'main AP'}]},
+}
+prior = topology.build(prior_devs, prior_states, [], [], True, {}, {'main':'primary'})
+shared_nodes = [n for n in prior['nodes'] if n.get('mac') == shared]
+aps = [n for n in prior['nodes'] if n.get('childKey') in ('sec-ap','main-ap')]
+ok('общий клиент один с приоритетом основной сети', len(shared_nodes)==1 and shared_nodes[0].get('label')=='primary record')
+ok('точка с общим MAC одна с приоритетом основной сети', len(aps)==1 and aps[0].get('label')=='main AP')
+
 print('\n' + ('ВСЁ OK' if not fails else 'ОШИБКИ: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

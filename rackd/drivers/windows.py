@@ -9,18 +9,22 @@ class WindowsHost(Driver):
     id = 'windows'
     title = 'Компьютер / сервер Windows (по SSH)'
     kind = 'pc'
-    description = ('Windows 10 / 11 и Windows Server: процессор, память, диски и их состояние, перезагрузка после обновлений, Docker. Ничего ставить не нужно — '
-                   'только включить встроенный «OpenSSH-сервер» Windows (в окне устройства есть готовая команда).')
+    description = ('Windows 10 / 11 и Windows Server: процессор, память, диски и их состояние, перезагрузка после обновлений, Docker. '
+                   'Подключение через встроенный OpenSSH Windows, без агента. Подготовь ПК по шагам ниже.')
     fields = [{'name': 'host', 'label': 'Адрес (IP или имя)', 'type': 'text', 'required': True},
               {'name': 'sshPort', 'label': 'Порт SSH', 'type': 'text', 'default': '22'},
-              {'name': 'username', 'label': 'Пользователь Windows', 'type': 'text', 'default': 'Administrator',
-               'hint': 'Локальный администратор. Для диагностики дисков нужны права администратора.'},
-              dict(FIELD_PASS, hint='Пароль не должен быть пустым. Или вместо пароля — приватный ключ ниже.'),
+              {'name': 'username', 'label': 'Пользователь Windows', 'type': 'text',
+               'hint': 'Узнай логин командой whoami на ПК. Для физических дисков нужен локальный администратор.'},
+              dict(FIELD_PASS, hint='Пароль учётной записи, не PIN Windows Hello. Если пароля нет — используй SSH-ключ по инструкции выше.'),
               {'name': 'privateKey', 'label': 'Приватный ключ (вместо пароля)', 'type': 'textarea', 'secret': True,
                'hint': 'Для ключа положите открытую часть в C:\\ProgramData\\ssh\\administrators_authorized_keys.'}]
     actions = [{'id': 'reboot', 'label': 'Перезагрузить компьютер', 'scope': 'device',
                 'confirm': 'Компьютер перезагрузится через 5 секунд, несохранённая работа на нём будет потеряна. Продолжить?'}]
     help = winhost.ENABLE_SSH
+
+    def plugins(self, cfg):
+        from ..windesktop import CARD
+        return {'plugins': [dict(CARD)]}  # application fills the managed installation's status
 
     def _ps(self, cfg, script, timeout=60):
         return _ssh.SSHHost()._run(cfg, winhost.PRELUDE + script if not script.startswith(winhost.PRELUDE) else script, timeout=timeout, remote=winhost.REMOTE)

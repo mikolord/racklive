@@ -1,5 +1,5 @@
 """Windows over SSH: parsing of the PowerShell answers, detection by the SSH banner, the scripts really run in PowerShell (on a Windows dev machine). Run: python tools/windows_test.py"""
-import json, os, shutil, subprocess, sys
+import json, os, shutil, subprocess, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from rackd import winhost, detect
 
@@ -59,6 +59,40 @@ if sys.platform == 'win32' and shutil.which('powershell'):       # the very scri
         if name == 'poll':
             parsed = winhost.parse_poll(p.stdout, '127.0.0.1')
             ok('PowerShell: сводка разобрана (ОС, диски, адреса)', parsed['summary']['fw'] and parsed['storage']['volumes'], parsed['summary'])
+    # Exercise the actual setup script with stubbed OS mutations: both a fresh PC and
+    # the reported case (sshd installed, old firewall rule only enabled for Private).
+    for existing in (False, True):
+        pre = r'''
+$script:existing=__EXISTING__
+$script:installed=$false
+function Get-Service { param($Name,$ErrorAction); if($script:existing -or $script:installed){[pscustomobject]@{Status='Running';StartType='Automatic'}} }
+function Add-WindowsCapability { param($Online,$Name); $script:installed=$true }
+function Set-Service { param($Name,$StartupType) }
+function Start-Service { param($Name) }
+function Get-NetFirewallRule { param($Name,$ErrorAction); if($script:existing){[pscustomobject]@{Profile='Private'}} }
+function Set-NetFirewallRule { param($Name,$Enabled,$Direction,$Action,$Profile,$Protocol,$LocalPort,$RemoteAddress); $script:rule=@{profile=$Profile;remote=$RemoteAddress;port=$LocalPort;mode='set'} }
+function New-NetFirewallRule { param($Name,$DisplayName,$Direction,$Action,$Profile,$Protocol,$LocalPort,$RemoteAddress); $script:rule=@{profile=$Profile;remote=$RemoteAddress;port=$LocalPort;mode='new'} }
+'''.replace('__EXISTING__', '$true' if existing else '$false')
+        # Add-WindowsCapability's Online is a switch, just like the OS command.
+        pre = pre.replace('param($Online,$Name)', 'param([switch]$Online,$Name)')
+        script = pre + '\n' + winhost.SETUP_SSH + "\n'@@json '+(@{rule=$script:rule;installed=$script:installed}|ConvertTo-Json -Compress -Depth 4)"
+        p = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True, text=True, encoding='utf-8', timeout=30)
+        got = winhost.payload(p.stdout) or {}
+        ok('подготовка SSH: общедоступная сеть, только LAN (' + ('существующее правило' if existing else 'новая установка') + ')',
+           got.get('rule', {}).get('profile') == 'Any' and got['rule'].get('remote') == 'LocalSubnet' and str(got['rule'].get('port')) == '22', p.stdout + p.stderr)
+    # Generate a real compatible key in a sandbox, preserving a pre-existing line.
+    # Only the ACL command is stubbed: it must not modify permissions on the user's PC.
+    with tempfile.TemporaryDirectory(prefix='rl-win-key-') as tmp:
+        os.makedirs(os.path.join(tmp, 'ssh'))
+        path = os.path.join(tmp, 'ssh', 'administrators_authorized_keys')
+        with open(path, 'w', encoding='ascii') as f:
+            f.write('# existing keys must stay\n')
+        pre = "$env:USERPROFILE=" + "'" + tmp.replace("'", "''") + "'\n$env:ProgramData=$env:USERPROFILE\nfunction icacls.exe { $global:LASTEXITCODE=0 }\n"
+        p = subprocess.run(['powershell', '-NoProfile', '-Command', pre + winhost.SETUP_KEY + '\n' + winhost.SETUP_KEY + '\n'],
+                           capture_output=True, text=True, encoding='utf-8', timeout=40)
+        text = open(path, encoding='ascii').read()
+        ok('ключ: создана пара, повтор не дублирует и не стирает другие строки', p.returncode == 0 and '# existing keys must stay' in text and text.count('ssh-rsa ') == 1
+           and os.path.isfile(os.path.join(tmp, '.ssh', 'racklive_rsa')), p.stderr)
 else:
     print('  skip PowerShell (не Windows)')
 

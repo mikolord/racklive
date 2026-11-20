@@ -145,6 +145,14 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
 
     mac_idx, ip_idx, ap_node = {}, {}, {}
     active = [d for d in devices if d.get('enabled', True)]
+    # Resolve the primary router before merging discovery data.  A device may be
+    # reported in more than one VLAN/router; its main-network record comes first.
+    routers = [d for d in active if d.get('driver') in ROUTER_DRIVERS and (states.get(d['id']) or {}).get('ports')]
+    via = (wan_cfg or {}).get('via') or 'auto'
+    ont = wan_unit(rack_units, wan_cfg) if via != 'direct' else None
+    ont_to = ont_links(ont)
+    main, why = pick_main(routers, states, wan_cfg, [d for d, _ in ont_to])
+    source_order = sorted(active, key=lambda d: 0 if main and d['id'] == main['id'] else 1)
     for d in active:
         st = states.get(d['id']) or {}
         s = st.get('summary') or {}
@@ -161,7 +169,7 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
         for ip in (s.get('ip'), host):
             if ip and _is_ip(ip):
                 ip_idx[ip] = nid
-    for d in active:
+    for d in source_order:
         st = states.get(d['id']) or {}
         for ch in st.get('children') or []:
             key = ch.get('key') or ch.get('mac')
@@ -179,7 +187,7 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
                 ip_idx[ch['ip']] = cid
 
     clients = {}
-    for d in active:
+    for d in source_order:
         for c in (states.get(d['id']) or {}).get('clients') or []:
             if c.get('mac'):
                 clients.setdefault(c['mac'].lower(), dict(c, src=d['id']))
@@ -198,11 +206,6 @@ def build(devices, states, rack_units, manual_links, show_clients=True, drivers=
                         'status': 'online', 'client': True, 'segment': c.get('segment'), 'mac': mac})
         return add({'id': 'h:' + mac, 'label': fallback_label or mac, 'sub': '', 'kind': 'other', 'status': 'unknown', 'client': True, 'mac': mac})
 
-    routers = [d for d in active if d.get('driver') in ROUTER_DRIVERS and (states.get(d['id']) or {}).get('ports')]
-    via = (wan_cfg or {}).get('via') or 'auto'
-    ont = wan_unit(rack_units, wan_cfg) if via != 'direct' else None
-    ont_to = ont_links(ont)                         # ONT LAN sockets → router ports (may feed several routers)
-    main, why = pick_main(routers, states, wan_cfg, [d for d, _ in ont_to])
     main_id = 'd:' + main['id'] if main else None
     main_ports = (states.get(main['id']) or {}).get('ports', []) if main else []
     inet = None

@@ -26,6 +26,7 @@ def _service_secrets(c):
     n = c.get('notify') or {}
     out = [((n.get('telegram') or {}), 'token'), ((n.get('email') or {}), 'password'), ((c.get('ai') or {}), 'key'), ((c.get('collector') or {}), 'token'),
            (((c.get('dev') or {}).get('ap') or {}), 'password')]
+    out += [(p, 'key') for p in ((c.get('ai') or {}).get('profiles') or {}).values() if isinstance(p, dict)]
     out += [(s, 'token') for s in c.get('sites') or [] if isinstance(s, dict)]
     return out
 
@@ -77,6 +78,23 @@ def restored(cur, data):
         else:
             if not dst.get(path[-1]) and src.get(path[-1]):
                 dst[path[-1]] = src[path[-1]]
+    # A password-free backup must not discard per-provider keys.
+    old_ai, new_ai = cur.get('ai') or {}, new.get('ai') or {}
+    if isinstance(new_ai, dict):
+        # Never attach the previous provider's key to a different restored provider.
+        imported_ai = data.get('ai') or {}
+        if (isinstance(imported_ai, dict) and not imported_ai.get('key') and
+                new_ai.get('preset') != old_ai.get('preset')):
+            matching = (old_ai.get('profiles') or {}).get(new_ai.get('preset')) or {}
+            new_ai['key'] = matching.get('key') or '' if isinstance(matching, dict) else ''
+        old_profiles = old_ai.get('profiles') or {}
+        if isinstance(old_profiles, dict):
+            profiles = new_ai.setdefault('profiles', {})
+            if isinstance(profiles, dict):
+                for provider, saved in old_profiles.items():
+                    if isinstance(saved, dict) and saved.get('key'):
+                        dest = profiles.setdefault(provider, {})
+                        if isinstance(dest, dict) and not dest.get('key'): dest['key'] = saved['key']
     cur_sites = {s.get('id'): s for s in cur.get('sites') or [] if isinstance(s, dict)}
     for s in new.get('sites') or []:
         if isinstance(s, dict) and not s.get('token') and (cur_sites.get(s.get('id')) or {}).get('token'):

@@ -315,7 +315,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
     footer={<>{device ? <Btn kind="danger" icon="trash" onClick={del}>Удалить</Btn> : <Btn onClick={toPicker}>Назад</Btn>}<div className="grow" />
       {drvId !== 'agent' ? <Btn onClick={doTest} busy={test && test.busy}>Проверить</Btn> : null}<Btn kind="primary" onClick={save}>Сохранить</Btn></>}>
     {entry ? <div className="dim" style={{ fontSize: 13.5 }}>{entry.text}</div> : drv.description ? <div className="dim" style={{ fontSize: 13.5 }}>{drv.description}</div> : null}
-    {drv.help ? <div className="err-note" style={{ marginTop: 8, whiteSpace: 'pre-wrap', fontSize: 12.5, userSelect: 'text' }}><b>Как подготовить компьютер.</b>{'\n'}{drv.help}</div> : null}
+    {drv.help ? <DeviceSetupGuide help={drv.help} /> : null}
     {!device ? <ScanForType driver={drvId} onPick={it => setF(x => ({ ...x, host: it.host || it.ip, ...(it.mode ? { mode: it.mode } : {}),
       name: x.name || (it.name && it.name !== it.ip ? it.name : (it.what || '').split(/[(:—]/)[0].trim().slice(0, 40)) }))} picked={f.host} /> : null}
     {entry && entry.steps && entry.steps.length ? <details className="guide" open={!!device}>
@@ -323,7 +323,7 @@ function DeviceEditor({ device, onClose, onCreated, preset }) {
       <ol className="steps">{entry.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
       {entry.proof ? <div className="dim3" style={{ fontSize: 12 }}>Как это работает: {entry.proof}.</div> : null}</details> : null}
     <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))' }}>
-      <Field label="Название" hint="Можно поставить метку бренда: /keenetic, /ap/keenetic, /abon, /cam"><NameInput className="input" value={f.name} onChange={v => set('name', v)} placeholder="Например, Роутер дома" /></Field>
+      <Field label="Название" hint="Метки: /keenetic, /ap/keenetic, /iot/tuya, /abon, /cam. Синяя кнопка / — полный список."><NameInput className="input" value={f.name} onChange={v => set('name', v)} placeholder="Например, Роутер дома" /></Field>
       <Field label="Тип (иконка)"><select className="select" value={f.kind || drv.kind} onChange={e => set('kind', e.target.value)}>
         {DEVICE_KINDS.map(k => <option key={k} value={k}>{KIND_TEXT[k]}</option>)}</select></Field>
       {drv.fields.filter(visible).map(renderField)}
@@ -454,6 +454,25 @@ function agentCommand(token, base) {
   return `curl -fsSL ${base}/agent.py -o /opt/racklive-agent.py\npython3 /opt/racklive-agent.py --server ${base} --token ${token} --install`;
 }
 /* a command to run elsewhere: the text plus a «Скопировать» button (no selecting by hand) */
+function DeviceSetupSteps({ steps }) {
+  return <ol className="device-setup-steps">{steps.map((step, i) => <li key={i}>
+    <b className="device-setup-title">{step.title}</b>
+    {step.text ? <p>{step.text}</p> : null}
+    {step.fields ? <dl className="device-setup-fields">{step.fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> : null}
+    {step.code ? <CodeBox text={step.code} /> : null}
+    {step.note ? <div className="device-setup-note">{step.note}</div> : null}
+  </li>)}</ol>;
+}
+function DeviceSetupGuide({ help }) {
+  if (typeof help === 'string') return <div className="device-setup"><b>Как подготовить компьютер</b><p style={{ whiteSpace: 'pre-wrap' }}>{help}</p></div>;
+  return <section className="device-setup" aria-label={help.title}>
+    <h3>{help.title}</h3><p className="dim">{help.intro}</p>
+    <DeviceSetupSteps steps={help.steps || []} />
+    {help.key ? <details className="device-setup-extra"><summary>{help.key.title}</summary><DeviceSetupSteps steps={help.key.steps || []} /></details> : null}
+    {help.troubleshoot ? <details className="device-setup-extra"><summary>Если не подключается</summary>{help.troubleshoot.map(([title, text]) => <p key={title}><b>{title}</b><br />{text}</p>)}</details> : null}
+    {help.source ? <a className="device-setup-source" href={help.source} target="_blank" rel="noopener noreferrer">Документация Microsoft ↗</a> : null}
+  </section>;
+}
 function CodeBox({ text }) {
   const toast = useToast(); const [done, setDone] = useState(false);
   const copy = () => { if (copyText(text)) { setDone(true); setTimeout(() => setDone(false), 2000); } else toast('Не получилось скопировать — выделите текст вручную', true); };

@@ -932,8 +932,8 @@ def main():
                 check('интернет через ONT на карте', 'edge isp' in out)
             if name == 'Настройки · Frank':
                 check('карточка помощника в настройках', 'ai-settings' in out)
-                check('агент: есть галочка «Полный доступ» со своим проектом', 'Полный доступ' in out and 'как opencode' in out)
-                check('агент: есть тумблер «Мини-браузер»', 'Мини-браузер' in out)
+                check('Frank: два режима доступа', 'Доступ Frank' in out and 'Обычный' in out and 'Полный' in out)
+                check('Frank: доступен выбор провайдера и модели', 'Ключ API' in out and 'Модель' in out and 'Сервис' in out)
             if name == 'Настройки · Приложения':
                 check('карточка «Приложения на телефон»', 'Приложения на телефон' in out and out.count('plugin-head') >= 4 and 'Frank' in out and 'Сканер' in out)
             if name == 'Настройки · Уведомления':

@@ -10,8 +10,8 @@ function PluginsTab({ device }) {
     catch (e) { setErr(e.message); }
   };
   useEffect(() => { load(); }, [device.id]);
-  if (err) return <Card><div style={{ color: 'var(--red)' }}>Не удалось связаться с роутером: {err}</div><Btn style={{ marginTop: 10 }} icon="refresh" onClick={load}>Повторить</Btn></Card>;
-  if (!st) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Проверяю, что уже установлено на роутере…</div>;
+  if (err) return <Card><div style={{ color: 'var(--red)' }}>Не удалось связаться с устройством: {err}</div><Btn style={{ marginTop: 10 }} icon="refresh" onClick={load}>Повторить</Btn></Card>;
+  if (!st) return <div className="dim row" style={{ gap: 8 }}><span className="spin-dot" />Проверяю, что уже установлено на устройстве…</div>;
   return <>
     <Hint id="plugins">Дополнения, которые ставятся прямо на это устройство. Rack Live сам проверяет, что уже есть, и подсказывает, чего не хватает.
       Перед любым изменением спросит подтверждение и покажет журнал установки.</Hint>
@@ -88,8 +88,141 @@ function PluginCard({ p, st, device, open, toggle, reload, openPlugin }) {
       {p.kind === 'collector' ? <CollectorPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'community' ? <CommunityPlugin p={p} device={device} reload={reload} /> : null}
       {p.kind === 'snapshot' ? <SnapshotPlugin p={p} device={device} reload={reload} /> : null}
+      {p.kind === 'desktop' ? <DesktopPlugin p={p} device={device} reload={reload} /> : null}
     </div> : null}
   </div>;
+}
+
+function DesktopPlugin({ p, device, reload }) {
+  const confirm = useConfirm(), toast = useToast();
+  const { data } = useApp();
+  const [busy, setBusy] = useState(false), [stage, setStage] = useState(''), [result, setResult] = useState(null);
+  const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'desktop', ...body } });
+  const prepareApp = async () => {
+    setBusy(true);
+    try {
+      const label = (data.labels || {})['d:' + device.id] || device.name || 'Компьютер';
+      const icons = await desktopAppIcons(device, data, label);
+      const r = await api('/api/desktop/app', { method: 'POST', body: { device: device.id, name: nameNoFlag(label), icons } });
+      const url = r.installUrl || r.url.replace('/desktop-app/', '/desktop-install/');
+      setAppLink(new URL(url, location.origin).href);
+      toast('Ссылка готова: скопируй её и открой в Safari или другом браузере');
+    } catch (e) { toast(e.message || 'Не удалось подготовить приложение', true); }
+    finally { setBusy(false); }
+  };
+  const [appLink, setAppLink] = useState('');
+  const [network, setNetwork] = useState(null);
+  const networkCheck = async setup => {
+    if (setup && !(await confirm('Сохранить Host и Origin в существующем правиле Rack Live на домашнем Keenetic? Новые порты и правила не создаются. Остальные сайты и настройки роутера не меняются.', { ok: 'Настроить' }))) return;
+    setBusy(true);
+    try { const r = await call({ op: setup ? 'network-setup' : 'network-status' }); setNetwork(r); toast(r.message); }
+    catch (e) { setNetwork({ ok: false, message: e.message }); toast(e.message, true); }
+    finally { setBusy(false); }
+  };
+  const run = async op => {
+    if (!(await confirm(op === 'install' ? 'Установить сервер рабочего стола на этот ПК? Администратор Rack Live сможет видеть экран и управлять мышью и клавиатурой. VNC будет закрыт для сети, соединение пойдёт через SSH.' : 'Удалить наш сервер рабочего стола с ПК? Открытые подключения закроются. SSH и мониторинг останутся.', { danger: op === 'remove', ok: op === 'install' ? 'Установить' : 'Удалить' }))) return;
+    setBusy(true); setResult(null); setStage('Подключаюсь к ПК…');
+    try {
+      let r = await call({ op });
+      if (r.job) {
+        const until = Date.now() + 6 * 60000;
+        while (Date.now() < until) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const j = await call({ op: 'job', job: r.job }); setStage(j.stage || 'Работаю…');
+          if (j.done) { if (j.error) throw new Error(j.error); r = j.result; break; }
+        }
+        if (!r?.ok) throw new Error('Установка ещё не завершена. Нажми «Обновить состояние» позже.');
+      }
+      setResult(r); toast(r.message || 'Готово'); reload();
+    } catch (e) { setResult({ ok: false, message: e.message }); toast(e.message, true); }
+    finally { setBusy(false); setStage(''); }
+  };
+  return <div className="col" style={{ gap: 12 }}>
+    <div className="device-setup-note">Рабочий стол Windows, мышь, клавиатура и текстовый буфер обмена. Подключение из браузера, без отдельного приложения на телефоне.</div>
+    <div className="dim" style={{ fontSize: 13 }}>На ПК нужен рабочий SSH с правами администратора. Устанавливается только сервер TightVNC; VNC принимает подключения только внутри ПК. Экран идёт через зашифрованный SSH-канал.</div>
+    {p.warning ? <div className="err-note">{p.warning}</div> : null}
+    <div className="row wrap">
+      {p.ready ? <a className="btn primary" href={'/desktop.html?device=' + encodeURIComponent(device.id)} target={navigator.standalone || window.matchMedia('(display-mode: standalone)').matches ? '_self' : '_blank'} rel="noopener"><Icon name="pc" size={17} />Открыть рабочий стол</a> : null}
+      {(!p.installed || p.managed) ? <Btn icon="download" kind={p.ready ? '' : 'primary'} busy={busy} disabled={p.demo || busy} onClick={() => run('install')}>{p.installed ? 'Восстановить' : 'Установить'}</Btn> : null}
+      {p.managed && p.installed ? <Btn icon="trash" kind="danger" disabled={busy} onClick={() => run('remove')}>Удалить</Btn> : null}
+      <Btn icon="refresh" disabled={busy} onClick={reload}>Обновить состояние</Btn>
+      <Btn icon="phone" disabled={p.demo || busy || !p.ready} busy={busy} onClick={prepareApp}>Установить рабочий стол отдельно</Btn>
+    </div>
+    {appLink ? <div className="device-setup-note"><b>Установить на экран «Домой»</b><p>Скопируй ссылку, открой Safari отдельно и вставь её в адресную строку. Затем «Поделиться → На экран “Домой”». Rack Live не будет автоматически открывать Windows.</p><DesktopSnippet text={appLink} /><a className="btn" href={appLink} target="_blank" rel="noopener">Открыть страницу установки</a></div> : null}
+    {p.demo ? <div className="dim3">В демо установка и подключение выключены.</div> : null}
+    <small className="dim3">Отдельное приложение открывает только этот ПК. Имя и иконка берутся с карты при подготовке. На iPhone добавь открывшуюся страницу через «Поделиться → На экран “Домой”», на Android — «Установить приложение». Нужен HTTPS. После переименования или смены иконки подготовь приложение повторно; старый ярлык может потребоваться переустановить.</small>
+    <DesktopAccessGuide />
+    <div className="device-setup-note">
+      <b>Доступ через домен Keenetic</b>
+      <p>Если Rack Live открывается через KeenDNS, проверь настройки заголовков. Для автоматической настройки домашний Keenetic должен быть добавлен в устройства с доступом администратора и уже иметь правило racklive для Rack Live. При прямом доступе к NAS этот шаг не нужен.</p>
+      <div className="row wrap">
+        <Btn disabled={p.demo || busy} onClick={() => networkCheck(false)}>Проверить KeenDNS</Btn>
+        <Btn disabled={p.demo || busy} onClick={() => networkCheck(true)}>Настроить автоматически</Btn>
+      </div>
+      {network ? <p className={network.ok && network.ready ? 'dim' : 'err-note'}>{network.message}</p> : null}
+      <small className="dim3">Сохраняются только Host и Origin. Это не включает удалённый доступ и не открывает VNC в интернет. Успешное подключение проверяется через твой домен.</small>
+    </div>
+    {busy ? <div className="row dim"><span className="spin-dot" />{stage}</div> : null}
+    {result ? <div className={result.ok ? 'device-setup-note' : 'err-note'}>{result.message}{result.rebootSuggested ? ' Windows рекомендует перезагрузку — автоматически она не выполняется.' : ''}</div> : null}
+    <small className="dim3">Открытый движок: TightVNC 2.x (GPL) и noVNC (MPL). Передача файлов и звук в этой версии не включены.</small>
+  </div>;
+}
+
+async function desktopAppIcons(device, data, label) {
+  const spec = (data.icons || {})['d:' + device.id], kind = device.kind || 'pc';
+  const brand = tagBrand(label) || (!spec ? brandOf(label, kind, device.mac) : ''), B = brand && BRANDS[brand], flag = flagOf(label);
+  const url = flag ? '/flags/' + flag + '.svg' : isUpIcon(spec) ? iconUrl(spec.slice(3)) : '';
+  let image;
+  if (url) {
+    image = new Image();
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('Иконка с карты не загрузилась. Проверь её в карточке устройства.')); image.src = url; });
+  }
+  const color = value => { const e = document.createElement('span'); e.style.color = value; document.body.append(e); const c = getComputedStyle(e).color; e.remove(); return c; };
+  const result = {};
+  for (const size of [192, 512]) {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');ctx.fillStyle = B && !image ? B.c : '#edf1f8';ctx.fillRect(0, 0, size, size);
+    if (image) { const scale = size * .8 / Math.max(image.naturalWidth, image.naturalHeight), w = image.naturalWidth * scale, h = image.naturalHeight * scale; ctx.drawImage(image, (size - w) / 2, (size - h) / 2, w, h); }
+    else if (B) {
+      ctx.fillStyle = B.i;
+      if (B.d) { ctx.save();ctx.translate(size * .2, size * .2);ctx.scale(size * .6 / 24, size * .6 / 24);ctx.fill(new Path2D(B.d));ctx.restore(); }
+      else { ctx.textAlign = 'center';ctx.textBaseline = 'middle';ctx.font = `800 ${brandTextSize(B.t) * size}px system-ui`;ctx.fillText(B.t, size / 2, size / 2); }
+      const role = tagRole(label);if(role){ctx.fillStyle='#fff';ctx.fillRect(size*.64,size*.76,size*.32,size*.19);ctx.fillStyle=B.c;ctx.font=`800 ${size*.105}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(role,size*.8,size*.86);}
+    } else {
+      const name = typeof spec === 'string' && spec.startsWith('std:') ? spec.slice(4) : kind;
+      const path = THEME.icons[name] || ICON_PATHS[name] || PACK_PATHS[name] || ICON_PATHS.pc;
+      ctx.save();ctx.translate(size * .2, size * .2);ctx.scale(size * .6 / 24, size * .6 / 24);ctx.strokeStyle=color(kindColor(kind));ctx.lineWidth=1.8;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke(new Path2D(path));ctx.restore();
+    }
+    result[String(size)] = canvas.toDataURL('image/png').split(',')[1];
+  }
+  return result;
+}
+
+function DesktopSnippet({ text }) {
+  const toast = useToast(), ref = useRef(null);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); toast('Скопировано'); }
+    catch { ref.current.focus(); ref.current.select(); toast('Выделено — выбери «Копировать»'); }
+  };
+  return <div className="device-setup-note" style={{ minWidth: 0 }}><textarea ref={ref} className="input mono" readOnly value={text} aria-label="Текст для копирования" style={{ width: '100%', boxSizing: 'border-box', minHeight: 90, fontSize: 12 }} /><Btn size="sm" icon="copy" onClick={copy}>Скопировать</Btn></div>;
+}
+
+function DesktopAccessGuide() {
+  const [kind, setKind] = useState('unknown');
+  return <details className="device-setup-note"><summary style={{ cursor: 'pointer' }}><b>Как подключаться из дома и через интернет</b></summary>
+    <p><b>Схема одна:</b> телефон → Rack Live на NAS → ПК. ПК должен быть включён и доступен NAS по SSH. Монитор можно выключить. На телефоне нужен вход администратора Rack Live.</p>
+    <Field label="Выбери свой вариант"><select className="input" value={kind} onChange={e => setKind(e.target.value)}>
+      <option value="unknown">Не знаю, есть ли белый IP</option><option value="local">Только домашняя сеть</option><option value="keenetic">Keenetic / Netcraze и KeenDNS</option><option value="public">Другой роутер, есть белый IP</option><option value="private">Белого IP нет / CGNAT</option>
+    </select></Field>
+    {kind === 'local' ? <ol className="steps"><li>Подключи телефон к домашнему Wi-Fi и открой обычный адрес Rack Live на NAS.</li><li>Устройство ПК → «Плагины» → «Рабочий стол» → «Открыть рабочий стол».</li><li>Проброс портов, домен и белый IP для дома не нужны.</li></ol> : null}
+    {kind === 'unknown' ? <><p><b>Не нужно угадывать.</b> Для начала выбери вариант без белого IP ниже: VPN-сеть Tailscale не требует публичного адреса.</p><p>Если хочешь открывать Rack Live по домену без VPN на телефоне, спроси провайдера:</p><DesktopSnippet text="Есть ли у меня публичный (белый) IPv4 без CGNAT и разрешены ли входящие подключения? Если нет — можно ли подключить эту услугу и сколько она стоит?" /><p>Сам по себе постоянный адрес не обязательно белый. Если WAN-адрес роутера отличается от внешнего адреса в интернете, возможны CGNAT или ещё один роутер. Попроси провайдера подтвердить. После ответа выбери подходящий вариант в списке.</p></> : null}
+    {kind === 'keenetic' ? <ol className="steps"><li>В KeenDNS создай HTTPS-домен для Rack Live и правило <b>racklive</b>, ведущее на адрес NAS и опубликованный порт Rack Live (обычно 9998).</li><li>Для прямого доступа нужен белый IP. Если доступ идёт через облако KeenDNS, работу WebSocket нужно проверить отдельно; при отказе используй VPN-вариант ниже.</li><li>Добавь домашний Keenetic в устройства Rack Live с правами администратора. В блоке ниже нажми <b>«Проверить KeenDNS» → «Настроить автоматически»</b>. Автонастройка сохраняет Host и Origin в существующем правиле; домен и проброс портов она не создаёт.</li><li>Выключи Wi-Fi на телефоне, открой HTTPS-домен через мобильную сеть и подключись к ПК.</li></ol> : null}
+    {kind === 'public' ? <><ol className="steps"><li>Закрепи локальный адрес NAS. Создай домен или DDNS-запись, указывающую на белый IP роутера. DDNS обновляет адрес при его смене, но не обходит CGNAT.</li><li>На NAS настрой HTTPS reverse proxy с действующим сертификатом: твой домен → HTTP-адрес NAS и порт Rack Live. На Synology: <b>Панель управления → Портал для входа → Дополнительно → Обратный прокси</b>.</li><li>В роутере направь внешний <b>TCP 443</b> на HTTPS-порт этого прокси. Если 443 занят другим сервисом, используй существующий прокси с отдельным доменом. Панель управления роутером для этого наружу открывать не нужно.</li><li>В прокси включи <b>WebSocket</b> (Synology: «Пользовательский заголовок → Создать → WebSocket»). Сохраняй исходные <b>Host вместе с портом</b> и <b>Origin</b>, передавай <b>Upgrade / Connection</b>. Страница и WebSocket должны открываться на одном домене.</li><li>Выключи Wi-Fi на телефоне, открой HTTPS-домен, войди в Rack Live и нажми «Открыть рабочий стол».</li></ol>
+      <details><summary>Пример для уже настроенного HTTPS-сайта Nginx</summary><p>Замените NAS_HOST и RACKLIVE_PORT своими значениями. Это блок внутри существующего HTTPS server, а не готовый конфиг сертификата.</p><DesktopSnippet text={'location / {\n    proxy_pass http://NAS_HOST:RACKLIVE_PORT;\n    proxy_http_version 1.1;\n    proxy_set_header Host $http_host;\n    proxy_set_header Origin $http_origin;\n    proxy_set_header Upgrade $http_upgrade;\n    proxy_set_header Connection "upgrade";\n    proxy_read_timeout 3600s;\n}'} /></details></> : null}
+    {kind === 'private' || kind === 'unknown' ? <><p><b>Без белого IP: частная VPN-сеть.</b> Например, Tailscale соединит телефон и NAS через интернет, даже если у провайдера CGNAT.</p><ol className="steps"><li>Установи Tailscale на NAS и телефон, подключи оба к одной своей сети Tailscale. На Synology используй пакет для своей модели и версии DSM.</li><li>Включи Tailscale на телефоне. Открой Rack Live по Tailscale-адресу NAS и опубликованному порту Rack Live. Разреши этот порт в правилах Tailscale и брандмауэре NAS только нужным пользователям.</li><li>ПК остаётся в домашней сети: к нему по SSH подключается NAS. Ставить Tailscale на ПК для этой схемы не обязательно.</li><li>Проверь подключение через мобильную сеть. Если страница не открывается — проверь VPN, доступ к опубликованному порту контейнера и брандмауэр NAS. Если страница есть, но экран закрывается — проверь SSH и состояние плагина ПК.</li></ol><p>Другой путь — заказать у провайдера белый IP и затем настроить HTTPS-домен. Обычный проброс портов за CGNAT не поможет.</p><a href="https://tailscale.com/docs/integrations/synology" target="_blank" rel="noreferrer">Инструкция Tailscale для Synology</a></> : null}
+    <p><b>Для всех вариантов:</b> наружу нужен доступ к самому Rack Live. Порт VNC 5900 и SSH ПК в интернет не пробрасывай. Пароль администратора Rack Live обязателен. Открытие страницы ещё не гарантирует WebSocket: итоговая проверка — появление экрана через мобильную сеть.</p>
+    <p className="dim3"><a href="https://kb.synology.com/en-my/DSM/help/DSM/AdminCenter/system_login_portal_advanced" target="_blank" rel="noreferrer">Synology: reverse proxy и WebSocket</a> · <a href="https://nginx.org/en/docs/http/websocket.html" target="_blank" rel="noreferrer">Nginx: WebSocket</a></p>
+  </details>;
 }
 
 function EntwareGuide({ p, reload }) {

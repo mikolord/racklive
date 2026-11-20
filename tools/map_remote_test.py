@@ -5,7 +5,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 src = open(os.path.join(ROOT, 'web', 'src', '40_map.jsx'), encoding='utf-8').read()
 m = re.search(r'^const M = .*?$', src, re.M)
 a = src.index('function layoutMap('); b = src.index('/* other ways to see the same network')
-js = m.group(0) + '\nconst unitDevIds = u => u.devices || [];\n' + src[a:b] + r'''
+local_a = src.index('function localMapData('); local_b = src.index('function MapView(', local_a)
+js = m.group(0) + '\nconst unitDevIds = u => u.deviceIds?.length ? u.deviceIds : u.deviceId ? [u.deviceId] : [];\n' + src[a:b] + src[local_a:local_b] + r'''
 const client = (id, label) => ({ id, label, sub: '10.0.0.' + id.length, kind: 'other', client: true });
 const data = (over = {}) => ({ map: { positions: {} }, racks: [], topology: {
   nodes: [{ id: 'inet', label: 'Интернет', kind: 'internet' }, { id: 'd:main', label: 'Дом', kind: 'router' }, client('h:home', 'Дома'),
@@ -39,6 +40,17 @@ check('the map of one house shows everything', !!S.pos['h:a'] && !!S.pos['h:c'] 
 const D = data({ edges: [{ id: '9', source: 'h:a', target: 'd:sw', kind: 'lan' }] }); D.topology.nodes.push({ id: 'd:sw', label: 'Свитч', kind: 'switch' });
 const N = layoutMap(D, {}, {});
 check('a client that a device hangs from stays visible', !!N.nodes['h:a'] && N.nodes['d:r1'].remoteClients === 1 && !N.nodes['h:b']);
+const local = localMapData(D);
+check('local view removes remote devices and their entire branches', !local.topology.nodes.some(n => ['d:r1', 'd:r2', 'd:vps', 'h:a', 'h:b', 'h:c', 'd:sw'].includes(n.id)));
+check('local view keeps internet, the home router and its client', ['inet', 'd:main', 'h:home'].every(id => local.topology.nodes.some(n => n.id === id)));
+check('local view removes wires to hidden branches', local.topology.edges.length === 2);
+check('local view does not change the full topology', D.topology.nodes.length === 10 && D.topology.edges.length === 9);
+const mixed = data(); mixed.racks = [{ id: 'rack', totalU: 4, units: [{ id: 'shelf', deviceIds: ['main', 'r1'] }, { id: 'vps', deviceId: 'vps' }, { id: 'passive' }] }];
+const ml = localMapData(mixed);
+check('mixed rack keeps local slots and passive equipment only', ml.racks[0].units.length === 2 && JSON.stringify(unitDevIds(ml.racks[0].units[0])) === '["main"]' && mixed.racks[0].units.length === 3);
+const wifiData = data(); for (let i = 0; i < 5; i++) { wifiData.topology.nodes.push(client('w:' + i, 'WiFi ' + i)); wifiData.topology.edges.push({ id: 'w' + i, source: 'd:main', target: 'w:' + i, kind: 'wifi' }); }
+check('local Wi-Fi grouping stays independent of remote visibility', Object.keys(layoutMap(localMapData(wifiData), {}, {}).groups).length === 1 && Object.keys(layoutMap(wifiData, {}, {}).groups).length === 1);
+check('Wi-Fi expands both with and without remote devices', [wifiData, localMapData(wifiData)].every(d => !Object.keys(layoutMap(d, { 'd:main': false }, {}).groups).length));
 console.log(bad ? 'BAD' : 'GOOD');
 '''
 with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as f:
