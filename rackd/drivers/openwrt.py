@@ -614,7 +614,8 @@ uci -q show firewall | grep -E "^firewall\.rl_block_[^.]+(=|\.src_mac=)" | sed '
         what = {'tunnel': f"туннель {parsed.get('name')} ({parsed.get('server')})",
                 'links': (f"подписка {parsed['fromSub']}, серверов: {n} (Podkop не обновляет подписку сам — при смене серверов вставьте её снова)" if parsed.get('fromSub')
                           else f"серверов: {n}") + (', авто-выбор самого быстрого' if n > 1 and (auto or pid == 'forkop') else ''),
-                'subscription': f"подписка {parsed.get('host')}" + (', авто-выбор самого быстрого' if auto or pid == 'forkop' else '')}[parsed['type']]
+                'subscription': f"подписка {parsed.get('host')}" + (', основной сервер — Нидерланды (XHTTP), запасной — Германия (переключение только при падении)' if auto and pid == 'tachyon'
+                                                                    else ', авто-выбор самого быстрого' if auto or pid == 'forkop' else '')}[parsed['type']]
         how = f"российские сайты идут напрямую, остальное для сети {r['net']} — через VPN" if mode == 'split' else \
             'через VPN идут ' + ', '.join([x['label'] for x in ve.LISTS if x['id'] in lists] + ([f'свои сайты ({len(domains)})'] if domains else [])) + ', остальное напрямую'
         return {'ok': True, 'split': dict(status(), ok=True, engine=pid), 'backup': r['backup'],

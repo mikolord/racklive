@@ -473,8 +473,9 @@ function ForkopSplit({ device, pid = 'forkop', title = 'Forkop' }) {
       {prev.ipv6Skipped ? <div className="dim3" style={{ fontSize: 12 }}>IPv6-адрес из конфига пропущен — туннель будет работать по IPv4.</div> : null}
     </div> : null}
     {many ? <div className="row" style={{ alignItems: 'flex-start' }}><Switch on={pid === 'forkop' || auto} onChange={v => pid !== 'forkop' && setAuto(v)} disabled={pid === 'forkop'} />
-      <div className="grow"><div>Авто — самый быстрый сервер</div>
-        <div className="dim3" style={{ fontSize: 12.5 }}>{pid === 'forkop' || auto ? `${title} сам проверяет серверы каждые 3 минуты, берёт самый быстрый и переключается, если он упадёт.`
+      <div className="grow"><div>{pid === 'tachyon' && prev.type === 'subscription' ? 'Основной сервер + запасной' : 'Авто — самый быстрый сервер'}</div>
+        <div className="dim3" style={{ fontSize: 12.5 }}>{pid === 'tachyon' && prev.type === 'subscription' && auto ? 'Основной — Нидерланды, запасной — Германия (оба XHTTP). Роутер сам переключится на запасной, только если основной упадёт, и вернётся, когда тот оживёт.'
+          : pid === 'forkop' || auto ? `${title} сам проверяет серверы каждые 3 минуты, берёт самый быстрый и переключается, если он упадёт.`
           : `Серверы будут списком — какой включить, выберете в панели ${title}.`}</div></div></div> : null}
     {mode === 'split' ? <Field label="Сеть, которая пойдёт через VPN" hint={`Пусто — вся сеть роутера${st && st.lan ? ' (' + st.lan + ')' : ''}. Можно указать свою, например 192.168.1.0/24.`}>
       <input className="input mono" value={net} placeholder={(st && st.lan) || '192.168.1.0/24'} onChange={e => setNet(e.target.value)} onBlur={() => text.trim() && preview(text, net)} /></Field> : null}

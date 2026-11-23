@@ -3,7 +3,8 @@
 Two modes:
   split — Russian sites go straight (.ru .su .рф + the list of Russian services), everything else of the router's network through the VPN;
   sites — only the ticked lists (blocked in Russia, YouTube, Telegram…) and the user's own domains go through the VPN, the rest straight.
-Several servers (links or a subscription): «auto» lets the engine pick the fastest one (urltest) and switch when it falls.
+Several servers: «auto» for pasted links lets the engine pick the fastest one (urltest) and switch when it falls; for a subscription
+«auto» pins the main XHTTP server with the backup one taking over only on failure (priority_failover, see PRIORITY_MAIN/BACKUP).
 
 Before writing, the old config is copied to /root/<engine>.rl-<time>.bak (the newest three stay); if the engine does not come up
 with the new setup, the copy is put back and the engine restarted, so the router keeps the internet it had. Keys are never printed back."""
@@ -24,6 +25,14 @@ PODKOP_WITH_RU = {'russia_inside', 'meta', 'twitter', 'discord', 'telegram', 'cl
 RU_SUFFIX = ('ru', 'su', 'xn--p1ai')
 RU_SERVICES = 'russia_outside'                 # Russian services on foreign domains (vk.com, yandex.com…): straight in the split mode
 DOMAIN_RE = re.compile(r'^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?\.)*[a-z0-9-]{1,63}$')
+
+# The house rule for router subscriptions: ONE main + ONE backup server, both plain XHTTP, failover only when the main one
+# dies — never urltest hopping across the whole subscription (CDN/LTE links are already kept out of router subscriptions by the bot).
+# Tachyon implements this as section priority_failover + two outbound_group levels; its priority daemon (tachyon_core/priority.uc)
+# health-checks the active level and flips the selector only on failure. GOTCHA: include_outbounds matches the server DISPLAY NAME
+# (shared by every server of a country), so the single XHTTP server is singled out by include_transports 'xhttp'.
+PRIORITY_MAIN = ('rl_main_xhttp', '🇳🇱 Нидерланды', 'Нидерланды XHTTP (основной)')
+PRIORITY_BACKUP = ('rl_backup_xhttp', '🇩🇪 Германия', 'Германия XHTTP (запасной)')
 
 
 def check_opts(mode, lists, domains, engine):
@@ -186,7 +195,16 @@ def tachyon_script(p, net='', replace_all=True, mode='split', lists=(), domains=
     else:
         S('rl_vpn_sub', 'subscription_url'); S('rl_vpn_sub.section', 'rl_vpn'); S('rl_vpn_sub.url', p['url'])
         S('rl_vpn_sub.subscription_update_enabled', '1'); S('rl_vpn_sub.subscription_update_interval', '12h')
-    if auto and (p['type'] == 'subscription' or (p['type'] == 'links' and p['count'] > 1)):
+    if auto and p['type'] == 'subscription':
+        S('rl_vpn.urltest_enabled', '0')
+        S('rl_vpn.section_selection_mode', 'priority_failover')
+        for gid, _name, _title in (PRIORITY_MAIN, PRIORITY_BACKUP):
+            A('rl_vpn.outbound_group_levels', gid)
+            L.append(f'uci -q delete tachyon.{gid}')
+        for gid, name, title in (PRIORITY_MAIN, PRIORITY_BACKUP):
+            S(gid, 'outbound_group'); S(f'{gid}.name', title); S(f'{gid}.filter_mode', 'include')
+            A(f'{gid}.include_outbounds', name); A(f'{gid}.include_transports', 'xhttp')
+    elif auto and p['type'] == 'links' and p['count'] > 1:
         S('rl_vpn.urltest_enabled', '1')
     if mode == 'split':
         L.append('uci reorder tachyon.rl_ru=1')
