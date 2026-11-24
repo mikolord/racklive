@@ -8,6 +8,8 @@ function RemotePlugin({ p, device, reload }) {
   const [hub, setHub] = useState(info.hub || (hubs[0] || {}).id || '');
   const [extra, setExtra] = useState((info.extra || []).join(', '));
   const [use, setUse] = useState(true);
+  const [mode, setMode] = useState('hub');
+  const [conf, setConf] = useState('');
   const [busy, setBusy] = useState(''); const [stage, setStage] = useState(''); const [result, setResult] = useState(null);
   const [again, setAgain] = useState(false);
   const call = body => api(`/api/devices/${device.id}/plugins`, { method: 'POST', body: { plugin: 'remote', ...body } });
@@ -24,19 +26,21 @@ function RemotePlugin({ p, device, reload }) {
   const viaTunnel = p.info && p.host === info.ip;
 
   const connect = async () => {
-    if (!h) return;
-    if (!(await confirm(`Rack Live поставит на роутер WireGuard и подключит его к «${nameNoFlag(h.deviceName)} · ${h.name}»: на нём появится новое подключение «${nameNoFlag(device.name)}», `
-      + `остальные подключения не трогаются. На роутере добавится только туннель — сеть, Wi-Fi и интернет клиентов не меняются. Продолжить?`, { title: 'Подключить к центру', ok: 'Подключить' }))) return;
+    if (mode === 'hub' && !h || mode === 'import' && !conf.trim()) return;
+    const text = mode === 'import' ? 'Rack Live установит WireGuard и настроит туннель по готовому конфигу. Подключение на сервере уже должно быть создано. Интернет клиентов останется у их провайдера. Продолжить?'
+      : `Rack Live поставит на роутер WireGuard и подключит его к «${nameNoFlag(h.deviceName)} · ${h.name}»: на нём появится новое подключение «${nameNoFlag(device.name)}», `
+      + `остальные подключения не трогаются. На роутере добавится только туннель — сеть, Wi-Fi и интернет клиентов не меняются. Продолжить?`;
+    if (!(await confirm(text, { title: 'Подключить к центру', ok: 'Подключить' }))) return;
     setBusy('install'); setResult(null); setStage('Начинаю…');
     try {
-      let r = await call({ op: 'install', hub, use, extra: extra.split(/[\s,;]+/).filter(Boolean) });
+      let r = await call(mode === 'import' ? { op: 'install', mode, conf, use } : { op: 'install', hub, use, extra: extra.split(/[\s,;]+/).filter(Boolean) });
       if (r.job) r = await pollJob(r.job);
-      setResult(r); toast(r.message || r.error || '', !r.ok); setAgain(false); reload();
+      setResult(r); toast(r.message || r.error || '', !r.ok); if (mode === 'import' && r.ok) setConf(''); setAgain(false); reload();
     } catch (e) { setResult({ error: e.message }); toast(e.message, true); }
     finally { setBusy(''); setStage(''); }
   };
   const disconnect = async () => {
-    if (!(await confirm('Отключить удалённый доступ? Туннель удалится с роутера, а подключение — из центра. Если роутер уже стоит у клиента, '
+    if (!(await confirm('Отключить удалённый доступ? Туннель удалится с роутера' + (info.mode === 'import' ? ', а подключение на сервере останется.' : ', а подключение — из центра.') + ' Если роутер уже стоит у клиента, '
       + 'Rack Live потеряет с ним связь, пока вы не подключите его снова на месте.', { title: 'Отключить удалённый доступ', ok: 'Отключить', danger: true }))) return;
     setBusy('remove'); setResult(null); setStage('Отключаю…');
     try { let r = await call({ op: 'remove' }); if (r.job) r = await pollJob(r.job); setResult(r); toast(r.message || r.error || '', !r.ok); reload(); }
@@ -50,6 +54,14 @@ function RemotePlugin({ p, device, reload }) {
   };
 
   const form = <>
+    <Field label="Как подключить"><select className="input" value={mode} onChange={e => setMode(e.target.value)}>
+      <option value="hub">Выбрать центр в Rack Live</option><option value="import">Готовый конфиг WireGuard</option></select></Field>
+    {mode === 'import' ? <>
+      <Field label="Конфигурация WireGuard" hint="Вставьте конфиг или выберите .conf. Подключение на сервере должно быть создано заранее. Только частные адреса управления, без маршрута по умолчанию.">
+        <textarea className="input mono" rows={8} value={conf} onChange={e => setConf(e.target.value)} placeholder="[Interface]..." />
+        <input type="file" accept=".conf,text/plain" onChange={async e => { const f = e.target.files[0]; if (f) { if (f.size > 65536) { toast('Файл больше 64 КБ', true); return; } setConf(await f.text()); } }} />
+      </Field>
+    </> : <>
     {hubs.length ? <Field label="Центр — WireGuard-сервер, к которому роутер будет подключаться">
       <select className="input" value={hub} onChange={e => setHub(e.target.value)}>
         {hubs.map(x => <option key={x.id} value={x.id}>{nameNoFlag(x.deviceName)} · {x.name} ({x.net}, занято адресов: {x.used})</option>)}</select></Field>
@@ -60,10 +72,11 @@ function RemotePlugin({ p, device, reload }) {
       должен быть доступен из интернета — у WireGuard-сервера роутера так и есть.</div> : null}
     <Field label="Кто ещё может заходить на роутер через туннель (необязательно)" hint="Rack Live добавится сам. Сюда — например, ваш компьютер (192.168.1.10), чтобы открывать веб-интерфейс роутера напрямую. Только частные адреса.">
       <input className="input mono" value={extra} placeholder="192.168.1.10" onChange={e => setExtra(e.target.value)} /></Field>
+    </>}
     <label className="row" style={{ gap: 10, alignItems: 'center', fontSize: 13.5 }}><Switch on={use} onChange={setUse} />
       <span>Сразу работать с роутером через туннель (его адрес в Rack Live заменится адресом в туннеле)</span></label>
     <div className="row wrap" style={{ gap: 8 }}>
-      <Btn kind="primary" icon="globe2" busy={busy === 'install'} disabled={!h || !!busy} onClick={connect}>{p.installed ? 'Подключить заново' : 'Подключить'}</Btn>
+      <Btn kind="primary" icon="globe2" busy={busy === 'install'} disabled={(mode === 'hub' ? !h : !conf.trim()) || !!busy || (mode === 'import' && p.installed)} onClick={connect}>{p.installed ? 'Подключить заново' : 'Подключить'}</Btn>
       {p.installed ? <Btn onClick={() => setAgain(false)} disabled={!!busy}>Отмена</Btn> : null}
     </div>
   </>;
@@ -97,8 +110,8 @@ function RemotePlugin({ p, device, reload }) {
 function RemoteGuide({ installed }) {
   return <details className="guide" open={!installed}><summary>Как это работает и что идёт через туннель</summary>
     <ol className="steps" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
-      <li><b>Подключите роутер, пока он у вас.</b> Выберите центр — ваш WireGuard-сервер — и нажмите «Подключить». Rack Live поставит на роутер WireGuard (~1 МБ),
-        создаст ключи, добавит роутеру подключение в центре и проверит связь.</li>
+      <li><b>Подключите роутер.</b> Выберите центр в Rack Live или загрузите готовый конфиг WireGuard. В первом случае Rack Live создаст ключи и подключение в центре;
+        для готового конфига подключение на сервере должно существовать заранее. Rack Live поставит WireGuard (~1 МБ) и проверит связь.</li>
       <li><b>Отвезите роутер на место.</b> Ему нужен только интернет в WAN-порту: он сам «позвонит» в центр и будет держать связь. Белый адрес и проброс портов у клиента не нужны.</li>
       <li><b>Управляйте как обычно.</b> Rack Live работает с роутером по адресу в туннеле: плагины, портал и шаблоны, порты, бэкапы, терминал — всё как рядом.</li>
     </ol>

@@ -9,12 +9,13 @@ The tunnel carries management ONLY:
   · from the tunnel only SSH, the web interface and ping reach the router itself;
   · on the hub the router is allowed exactly one address (/32), so it cannot use the owner's internet either.
 The router dials out and keeps the tunnel up (keepalive 25 s), so the remote place needs no white address and no port forwarding."""
-import ipaddress, re, socket, threading, time
+import base64, binascii, ipaddress, re, socket, threading, time
 
 from . import plugins
 
 HUB_CACHE = {}          # device id -> (time, its hubs): the last good answer
 HUBS_WAIT = 20        # seconds the plugin card waits for the Keenetic routers it can use as a hub
+PRIVATE_V4 = tuple(ipaddress.ip_network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
 
 STATUS = r'''command -v wg >/dev/null 2>&1 && echo "@@wg 1"
 echo "@@rel $(. /etc/openwrt_release 2>/dev/null; echo $DISTRIB_RELEASE)"
@@ -94,7 +95,7 @@ def _q(s):
 TABLE = 3141          # the tunnel's own routing table: only what the router answers FROM its tunnel address goes there
 
 
-def apply_script(ip, hub_pub, ep_ip, port, domain, allowed, alt=''):
+def apply_script(ip, hub_pub, ep_ip, port, domain, allowed, alt='', keepalive=25):
     """the tunnel interface, its peer (the hub), a closed firewall zone and the watchdog. LAN, WAN and Wi-Fi are not touched."""
     for v in (hub_pub,):
         if not re.match(r'^[A-Za-z0-9+/]{42,44}=?$', v):
@@ -116,9 +117,9 @@ def apply_script(ip, hub_pub, ep_ip, port, domain, allowed, alt=''):
              f"EP={_q(ep_ip)}; GW=$(ip -4 route show default | awk '{{print $3; exit}}'); [ -n {_q(alt or '')} ] && [ \"$GW\" = {_q(alt or '-')} ] && EP={_q(alt or '')}",
              'uci -q delete network.rl_wgrule || true',             # (older version) — with ip4table the network service adds «from <tunnel address> lookup TABLE» itself
              'uci set network.rl_wgpeer=wireguard_rl_wg', "uci set network.rl_wgpeer.description='Rack Live'",
-             f'uci set network.rl_wgpeer.public_key={_q(hub_pub)}', 'uci set network.rl_wgpeer.preshared_key="$P"',
+             f'uci set network.rl_wgpeer.public_key={_q(hub_pub)}', '[ -z "$P" ] || uci set network.rl_wgpeer.preshared_key="$P"',
              'uci set network.rl_wgpeer.endpoint_host="$EP"', f'uci set network.rl_wgpeer.endpoint_port={int(port)}',
-             'uci set network.rl_wgpeer.persistent_keepalive=25', 'uci set network.rl_wgpeer.route_allowed_ips=1']
+             f'uci set network.rl_wgpeer.persistent_keepalive={int(keepalive)}', 'uci set network.rl_wgpeer.route_allowed_ips=1']
     lines += [f'uci add_list network.rl_wgpeer.allowed_ips={_q(n)}' for n in nets]
     lines += ['uci commit network',
               'for s in rl_wgz rl_wgmgmt rl_wgping; do uci -q delete firewall.$s || true; done',
@@ -285,9 +286,105 @@ def _resolve4(name):
         return None
 
 
+def parse_import(text):
+    """Accept only a single, management-only WireGuard configuration."""
+    if not isinstance(text, str) or len(text) > 65536:
+        raise ValueError('вставьте конфигурацию WireGuard размером до 64 КБ')
+    if len(re.findall(r'^\s*\[Peer\]\s*$', text, re.I | re.M)) != 1:
+        raise ValueError('конфигурация должна содержать ровно одного сервера [Peer]')
+    c = plugins.parse_conf(text)
+    if c['isAwg'] or c['awg2'] or c['awg3'] or c['ipv6']:
+        raise ValueError('поддерживается обычный WireGuard с IPv4, без параметров AmneziaWG')
+    for key in (c['privateKey'], c['peer']['publicKey'], c['peer']['psk']):
+        if key:
+            try:
+                if len(base64.b64decode(key, validate=True)) != 32:
+                    raise ValueError()
+            except (ValueError, binascii.Error):
+                raise ValueError('неверный ключ WireGuard') from None
+    if not any(ipaddress.ip_address(c['address']) in n for n in PRIVATE_V4):
+        raise ValueError('адрес туннеля должен быть частным IPv4-адресом')
+    nets = []
+    for item in c['peer']['allowed']:
+        try:
+            net = ipaddress.ip_network(item, strict=False)
+        except ValueError:
+            raise ValueError('неверный адрес в AllowedIPs') from None
+        if net.version != 4 or net.prefixlen < 16 or not any(net.subnet_of(n) for n in PRIVATE_V4):
+            raise ValueError('AllowedIPs: только частные IPv4-сети не больше /16, без маршрута по умолчанию')
+        if str(net) not in nets:
+            nets.append(str(net))
+    if not nets:
+        raise ValueError('в AllowedIPs нужна сеть управления')
+    host, port = c['peer']['endpoint'].rsplit(':', 1)
+    if not re.fullmatch(r'[A-Za-z0-9.-]{1,253}', host) or not 1 <= int(port) <= 65535:
+        raise ValueError('неверный адрес сервера WireGuard')
+    if not 1 <= c['peer']['keepalive'] <= 65535:
+        raise ValueError('PersistentKeepalive должен быть от 1 до 65535 секунд')
+    c['networks'], c['endpointHost'], c['endpointPort'] = nets, host, int(port)
+    return c
+
+
+def connect_import(app, d, drv, body, prog):
+    from .util import DriverError
+    c = parse_import(body.get('conf'))
+    if parse(drv._ssh(d, STATUS, 30))['installed'] or d.get('remote'):
+        raise DriverError('на роутере уже настроен удалённый доступ Rack Live; сначала отключите его')
+    host = c['endpointHost']
+    try:
+        ep = str(ipaddress.IPv4Address(host))
+        domain = ''
+    except ValueError:
+        ep, domain = _resolve4(host), host
+    if not ep or ipaddress.ip_address(ep).is_loopback or ipaddress.ip_address(ep).is_unspecified:
+        raise DriverError('не удалось определить доступный IPv4-адрес сервера WireGuard')
+    prog('Устанавливаю WireGuard и записываю ключи на роутер…')
+    prepare = PREPARE.split('mkdir -p /etc/rl-wg', 1)[0] + '\n'.join([
+        'set -e', 'mkdir -p /etc/rl-wg && chmod 700 /etc/rl-wg', 'umask 077',
+        'printf %s ' + _q(c['privateKey']) + ' > /etc/rl-wg/key',
+        'printf %s ' + _q(c['peer']['psk']) + ' > /etc/rl-wg/psk',
+        'wg pubkey < /etc/rl-wg/key > /etc/rl-wg/pub',
+        'echo "@@pub $(cat /etc/rl-wg/pub)"',
+    ]) + '\n'
+    out = drv._ssh(d, prepare, 900)
+    fail = re.search(r'@@fail (.+)', out)
+    pub = (re.search(r'@@pub (\S+)', out) or [None, ''])[1]
+    if fail or not pub:
+        raise DriverError(fail.group(1) if fail else 'роутер не подготовил WireGuard')
+    prog('Настраиваю изолированный туннель управления…')
+    out = drv._ssh(d, apply_script(c['address'], c['peer']['publicKey'], ep, c['endpointPort'], domain,
+                                   c['networks'], keepalive=c['peer']['keepalive']), 150)
+    if '@@done' not in out:
+        raise DriverError('роутер не закончил настройку туннеля')
+    hs = int((re.search(r'@@hs (\d+)', out) or [None, '0'])[1])
+    reach = False
+    if hs:
+        prog('Проверяю доступ через туннель…')
+        for _ in range(6):
+            try:
+                if '@@ok' in drv._ssh(dict(d, host=c['address']), 'echo @@ok', 15):
+                    reach = True
+                    break
+            except Exception:
+                pass
+            time.sleep(5)
+    info = {'mode': 'import', 'hubName': host, 'ip': c['address'], 'pub': pub,
+            'endpoint': c['peer']['endpoint'], 'allowed': c['networks'], 'extra': []}
+    upd = {'remote': info}
+    if reach and body.get('use', True):
+        upd.update(hostLocal=d.get('hostLocal') or d.get('host'), host=c['address'])
+    msg = ('Туннель подключён, Rack Live работает через него.' if reach and body.get('use', True) else
+           'Туннель подключён; Rack Live пока использует прежний адрес.' if reach else
+           'Рукопожатие есть, но Rack Live не достучался до роутера; прежний адрес сохранён.' if hs else
+           'Настройка создана, но рукопожатия пока нет; прежний адрес сохранён.')
+    return {'ok': bool(hs), 'message': msg, 'deviceUpdate': upd, 'reach': reach, 'handshake': bool(hs)}
+
+
 def connect(app, d, drv, body, prog):
     from .drivers import REGISTRY
     from .util import DriverError
+    if body.get('mode') == 'import':
+        return connect_import(app, d, drv, body, prog)
     k, h = _hub(app, body.get('hub'))
     if not h.get('up'):
         raise DriverError(f"WireGuard-сервер «{h['name']}» выключен — включите его на роутере")
